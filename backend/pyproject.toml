@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sitescope-backend"
+description = "SiteScope backend: REST API, scheduler, crawler and indexer workers."
+requires-python = ">=3.13"
+dynamic = ["version"]
+# Lower bounds are the versions this phase was verified with.
+dependencies = [
+    "fastapi>=0.162",           # HTTP API framework
+    "uvicorn[standard]>=0.54",  # ASGI server
+    "pydantic-settings>=2.16",  # typed configuration from environment variables
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.2",   # test runner
+    "httpx2>=2.16",  # required by Starlette's TestClient (plain httpx is deprecated there)
+    "ruff>=0.17",    # linter and formatter
+    "mypy>=2.4",     # static type checker
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import sorting
+    "B",        # bugbear: likely bugs
+    "UP",       # pyupgrade: modern syntax
+    "SIM",      # simplifications
+    "C4",       # comprehensions
+    "DTZ",      # naive datetimes (all timestamps must be timezone-aware UTC)
+    "T20",      # stray print()
+    "PT",       # pytest style
+    "ASYNC",    # asyncio pitfalls
+    "S",        # bandit security checks
+    "RUF",      # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # pytest relies on assert
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
+filterwarnings = ["error"]

@@ -9,7 +9,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | Phase | Title | Status |
 |---|---|---|
 | 0 | Repository inspection and architecture baseline | **Done** (2026-11-06) |
-| 1 | Backend foundation | Not started |
+| 1 | Backend foundation | **Done** (2026-11-06) |
 | 2 | Persistence, migrations, and the job API | Not started (needs Docker) |
 | 3 | Task distribution core | Not started |
 | 4 | Fault tolerance and recovery | Not started |
@@ -21,17 +21,18 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 10 | Benchmarks | Not started |
 | 11 | CI hardening and documentation | Not started |
 
-## Repository state after Phase 0
+## Repository state after Phase 1
 
-Inspected on 2026-11-06.
+Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
 
-| Item | Finding |
+| Item | State |
 |---|---|
-| `backend/.venv` | Python 3.13.7. Installed packages: fastapi 0.162.0; uvicorn 0.54.0 with its standard extras (httptools, watchfiles, websockets, python-dotenv, PyYAML); pydantic 2.14.3; starlette 1.10.0; anyio 4.16.0 and other transitive dependencies. |
-| `backend/app/main.py` | **Does not exist.** The repository contains no application code yet. |
-| `docs/` | Was empty. Phase 0 added `architecture.md`, `development-roadmap.md`, and `adr/`. |
-| `fronted/` | Empty. The name is a misspelling of `frontend/`. It was left untouched because renaming it needs owner approval. |
-| Repository root | `CLAUDE.md` added in Phase 0. Not yet a git repository. |
+| Git | Local repository on branch `master` (the configured default). Phase 0 and Phase 1 are committed. No remote yet. |
+| `backend/app/` | FastAPI foundation: configuration, logging, errors, middleware, health endpoints. |
+| `backend/tests/` | 51 unit tests. |
+| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
+| `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0007, API conventions, development guide. |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -122,37 +123,59 @@ Every phase follows the working agreement in [`CLAUDE.md`](../CLAUDE.md):
 
 ### Phase 0: Repository inspection and architecture baseline (done)
 
-- Inspected the repository and the toolchain (findings above).
+- Inspected the repository and the toolchain. The findings are in this file's Phase 0 version,
+  commit `a5f8936`.
 - Added `CLAUDE.md`, [`docs/architecture.md`](architecture.md), this roadmap, and ADRs 0001–0007 in
   [`docs/adr/`](adr/README.md).
 - This phase produced documentation only, so there was no code to test.
 
-### Phase 1: Backend foundation
+### Phase 1: Backend foundation (done)
 
-**Goal.** A runnable, tested FastAPI service skeleton containing the cross-cutting pieces every later phase
-relies on. No database yet.
+**Goal.** A runnable, tested FastAPI service skeleton containing the cross-cutting pieces every later
+phase relies on. No database yet.
 
-**Scope**
+**Delivered**
 
-- `.gitignore`, `.env.example`, and `backend/pyproject.toml` (runtime and dev dependencies; ruff, mypy,
-  and pytest configuration).
-- `app/main.py`: app factory with a lifespan handler, `GET /health`, and an `/api/v1` router.
-- `app/core/config.py`: pydantic-settings `Settings` with the `SITESCOPE_` prefix, validated at startup.
-- `app/core/logging.py`: JSON logging, request-ID middleware, and context variables.
-- `app/core/errors.py` plus exception handlers:
-  - domain and validation errors returned as problem+json;
-  - generic 500 responses that reveal no internals.
-- `.github/workflows/ci.yml`: lint, type check, and unit tests.
+- **Repository preparation:**
+  - renamed `fronted/` to `frontend/`;
+  - added `.gitignore` and `.gitattributes`;
+  - initialized a local git repository, with the approved Phase 0 docs as the first commit.
+- `backend/pyproject.toml`: runtime dependencies, a `dev` extra, and ruff, mypy, and pytest
+  configuration. The project is installed in editable mode.
+- `app/main.py`: the application factory, a lifespan handler (start time, startup and shutdown events),
+  and the module-level ASGI app.
+- `app/core/config.py`: `Settings` built on pydantic-settings, with the `SITESCOPE_` prefix and an
+  optional `backend/.env`. Settings are immutable, and the process fails fast on invalid values or
+  unknown keys.
+- `app/core/logging.py`: JSON log lines on stdout with request-ID context. Uvicorn's own logs go
+  through the same handler.
+- `app/core/middleware.py`:
+  - assigns request IDs;
+  - writes one access-log line per request, without query strings;
+  - returns a last-resort problem+json 500.
+- `app/core/errors.py`: the `DomainError` hierarchy, and RFC 9457 problem responses for domain errors,
+  HTTP errors, and validation errors.
+- **Endpoints:** `GET /`, `GET /health`, and `GET /api/v1/health/live`. OpenAPI is served at
+  `/openapi.json`, `/docs`, and `/redoc`.
+- **Docs:** [`api-conventions.md`](api-conventions.md) and [`development.md`](development.md).
 
-**Tests.** Settings validation, error mapping, request-ID propagation, and the health endpoint.
+**Verification** (2026-11-06; Windows 10, Python 3.13.7)
 
-**Done when**
+- pytest: 51 passed. These are unit tests and involve no PostgreSQL or Redis.
+- `ruff check`: no findings. `ruff format --check`: all files formatted.
+- mypy (strict, over `app` and `tests`): no issues.
+- Uvicorn, started with `uvicorn app.main:app`, answered every endpoint, `/docs`, `/redoc`, and
+  `/openapi.json` over HTTP. The endpoints were re-checked from Windows PowerShell with
+  `Invoke-RestMethod`.
 
-- `pytest`, `ruff check`, `ruff format --check`, and `mypy` pass locally.
-- `uvicorn app.main:app` serves `/health`.
-- The CI workflow counts as verified only after the first push to GitHub.
+**Deviations from the plan**
 
-**Needs.** The existing venv. Running `git init` first is recommended; that is the owner's decision.
+- **CI workflow:** deferred until a GitHub remote exists, because it cannot be verified before then.
+  At the owner's request, no remote has been created yet.
+- **`.env.example` location:** it lives in `backend/`, next to the code that reads it, rather than at
+  the repository root.
+- **Readiness endpoint path:** the endpoint planned for Phase 2 moves from `GET /ready` to
+  `GET /api/v1/health/ready`, beside the new versioned liveness endpoint.
 
 ### Phase 2: Persistence, migrations, and the job API
 
@@ -170,7 +193,9 @@ relies on. No database yet.
   - `GET /api/v1/jobs` (keyset pagination, status filter)
   - `GET /api/v1/jobs/{id}` (state counts, current level, budget)
   - `POST /api/v1/jobs/{id}/cancel`
-- `GET /ready`, which checks PostgreSQL and Redis.
+- `GET /api/v1/health/ready`, which checks PostgreSQL and Redis.
+- New database and Redis settings in `backend/.env.example`.
+- The CI workflow (deferred from Phase 1), if a GitHub remote exists by then.
 
 **Tests**
 
@@ -274,6 +299,11 @@ reason.
 - Redirects handled through same-level admission.
 - A local fixture site for tests (loopback is allowed only in the test configuration), plus the first
   demo-site content with its own robots.txt.
+- Findings carried over from Phase 1:
+  - choose between `httpx` and its successor `httpx2`; Starlette 1.x's TestClient already uses
+    `httpx2`;
+  - set the HTTP client's logger to WARNING, because at INFO it logs full request URLs, including
+    query strings.
 
 **Tests**
 
@@ -323,10 +353,7 @@ against exact expected reports.
 
 ### Phase 8: React + TypeScript dashboard
 
-**Needs**
-
-- Node.js (installed).
-- `fronted/` renamed to `frontend/` (needs owner approval).
+**Needs.** Node.js (installed).
 
 **Scope**
 
@@ -412,9 +439,11 @@ raw output. Nothing is extrapolated.
 
 ## Decisions pending from the project owner
 
-1. **Rename `fronted/` to `frontend/`.** The directory is empty. The rename is needed before Phase 8.
-2. **Initialize git and create a GitHub repository.** Needed for CI (Phase 1) and for the portfolio.
-3. **Choose how to install Docker (Option A or B).** Needed before Phase 2.
-4. **Choose the public demo target.** Either the self-hosted demo-site container (the current plan) or a
+1. **Create a GitHub repository and push.** The local repository exists, but a remote is needed
+   before the CI workflow can be added and verified.
+2. **Choose how to install Docker (Option A or B).** Needed before Phase 2.
+3. **Choose the public demo target.** Either the self-hosted demo-site container (the current plan) or a
    separately hosted static site.
-5. **Choose a license for the public repository** (for example, MIT).
+4. **Choose a license for the public repository** (for example, MIT).
+
+Resolved in Phase 1: `fronted/` was renamed to `frontend/`, and git was initialized locally.

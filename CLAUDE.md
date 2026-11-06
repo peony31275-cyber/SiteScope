@@ -19,6 +19,9 @@ React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
 ```
 
 - Design: [docs/architecture.md](docs/architecture.md)
+- API conventions (URLs, request IDs, problem+json errors):
+  [docs/api-conventions.md](docs/api-conventions.md)
+- Local development commands (Windows PowerShell): [docs/development.md](docs/development.md)
 - Phase plan and current status: [docs/development-roadmap.md](docs/development-roadmap.md). Read it before
   starting any work.
 - Decision records: [docs/adr/](docs/adr/README.md). To change a decision, add a new ADR that supersedes
@@ -148,6 +151,8 @@ explanations for the project owner in Chinese.
 | `backend/tests/fault` | failure injection and recovery (marker `fault`) |
 
 - A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
+- pytest treats warnings as errors. Starlette's `TestClient` uses `httpx2`; with plain `httpx` it
+  emits a deprecation warning, which would fail the run.
 - Concurrency and fault tests assert the invariants listed under "Correctness invariants" in
   `docs/architecture.md`.
 
@@ -158,22 +163,36 @@ explanations for the project owner in Chinese.
   Git Bash is also available.
 - Python lives in `backend\.venv` (Python 3.13.7). Run tools through it, e.g.
   `backend\.venv\Scripts\python.exe -m pytest`, so the correct interpreter is always used.
+  `Activate.ps1` is blocked by the default execution policy on this machine.
 - Node.js 24 and npm 11 are installed (for the frontend, Phase 8).
 - Docker, PostgreSQL, and Redis are **not installed yet**. They are needed from Phase 2 onward. See the
   "Environment setup" section of `docs/development-roadmap.md`.
-- The commands to run, test, and lint the code are defined in Phase 1. Add them here once they exist.
+- Commands, run from `backend\` (full guide: `docs/development.md`):
+
+  | Task | Command |
+  |---|---|
+  | Install | `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"` |
+  | Run the API | `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload` |
+  | Tests | `.\.venv\Scripts\python.exe -m pytest` |
+  | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
+  | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
+  | Type check | `.\.venv\Scripts\python.exe -m mypy` |
+
+  All four checks (tests, lint, format check, type check) must pass before work is reported done.
 
 ## Repository layout (target)
 
 ```
-backend/       Python package `app`: FastAPI API, scheduler, crawler and indexer workers
-  app/         api/ core/ db/ services/ queue/ scheduler/ crawler/ indexing/ workers/
-  alembic/     migrations
-  tests/       unit/ integration/ fault/
-frontend/      React + TypeScript dashboard (on disk as the misspelled `fronted/`; rename pending owner approval)
-demo-site/     controlled static website: the approved demo crawl target
-benchmarks/    reproducible benchmark scripts and raw results
-docs/          architecture.md, development-roadmap.md, adr/
+backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
+  app/            api/ core/ (Phase 1); db/ services/ queue/ scheduler/ crawler/ indexing/ workers/ (later)
+  alembic/        migrations (Phase 2)
+  tests/          unit/ (Phase 1); integration/ fault/ (later)
+  pyproject.toml  dependencies + ruff / mypy / pytest configuration
+  .env.example    configuration template; copy to backend/.env (git-ignored)
+frontend/         React + TypeScript dashboard (Phase 8; currently empty)
+demo-site/        controlled static website: the approved demo crawl target
+benchmarks/       reproducible benchmark scripts and raw results
+docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/
 ```
 
 The full proposed tree and the responsibilities of each module are in `docs/architecture.md`, under

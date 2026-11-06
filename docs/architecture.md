@@ -1,7 +1,9 @@
 # SiteScope Architecture
 
-> **Status: design baseline from Phase 0 (2026-11-06). Nothing in this document is implemented yet.**
-> [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be refined
+> **Status: design baseline from Phase 0 (2026-11-06).** Phase 1 implemented only the API foundation:
+> configuration, structured logging, error handling, and the liveness endpoints. Everything else
+> described here is not implemented yet. [`development-roadmap.md`](development-roadmap.md) tracks what
+> has been built. Details will be refined
 > during implementation. Changing an invariant requires a new ADR in [`adr/`](adr/README.md).
 
 ## Contents
@@ -114,6 +116,8 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 - Uses Redis only for queue statistics and request rate limiting.
 - Enforces the target allowlist and the server-side caps on depth, pages, and running jobs.
 - Accepts an `Idempotency-Key` header on job creation.
+- Follows [`api-conventions.md`](api-conventions.md): versioned routes under `/api/v1`, an
+  `X-Request-ID` header on every response, and RFC 9457 problem+json errors.
 
 **Scheduler.** One asyncio process running independent periodic loops:
 
@@ -767,8 +771,9 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 
 **Health**
 
-- `GET /health` is liveness: the process is up. It checks no dependencies.
-- `GET /ready` reports whether PostgreSQL and Redis are reachable.
+- `GET /health` and `GET /api/v1/health/live` are liveness probes: the process is up and serving
+  requests. They check no dependencies. Both were implemented in Phase 1.
+- `GET /api/v1/health/ready` (Phase 2) reports whether PostgreSQL and Redis are reachable.
 - The scheduler and the workers log periodic heartbeats, which the Compose health checks use.
 
 **Progress views**
@@ -794,7 +799,9 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
   - retries
   - politeness: rate limit, and the user agent `SiteScopeBot/<version>`
   - API: token, CORS
-- `.env.example` lists every variable with a safe placeholder.
+- `backend/.env.example` lists every variable with a safe placeholder.
+- A local `backend/.env` is optional and git-ignored. It may contain only known `SITESCOPE_`
+  settings; any other key stops startup.
 
 ## 15. Deployment topology
 
@@ -824,12 +831,12 @@ full stack.
 SITESCOPE/
 |-- CLAUDE.md                    # stable context and rules for contributors and Claude
 |-- README.md                    # Phase 11: overview, quickstart, design highlights
-|-- .gitignore                   # Phase 1
-|-- .env.example                 # Phase 1: every setting, with safe placeholders
+|-- .gitignore, .gitattributes  # Phase 1: ignore rules, LF line endings
 |-- docker-compose.yml           # Phase 2: postgres + redis; Phase 9: full stack
-|-- .github/workflows/ci.yml     # Phase 1; extended in later phases
+|-- .github/workflows/ci.yml     # added once a GitHub remote exists; extended in later phases
 |-- backend/
 |   |-- .venv/                   # existing; never committed, never recreated
+|   |-- .env.example             # Phase 1: every setting, with safe placeholders
 |   |-- pyproject.toml           # dependencies + ruff / mypy / pytest config
 |   |-- alembic.ini
 |   |-- alembic/                 # migrations
@@ -850,12 +857,14 @@ SITESCOPE/
 |       |-- unit/
 |       |-- integration/
 |       `-- fault/
-|-- frontend/                    # Phase 8 (exists on disk as the misspelled `fronted/`; rename pending approval)
+|-- frontend/                    # Phase 8 (currently empty)
 |-- demo-site/                   # Phase 5/9: static site + robots.txt, the approved demo target
 |-- benchmarks/                  # Phase 10: scripts, raw results, environment notes
 `-- docs/
     |-- architecture.md
     |-- development-roadmap.md
+    |-- api-conventions.md       # Phase 1
+    |-- development.md           # Phase 1: Windows PowerShell commands
     `-- adr/
 ```
 
@@ -879,11 +888,11 @@ SITESCOPE/
 | PostgreSQL driver | asyncpg | mature async driver; psycopg's async mode would require switching Windows to the selector event loop (to be verified on this machine in Phase 2) |
 | Queue | Redis Streams, Redis 7.0 or later | consumer groups, pending entries list, `XAUTOCLAIM` |
 | Redis client | redis-py (`redis.asyncio`) | the official client |
-| HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport |
+| HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport; Phase 5 chooses between `httpx` and its successor `httpx2`, which Starlette 1.x's TestClient already uses |
 | HTML parsing | BeautifulSoup 4 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it |
 | robots.txt | chosen in Phase 5 | must be RFC 9309-compliant (§12.5) |
 | Logging | stdlib `logging` + a JSON formatter | no extra dependency |
-| Tests | pytest + an async plugin (chosen in Phase 1), `httpx.MockTransport` | standard tooling |
+| Tests | pytest with warnings treated as errors; Starlette's TestClient (needs `httpx2`); AnyIO's bundled pytest plugin for async tests; the HTTP client's mock transport for crawler tests | no extra plugin dependency: AnyIO is already installed with Starlette |
 | Quality | ruff (lint and format), mypy | |
 | Frontend | React + TypeScript + Vite; Vitest + Testing Library | |
 | Delivery | Docker Compose; GitHub Actions with PostgreSQL and Redis service containers | |
