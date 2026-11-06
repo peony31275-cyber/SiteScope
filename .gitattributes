@@ -1,0 +1,4 @@
+# Store text files with LF line endings in the repository and the working tree, regardless of
+# the local core.autocrlf setting. Scripts and config files are later used inside Linux
+# containers, where CRLF line endings break them.
+* text=auto eol=lf

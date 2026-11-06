@@ -1,0 +1,180 @@
+# CLAUDE.md
+
+Guidance for Claude Code and for human contributors to this repository. Keep this file short, stable, and
+accurate. Details belong in `docs/`.
+
+## Project
+
+**SiteScope: Distributed Web Crawling & Search Infrastructure.** A small-scale but runnable system, built as
+a portfolio project for backend and distributed-systems engineering. It is not a scraping tutorial.
+Correctness under failure is a first-class requirement: duplicate delivery, worker crashes, lease expiry,
+and divergence between Redis and PostgreSQL must all be handled.
+
+```
+React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
+  -> scheduler (dispatcher, outbox relay, level advancer, reconciler)
+  -> Redis stream "sitescope:crawl" -> crawler workers (asyncio + HTTPX + BeautifulSoup)
+  -> PostgreSQL (pages, links, index_outbox) -> Redis stream "sitescope:index"
+  -> indexer worker -> PostgreSQL full-text index (tsvector + GIN) -> search API
+```
+
+- Design: [docs/architecture.md](docs/architecture.md)
+- Phase plan and current status: [docs/development-roadmap.md](docs/development-roadmap.md). Read it before
+  starting any work.
+- Decision records: [docs/adr/](docs/adr/README.md). To change a decision, add a new ADR that supersedes
+  the old one. Never rewrite an accepted ADR.
+
+## Working agreement
+
+The project is built one phase at a time. Start a phase only when the owner requests it. For each phase:
+
+1. Inspect the existing code first. Don't overwrite working code without a reason.
+2. State the plan briefly.
+3. Implement **only** the requested phase, including its tests.
+4. Run the available tests and checks, and fix anything the change broke.
+5. Report:
+   - the files created or modified;
+   - the exact commands run, with their real results;
+   - how to verify the work manually.
+6. Update `docs/development-roadmap.md`, and the architecture doc or ADRs if the design changed. Then stop.
+
+**Honesty**
+
+- Never report a command or test as passing unless it actually ran and passed in this session. Report a
+  skipped test as skipped and give the reason.
+- If a required tool (Docker, PostgreSQL, Redis, ...) is missing, say so and give exact setup steps.
+- Don't present a placeholder implementation as a finished feature. Call test doubles (fake fetchers,
+  in-memory sites) what they are.
+- Never fabricate or extrapolate performance numbers. A benchmark result must come with its command,
+  environment, and raw output.
+- Never claim exactly-once processing.
+
+**Safety**
+
+- Get explicit permission before doing anything destructive, including:
+  - deleting files;
+  - renaming directories;
+  - recreating `backend/.venv`;
+  - rewriting git history.
+- Don't commit or push unless asked.
+- Keep secrets out of code, tests, docs, and committed configuration.
+
+**Language.** Write code, comments, commit messages, and documentation in English. Write phase reports and
+explanations for the project owner in Chinese.
+
+## Architecture invariants (changing one requires a new ADR)
+
+1. **PostgreSQL is the source of truth** for job, URL, page, link, and index state.
+   - Redis holds only deliverable messages, rate-limit state, and caches.
+   - Losing Redis data must never lose work (ADR-0001).
+2. **At-least-once processing with idempotent effects.** Every consumer tolerates duplicate and
+   redelivered messages (ADR-0003).
+3. **Outbox, never dual writes** (ADR-0002).
+   - Request handlers never publish to Redis.
+   - Crawl tasks are published from `crawl_urls` (the frontier acts as the outbox), and index events from
+     `index_outbox`.
+   - The relay publishes, then marks the row as published, in the same transaction.
+4. **Leases with fencing tokens.**
+   - A worker claims a URL with a compare-and-set that increments `lease_epoch`.
+   - Its result transaction must re-check `state = 'in_progress' AND lease_epoch = :token` under a row
+     lock.
+   - A fenced-out worker discards its result and does not `XACK`.
+   - Timing must satisfy `task_deadline < lease_duration <= reclaim_min_idle`.
+5. **Level-synchronous BFS** (ADR-0004).
+   - Only URLs at a job's `current_level` are dispatched.
+   - Workers only record links. Only the scheduler admits the next level, under the job row lock.
+   - The single exception: workers admit same-level redirect targets.
+6. **Exact page budget.** Serialized admission plus a CHECK constraint keep `admitted_count <= max_pages`.
+7. **Deduplication by constraint.** Use `UNIQUE (job_id, url_hash)` with `INSERT ... ON CONFLICT DO
+   NOTHING`. Never rely on check-then-insert alone.
+8. **State transitions are conditional updates** (`UPDATE ... WHERE state = :expected ... RETURNING`).
+   Zero rows means the race was lost: treat it as a no-op, log it, and move on.
+9. **No transaction spans a request to a crawl target.** Claim and commit, then fetch outside any
+   transaction, then commit the result.
+10. **Every outbound request goes through the safe fetcher** (ADR-0006), which provides:
+    - the target allowlist and URL policy;
+    - DNS resolution with IP validation, and the connection pinned to the validated IP;
+    - no automatic redirects;
+    - timeouts plus an overall deadline;
+    - a cap on decoded body size;
+    - robots.txt compliance and a per-host rate limit.
+11. **Clocks.** Leases use the PostgreSQL clock, and rate limits use the Redis clock. A worker's local
+    clock is never used for correctness.
+
+## Code conventions
+
+- **Python and types.** Python 3.13, with type annotations everywhere.
+  - The target is mypy strict for `app/`.
+  - Every `# type: ignore[code]` needs a stated reason.
+  - Lint and format with ruff.
+- **Layering.**
+  - `api` handles HTTP only. `services` holds the use cases and owns transactions. `db` holds models and
+    sessions.
+  - `scheduler` and `workers` may use `services`, `queue`, `crawler`, and `indexing`, but never `api`.
+  - `crawler` has no database imports, and `queue` has no domain logic.
+- **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and
+  `httpx.AsyncClient`. Don't block the event loop with long CPU work; offload it when measurements show a
+  need.
+- **Transactions.**
+  - Use `async with session.begin()` in the service layer.
+  - Rely on READ COMMITTED, row locks, and compare-and-set updates.
+  - Lock a URL row before its job row.
+  - Transactions that lock the job row first (cancel, level advancement) must not lock `in_progress` URL
+    rows.
+- **Schema.** Change the schema only through Alembic migrations, and never edit a migration that has
+  already been applied.
+- **Configuration.** Use pydantic-settings with the `SITESCOPE_` environment prefix, validated at startup.
+  `.env` is git-ignored, and `.env.example` documents every variable.
+- **Errors.** Map domain exceptions centrally to RFC 9457 `application/problem+json`. Never leak stack
+  traces.
+- **Logging.**
+  - Use stdlib `logging` with a JSON formatter, writing to stdout.
+  - Attach context through contextvars: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`.
+  - Never log secrets or page bodies.
+- **Retries.**
+  - Bound the number of attempts.
+  - Use exponential backoff with full jitter.
+  - Retry only transient failures.
+  - Crawl retries live in PostgreSQL (`pending` + `next_attempt_at`), not in an in-process sleep.
+- **Dependencies.** Prefer the standard library and packages that are already installed. Justify every new
+  dependency with one line in the phase report.
+
+## Tests
+
+| Directory | What runs there |
+|---|---|
+| `backend/tests/unit` | no network, database, or Redis |
+| `backend/tests/integration` | real PostgreSQL and Redis (marker `integration`) |
+| `backend/tests/fault` | failure injection and recovery (marker `fault`) |
+
+- A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
+- Concurrency and fault tests assert the invariants listed under "Correctness invariants" in
+  `docs/architecture.md`.
+
+## Environment (Windows 10 development machine)
+
+- Repository root: `C:\Users\24419\Desktop\SITESCOPE`.
+- The default shell is Windows PowerShell 5.1, which has no `&&`. Use `;` or `if ($?) { ... }` instead.
+  Git Bash is also available.
+- Python lives in `backend\.venv` (Python 3.13.7). Run tools through it, e.g.
+  `backend\.venv\Scripts\python.exe -m pytest`, so the correct interpreter is always used.
+- Node.js 24 and npm 11 are installed (for the frontend, Phase 8).
+- Docker, PostgreSQL, and Redis are **not installed yet**. They are needed from Phase 2 onward. See the
+  "Environment setup" section of `docs/development-roadmap.md`.
+- The commands to run, test, and lint the code are defined in Phase 1. Add them here once they exist.
+
+## Repository layout (target)
+
+```
+backend/       Python package `app`: FastAPI API, scheduler, crawler and indexer workers
+  app/         api/ core/ db/ services/ queue/ scheduler/ crawler/ indexing/ workers/
+  alembic/     migrations
+  tests/       unit/ integration/ fault/
+frontend/      React + TypeScript dashboard (on disk as the misspelled `fronted/`; rename pending owner approval)
+demo-site/     controlled static website: the approved demo crawl target
+benchmarks/    reproducible benchmark scripts and raw results
+docs/          architecture.md, development-roadmap.md, adr/
+```
+
+The full proposed tree and the responsibilities of each module are in `docs/architecture.md`, under
+"Repository structure (proposed)".
