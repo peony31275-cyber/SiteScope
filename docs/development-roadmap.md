@@ -10,7 +10,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 |---|---|---|
 | 0 | Repository inspection and architecture baseline | **Done** (2026-11-06) |
 | 1 | Backend foundation | **Done** (2026-11-06) |
-| 2 | Persistence, migrations, and the job API | Not started (needs Docker) |
+| 2 | Persistence, migrations, and the job API | Not started (Docker environment ready) |
 | 3 | Task distribution core | Not started |
 | 4 | Fault tolerance and recovery | Not started |
 | 5 | Safe HTTP crawling | Not started |
@@ -39,75 +39,45 @@ Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's f
 | Python 3.13.7 (`backend/.venv`) | available |
 | Git 2.52 | available |
 | Node.js 24.14, npm 11.9 | available |
-| WSL 3.0.3 with an Ubuntu distribution (WSL 2) | available |
-| Docker / Docker Compose | **not installed** |
-| PostgreSQL | **not installed** |
-| Redis | **not installed** |
+| WSL 3.0.3 with Ubuntu 24.04.3 LTS (WSL 2, systemd enabled) | available |
+| Docker Engine 29.9.3 + Docker Compose v5.7.0, inside WSL Ubuntu | installed and verified (2026-11-06) |
+| PostgreSQL, Redis | not installed locally; they will run as Docker containers (Phase 2) |
 
-## Environment setup (needed before Phase 2)
+## Environment setup (done, 2026-11-06)
 
-- Phase 1 needs only the existing virtual environment.
-- From Phase 2 on, the integration tests need PostgreSQL and Redis.
-- Phase 9 needs Docker Compose.
+**Decision.** Docker Engine was installed inside the WSL 2 Ubuntu distribution, from Docker's official
+apt repository, together with the official Compose plugin. Docker Desktop was not used, for two
+reasons:
 
-SiteScope runs PostgreSQL and Redis in Docker, so Docker is the only thing to install. Choose one of the
-two options below.
+- Docker supports Docker Desktop only on Windows versions that Microsoft still services, and
+  Windows 10 servicing has ended.
+- Docker Engine inside WSL also avoids a second VM and a GUI application.
 
-### Option A: Docker Desktop with the WSL 2 backend
+**Prerequisites checked before installing**
 
-1. Read the current requirements on Docker's
-   [Windows install page](https://docs.docker.com/desktop/setup/install/windows-install/).
-   - Docker documents Windows 10 22H2 (build 19045) as the minimum, and this machine runs build 19045.
-   - Docker also states that it supports a Windows version only while Microsoft still services it.
-     Windows 10 servicing has ended, so a current release may refuse to install or may be unsupported
-     here. If that happens, use Option B.
-2. Install Docker Desktop and choose the WSL 2 backend. The installed WSL is version 3.0.3; Docker
-   requires at least 2.1.5.
-3. Start Docker Desktop, then verify the installation in PowerShell:
-   ```powershell
-   docker version
-   docker compose version
-   docker run --rm hello-world
-   ```
+- Windows 10 Home 22H2, build 19045.6466
+- WSL 3.0.3
+- Ubuntu 24.04.3 LTS, a release Docker supports
+- systemd already running as PID 1
+- no existing Docker, containerd, runc, or Podman
+- 230 GB free on `C:`
+- Docker's apt repository and Docker Hub both reachable
 
-### Option B: Docker Engine inside the existing WSL 2 Ubuntu
+**Verified as the normal user, without sudo**
 
-This option does not depend on Docker Desktop's Windows support policy. If Docker's
-[official Ubuntu guide](https://docs.docker.com/engine/install/ubuntu/) differs from the commands below,
-follow the guide.
+| Check | Result |
+|---|---|
+| `docker --version` | Docker version 29.9.3, build 5457199 |
+| `docker compose version` | Docker Compose version v5.7.0 |
+| `docker info` | logging driver `local`, systemd cgroup driver (cgroup v2), no warnings |
+| `docker run --rm hello-world` | succeeded; the image was pulled from Docker Hub |
+| Port published on `127.0.0.1` inside WSL | reachable from Windows at `127.0.0.1` and `localhost` |
 
-```bash
-# In PowerShell, open the distribution:  wsl -d Ubuntu
+**Limitation that shapes the workflow.** WSL stops Ubuntu about 15–30 s after the last WSL session
+closes, and Docker and every container stop with it. Keep a WSL session open while developing.
+Services with `restart: unless-stopped` come back automatically when Ubuntu starts again.
 
-# 1. Check that systemd is enabled. Recent Ubuntu WSL images enable it by default.
-cat /etc/wsl.conf        # expect the lines:  [boot]  systemd=true
-#    If they are missing, add them, run `wsl --shutdown` in PowerShell, and reopen Ubuntu.
-
-# 2. Add Docker's apt repository, then install Docker Engine and the Compose plugin.
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 3. Let your user run docker without sudo, then close and reopen the Ubuntu shell.
-sudo usermod -aG docker "$USER"
-
-# 4. Verify.
-docker run --rm hello-world
-docker compose version
-```
-
-With Option B:
-
-- Run Compose commands from the Ubuntu shell in `/mnt/c/Users/24419/Desktop/SITESCOPE`.
-- Ports published by containers are normally reachable from Windows at `localhost`. The backend, running
-  from `backend\.venv`, can then use `localhost:5432` and `localhost:6379`.
-- If those ports are not reachable, use the address that `hostname -I` prints inside Ubuntu.
+Commands, workflow, and troubleshooting are in [`development.md`](development.md#docker-wsl-2).
 
 ## Phases
 
@@ -183,7 +153,12 @@ phase relies on. No database yet.
 
 **Scope**
 
-- `docker-compose.yml` with `postgres` and `redis`: pinned versions, named volumes, and Redis AOF enabled.
+- `docker-compose.yml` with `postgres` and `redis`, using:
+  - pinned image versions;
+  - named volumes;
+  - Redis AOF enabled;
+  - ports published on `127.0.0.1` only;
+  - `restart: unless-stopped` (see [development.md](development.md#docker-wsl-2)).
 - SQLAlchemy 2.x with an async engine and sessions.
 - Models for `crawl_jobs`, `crawl_urls`, `pages`, `page_links`, and `index_outbox`.
 - An initial Alembic migration with the constraints and partial indexes from the architecture.
@@ -212,7 +187,10 @@ phase relies on. No database yet.
 **Done when.** Unit and integration tests pass against the Compose services, and migrations can be rolled
 back.
 
-**Needs.** Docker (see Environment setup).
+**Needs**
+
+- Docker Engine in WSL (installed; see Environment setup).
+- A WSL session kept open while tests or the API use the containers.
 
 ### Phase 3: Task distribution core
 
@@ -441,9 +419,11 @@ raw output. Nothing is extrapolated.
 
 1. **Create a GitHub repository and push.** The local repository exists, but a remote is needed
    before the CI workflow can be added and verified.
-2. **Choose how to install Docker (Option A or B).** Needed before Phase 2.
-3. **Choose the public demo target.** Either the self-hosted demo-site container (the current plan) or a
+2. **Choose the public demo target.** Either the self-hosted demo-site container (the current plan) or a
    separately hosted static site.
-4. **Choose a license for the public repository** (for example, MIT).
+3. **Choose a license for the public repository** (for example, MIT).
 
-Resolved in Phase 1: `fronted/` was renamed to `frontend/`, and git was initialized locally.
+Resolved:
+
+- Phase 1: `fronted/` was renamed to `frontend/`, and git was initialized locally.
+- 2026-11-06: Docker Engine was installed inside WSL Ubuntu (see Environment setup).

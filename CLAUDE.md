@@ -165,8 +165,12 @@ explanations for the project owner in Chinese.
   `backend\.venv\Scripts\python.exe -m pytest`, so the correct interpreter is always used.
   `Activate.ps1` is blocked by the default execution policy on this machine.
 - Node.js 24 and npm 11 are installed (for the frontend, Phase 8).
-- Docker, PostgreSQL, and Redis are **not installed yet**. They are needed from Phase 2 onward. See the
-  "Environment setup" section of `docs/development-roadmap.md`.
+- Docker Engine 29.9.3 and the Compose plugin run **inside WSL Ubuntu 24.04**. There is no Docker
+  Desktop. Run Docker from an Ubuntu terminal, or with `wsl docker ...` from PowerShell.
+- PostgreSQL and Redis will run as containers (Phase 2).
+- WSL stops Ubuntu, and Docker with it, about 15–30 s after the last WSL session closes. Keep a WSL
+  session open while anything needs the containers. Details: `docs/development.md`, section
+  "Docker (WSL 2)".
 - Commands, run from `backend\` (full guide: `docs/development.md`):
 
   | Task | Command |
