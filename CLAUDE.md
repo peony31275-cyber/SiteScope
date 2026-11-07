@@ -83,8 +83,11 @@ explanations for the project owner in Chinese.
      lock.
    - A fenced-out worker discards its result and does not `XACK`.
    - Timing must satisfy `task_deadline < lease_duration <= reclaim_min_idle`.
-   - The database enforces fencing (ADR-0010): an outcome must carry `result_epoch = lease_epoch`
-     (CHECK), a claim must clear `result_epoch`, and `lease_epoch` never decreases (trigger).
+   - The database enforces fencing (ADR-0010, ADR-0011): an outcome must carry
+     `result_epoch = lease_epoch` (CHECK), a claim must clear `result_epoch`, and `lease_epoch`
+     changes only in a claim, by exactly one (triggers).
+   - Workers must still send their own token. `SET result_epoch = lease_epoch`, copied from the
+     column, passes every database rule and defeats fencing.
 5. **Level-synchronous BFS** (ADR-0004).
    - Only URLs at a job's `current_level` are dispatched.
    - Workers only record links. Only the scheduler admits the next level, under the job row lock.
@@ -92,7 +95,8 @@ explanations for the project owner in Chinese.
 6. **Exact page budget.** Serialized admission plus a CHECK constraint keep `admitted_count <= max_pages`.
 7. **Deduplication by constraint.** Use `UNIQUE (job_id, normalized_url)` with `INSERT ... ON CONFLICT
    DO NOTHING` (ADR-0009). Never rely on check-then-insert alone. Normalized URLs are http(s),
-   printable ASCII, at most 2048 bytes; the database rejects anything else.
+   printable ASCII, at most 2048 bytes; the database rejects anything else. Every URL goes through
+   `app/crawler/urls.py` (`normalize_url`) before any scope check, deduplication or storage.
 8. **State transitions are conditional updates** (`UPDATE ... WHERE state = :expected ... RETURNING`).
    Zero rows means the race was lost: treat it as a no-op, log it, and move on.
 9. **No transaction spans a request to a crawl target.** Claim and commit, then fetch outside any
@@ -104,6 +108,9 @@ explanations for the project owner in Chinese.
     - timeouts plus an overall deadline;
     - a cap on decoded body size;
     - robots.txt compliance and a per-host rate limit.
+
+    The API's crawl-scope check (`app/crawler/scope.py`, ADR-0012) is syntactic. It is not an SSRF
+    defense on its own, and approved targets are empty by default.
 11. **Clocks.** Leases use the PostgreSQL clock, and rate limits use the Redis clock. A worker's local
     clock is never used for correctness.
 
@@ -117,7 +124,8 @@ explanations for the project owner in Chinese.
   - `api` handles HTTP only. `services` holds the use cases and owns transactions. `db` holds models and
     sessions.
   - `scheduler` and `workers` may use `services`, `queue`, `crawler`, and `indexing`, but never `api`.
-  - `crawler` has no database imports, and `queue` has no domain logic.
+  - `crawler` has no database imports, and `queue` has no domain logic. `services` and
+    `core.config` may use the pure functions of `crawler` (URL normalization, scope).
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and
   `httpx.AsyncClient`. Don't block the event loop with long CPU work; offload it when measurements show a
   need.
@@ -171,7 +179,7 @@ explanations for the project owner in Chinese.
 - Python lives in `backend\.venv` (Python 3.13.7). Run tools through it, e.g.
   `backend\.venv\Scripts\python.exe -m pytest`, so the correct interpreter is always used.
   `Activate.ps1` is blocked by the default execution policy on this machine.
-- Node.js 24 and npm 11 are installed (for the frontend, Phase 8).
+- Node.js 24 and npm 11 are installed (for the frontend, Phase 9).
 - Docker Engine 29.9.3 and the Compose plugin run **inside WSL Ubuntu 24.04**. There is no Docker
   Desktop. Run Docker from an Ubuntu terminal, or with `wsl docker ...` from PowerShell.
 - PostgreSQL 18.6 and Redis 8.10.3 run as containers from `backend/compose.yaml`, with ports bound
@@ -198,14 +206,14 @@ explanations for the project owner in Chinese.
 
 ```
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
-  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); queue/ scheduler/ crawler/ indexing/
-                  workers/ (later)
+  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phase 2C: URLs, scope);
+                  queue/ scheduler/ indexing/ workers/ (later)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (later)
   pyproject.toml  dependencies + ruff / mypy / pytest configuration
   .env.example    configuration template; copy to backend/.env (git-ignored)
-frontend/         React + TypeScript dashboard (Phase 8; currently empty)
+frontend/         React + TypeScript dashboard (Phase 9; currently empty)
 demo-site/        controlled static website: the approved demo crawl target
 benchmarks/       reproducible benchmark scripts and raw results
 docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/

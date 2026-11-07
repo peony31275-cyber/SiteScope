@@ -18,7 +18,8 @@ from tests.integration import helpers
 
 pytestmark = pytest.mark.anyio
 
-HEAD = "0001"
+REVISIONS = ["0001", "0002"]  # oldest first
+HEAD = REVISIONS[-1]
 
 
 @pytest.fixture
@@ -57,6 +58,14 @@ async def sitescope_functions(settings: Settings) -> list[str]:
     )
 
 
+async def user_triggers(settings: Settings) -> list[str]:
+    return await query(
+        settings,
+        "SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid"
+        " WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace ORDER BY 1",
+    )
+
+
 async def schema_differences(settings: Settings) -> list[Any]:
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     try:
@@ -74,8 +83,9 @@ async def test_history_is_a_single_linear_chain() -> None:
     script = ScriptDirectory.from_config(helpers.alembic_config())
 
     assert script.get_heads() == [HEAD]
-    assert script.get_bases() == [HEAD]
-    assert [revision.revision for revision in script.walk_revisions()] == [HEAD]
+    assert script.get_bases() == [REVISIONS[0]]
+    walked = [revision.revision for revision in script.walk_revisions()]  # newest first
+    assert walked == list(reversed(REVISIONS))
 
 
 async def test_upgrade_builds_the_schema_from_an_empty_database(empty_database: Settings) -> None:
@@ -87,15 +97,11 @@ async def test_upgrade_builds_the_schema_from_an_empty_database(empty_database: 
     assert await query(empty_database, "SELECT version_num FROM alembic_version") == [HEAD]
     assert await sitescope_functions(empty_database) == [
         "sitescope_lease_epoch_monotonic",
+        "sitescope_lease_epoch_per_claim",
         "sitescope_reject_update",
         "sitescope_set_updated_at",
     ]
-    triggers = await query(
-        empty_database,
-        "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid"
-        " WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace",
-    )
-    assert triggers == [6]
+    assert len(await user_triggers(empty_database)) == 7
 
 
 async def test_migrated_schema_matches_the_models(empty_database: Settings) -> None:
@@ -126,6 +132,20 @@ async def test_downgrade_removes_everything_and_upgrade_restores_it(
 
     assert await public_tables(empty_database) == {*helpers.APP_TABLES, "alembic_version"}
     assert await schema_differences(empty_database) == []
+
+
+async def test_0002_downgrades_to_0001_and_back(empty_database: Settings) -> None:
+    """Migration 0002 only adds the claim trigger; stepping down removes exactly that."""
+    await helpers.upgrade(empty_database, "head")
+
+    await helpers.downgrade(empty_database, "0001")
+
+    assert "crawl_urls_lease_epoch_per_claim" not in await user_triggers(empty_database)
+    assert "sitescope_lease_epoch_per_claim" not in await sitescope_functions(empty_database)
+    assert len(await user_triggers(empty_database)) == 6
+    await helpers.upgrade(empty_database, "head")
+    assert "crawl_urls_lease_epoch_per_claim" in await user_triggers(empty_database)
+    assert await query(empty_database, "SELECT version_num FROM alembic_version") == [HEAD]
 
 
 async def test_an_interrupted_migration_leaves_no_partial_schema(empty_database: Settings) -> None:

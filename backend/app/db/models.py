@@ -17,9 +17,11 @@ Integrity rules enforced by the database itself:
   make cross-job references impossible.
 * Deduplication: ``UNIQUE (job_id, normalized_url)`` on ``crawl_urls`` (ADR-0009).
 * Page budget: ``CHECK (admitted_count BETWEEN 0 AND max_pages)`` on ``crawl_jobs``.
-* Fencing (ADR-0003): ``result_epoch`` must equal the current ``lease_epoch``, so a stale worker's
-  result violates a CHECK constraint and its whole transaction is rolled back. A trigger keeps
-  ``lease_epoch`` monotonic (created in the migration, not visible in these models).
+* Fencing (ADR-0003, ADR-0010, ADR-0011): ``result_epoch`` must equal the current
+  ``lease_epoch``, so a stale worker's result violates a CHECK constraint and its whole
+  transaction is rolled back. Triggers created by the migrations (not visible in these models)
+  keep ``lease_epoch`` from decreasing (0001), and let it change only in a claim, by exactly
+  one, with every lease grant requiring that new token (0002).
 """
 
 import uuid
@@ -134,7 +136,7 @@ class CrawlJob(Base):
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
     cancel_requested_at: Mapped[datetime | None]
-    # Set once every page of a finished job has been indexed (Phase 6).
+    # Set once every page of a finished job has been indexed (Phase 7).
     indexing_completed_at: Mapped[datetime | None]
 
     __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012 - SQLAlchemy declarative API
@@ -200,10 +202,11 @@ class CrawlUrl(Base):
     discovered_from_url_id: Mapped[uuid.UUID | None]
     redirect_hops: Mapped[int] = mapped_column(SmallInteger, server_default=text("0"))
     state: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
-    # Number of claims so far; bounded by the worker's max_attempts (Phase 4).
+    # Number of claims so far; bounded by the worker's max_attempts (Phase 6).
     attempt_count: Mapped[int] = mapped_column(SmallInteger, server_default=text("0"))
     next_attempt_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    # Fencing token: incremented by every claim, never decreases (trigger in the migration).
+    # Fencing token: incremented by exactly one by every claim, and changed by nothing else
+    # (triggers in migrations 0001 and 0002).
     lease_epoch: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
     lease_owner: Mapped[str | None] = mapped_column(Text)
     lease_expires_at: Mapped[datetime | None]

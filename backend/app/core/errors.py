@@ -10,7 +10,8 @@ See docs/api-conventions.md.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -61,6 +62,42 @@ class DomainError(Exception):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+    def problem_extensions(self) -> Mapping[str, Any] | None:
+        """Extra members for the problem response; none by default."""
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class FieldViolation:
+    """One request field that breaks a rule. ``loc`` follows FastAPI, e.g. ("body", "seed_url")."""
+
+    loc: tuple[str | int, ...]
+    message: str
+    type: str
+
+
+class InvalidInputError(DomainError):
+    """Request fields that passed schema validation but break a server-side rule.
+
+    Reported exactly like schema validation failures (422 ``validation_failed`` with an
+    ``errors`` list), so clients handle both kinds in one way.
+    """
+
+    status_code = 422
+    code = "validation_failed"
+
+    def __init__(self, violations: Sequence[FieldViolation]) -> None:
+        super().__init__(VALIDATION_ERROR_DETAIL)
+        self.violations = tuple(violations)
+
+    def problem_extensions(self) -> Mapping[str, Any]:
+        return {
+            "errors": [
+                {"loc": list(violation.loc), "msg": violation.message, "type": violation.type}
+                for violation in self.violations
+            ]
+        }
 
 
 class NotFoundError(DomainError):
@@ -138,7 +175,11 @@ async def _handle_domain_error(request: Request, exc: Exception) -> JSONResponse
     if not isinstance(exc, DomainError):
         raise exc
     return problem_response(
-        status=exc.status_code, code=exc.code, instance=request.url.path, detail=exc.detail
+        status=exc.status_code,
+        code=exc.code,
+        instance=request.url.path,
+        detail=exc.detail,
+        extensions=exc.problem_extensions(),
     )
 
 

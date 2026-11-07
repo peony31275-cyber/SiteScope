@@ -1,6 +1,7 @@
 # ADR-0010: Fencing is enforced by the database, not only by worker code
 
-- Status: Accepted
+- Status: Accepted. Extended by [ADR-0011](0011-fencing-tokens-issued-only-by-claims.md)
+  (tokens are issued only by claims; it also lists what the database cannot detect).
 - Date: 2026-11-06
 - Extends: [ADR-0003](0003-at-least-once-leases-fencing.md)
 

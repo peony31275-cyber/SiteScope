@@ -12,7 +12,10 @@ from app.core.config import Settings
 from app.core.errors import (
     INTERNAL_ERROR_DETAIL,
     PROBLEM_MEDIA_TYPE,
+    VALIDATION_ERROR_DETAIL,
     ConflictError,
+    FieldViolation,
+    InvalidInputError,
     NotFoundError,
 )
 from app.main import create_app
@@ -30,6 +33,16 @@ async def raise_not_found() -> None:
 @error_router.get("/conflict")
 async def raise_conflict() -> None:
     raise ConflictError("Idempotency key was reused with a different request body.")
+
+
+@error_router.get("/rule-violations")
+async def raise_invalid_input() -> None:
+    raise InvalidInputError(
+        [
+            FieldViolation(("body", "seed_url"), "host is not approved", "target_not_allowed"),
+            FieldViolation(("body", "max_pages"), "at most 10", "limit_exceeded"),
+        ]
+    )
 
 
 @error_router.get("/forbidden")
@@ -112,6 +125,17 @@ def test_validation_error_lists_each_problem(
     body = assert_problem(response, 422, "validation_failed")
     assert body["errors"] == [
         {"loc": ["query", "limit"], "msg": body["errors"][0]["msg"], "type": error_type}
+    ]
+
+
+def test_service_rule_violations_look_like_validation_errors(error_client: TestClient) -> None:
+    """InvalidInputError has the same shape as a schema validation failure."""
+    body = assert_problem(error_client.get("/_test/rule-violations"), 422, "validation_failed")
+
+    assert body["detail"] == VALIDATION_ERROR_DETAIL
+    assert body["errors"] == [
+        {"loc": ["body", "seed_url"], "msg": "host is not approved", "type": "target_not_allowed"},
+        {"loc": ["body", "max_pages"], "msg": "at most 10", "type": "limit_exceeded"},
     ]
 
 

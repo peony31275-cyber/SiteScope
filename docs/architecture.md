@@ -5,10 +5,14 @@
 > - Phase 1: the API foundation (configuration, structured logging, error handling, liveness).
 > - Phase 2B: the PostgreSQL schema (section 5), migrations, the PostgreSQL and Redis clients,
 >   and the readiness probe.
+> - Phase 2C: the crawl job API (`/api/v1/crawls`), URL normalization (section 8.1), the crawl
+>   scope (section 8.2) and transactional job creation. Migration `0002` tightens the
+>   database-enforced fencing (ADR-0011).
 >
-> Crawling, scheduling, workers and search are not implemented yet. [`development-roadmap.md`](development-roadmap.md) tracks what
-> has been built. Details will be refined
-> during implementation. Changing an invariant requires a new ADR in [`adr/`](adr/README.md).
+> Crawling, scheduling, workers and search are not implemented yet.
+> [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
+> refined during implementation. Changing an invariant requires a new ADR in
+> [`adr/`](adr/README.md).
 
 ## Contents
 
@@ -119,7 +123,8 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
   down.
 - Uses Redis only for queue statistics and request rate limiting.
 - Enforces the target allowlist and the server-side caps on depth, pages, and running jobs.
-- Accepts an `Idempotency-Key` header on job creation.
+- Will accept an `Idempotency-Key` header on job creation (planned for Phase 6; the columns exist
+  since Phase 2B).
 - Follows [`api-conventions.md`](api-conventions.md): versioned routes under `/api/v1`, an
   `X-Request-ID` header on every response, and RFC 9457 problem+json errors.
 
@@ -163,10 +168,12 @@ two overlapping schedulers produce at most duplicate messages.
 
 ## 4. End-to-end flow
 
-1. **Create.** `POST /api/v1/jobs` normalizes and validates the seed against the allowlist and the caps.
-   One transaction inserts the job (`queued`, `admitted_count = 1`) and the seed URL (`pending`, depth 0).
-2. **Activate.** The scheduler sets the job to `running` with `current_level = 0` once the running-jobs
-   cap allows it.
+1. **Create** (implemented in Phase 2C). `POST /api/v1/crawls` normalizes the seed URL and checks it
+   against the approved targets and the server's caps, without any network access. One transaction
+   inserts the job (`queued`, `current_level = 0`, `admitted_count = 1`) and the seed URL
+   (`pending`, depth 0). Nothing is published to Redis.
+2. **Activate.** The scheduler finds `queued` jobs in PostgreSQL (index `ix_crawl_jobs_active`) and
+   sets each to `running` with `current_level = 0` once the running-jobs cap allows it.
 3. **Dispatch.** The dispatcher locks eligible rows (`FOR UPDATE SKIP LOCKED`) and `XADD`s one
    `{job_id, url_id}` message per row. It then marks the rows `queued` and commits.
 4. **Claim.** A worker receives the message and claims the URL with a compare-and-set:
@@ -196,8 +203,8 @@ two overlapping schedulers produce at most duplicate messages.
 
 ## 5. Data model (implemented in Phase 2B)
 
-The schema is created by migration `0001` (`backend/alembic/versions/0001_initial_schema.py`). The
-ORM models in `backend/app/db/models.py` mirror it, and an integration test compares the two
+The schema is created by migration `0001` (`backend/alembic/versions/0001_initial_schema.py`).
+Migration `0002` adds a fencing trigger (Phase 2C, ADR-0011). The ORM models in `backend/app/db/models.py` mirror it, and an integration test compares the two
 (`alembic.autogenerate.compare_metadata` must report no differences). Six tables, nothing more.
 
 ```
@@ -311,7 +318,7 @@ The page's `content_version` versus `indexed_content_version` tells whether a pa
 | **URL format** | http(s), printable ASCII without spaces, at most 2048 bytes (so B-tree entries always fit). `COLLATE "C"` gives deterministic byte ordering. |
 | **Page budget** | `CHECK (admitted_count BETWEEN 0 AND max_pages)`; `CHECK (current_level BETWEEN 0 AND max_depth)`. |
 | **Lifecycle** | Valid `status` / `state` values. `finished_at` is set exactly when the state is terminal. `started_at` is set once started. `failed` jobs carry a `failure_reason`; cancelled jobs carry `cancel_requested_at`. Timestamps are ordered. |
-| **Leases and fencing** (ADR-0010) | A lease (`lease_owner`, `lease_expires_at`) exists exactly while the URL is `in_progress`. `result_epoch` must equal `lease_epoch`, a claim must clear it, and worker outcomes (`fetched`, `failed`, `skipped`) must carry it. A trigger keeps `lease_epoch` from decreasing. |
+| **Leases and fencing** (ADR-0010) | A lease (`lease_owner`, `lease_expires_at`) exists exactly while the URL is `in_progress`. `result_epoch` must equal `lease_epoch`, a claim must clear it, and worker outcomes (`fetched`, `failed`, `skipped`) must carry it. Triggers keep `lease_epoch` from decreasing (`0001`), and let it change only in a claim, by exactly one, with every lease grant requiring that new token (`0002`, ADR-0011). |
 | **Publication** | `queued` rows have `dispatched_at`; `stream_entry_id` has the Redis entry-ID format. |
 | **Search state** | `indexed` documents have a vector, an indexed version and an `indexed_at`. |
 | **Audit log** | `crawl_events` rejects `UPDATE` (trigger). `event_type` is dotted lowercase, and `detail` is a JSON object. |
@@ -339,7 +346,9 @@ The partial indexes serve the planned access paths:
 2. **Claims are single-row compare-and-set updates** against the database clock. Duplicate
    deliveries are harmless: a claim only succeeds for `queued` rows or expired leases.
 3. **Stale workers are fenced by the database.** A result recorded under an old `lease_epoch`
-   violates a CHECK, and the whole transaction (page, links, search document) rolls back.
+   violates a CHECK, and the whole transaction (page, links, search document) rolls back. A claim
+   that grants a lease without a new token, and a stale worker that issues itself one, are
+   rejected by a trigger. ADR-0011 lists what the database still cannot detect.
 4. **Concurrency safety comes from constraints, not application locks.** Concurrent discovery of
    one URL creates one row. Concurrent admissions cannot pass `max_pages`. Replays of page, link
    or index writes hit unique keys and become no-ops.
@@ -420,7 +429,7 @@ pages, and links never change. Indexing may still be catching up; its progress i
 |---|---|---|---|
 | (none) | `pending` | admission: seed (API), next level (scheduler), or redirect target (worker) | unique per job, depth ≤ `max_depth`, budget remaining, job active |
 | `pending` | `queued` | dispatch (scheduler) | job `running`, depth = `current_level`, `next_attempt_at <= now()`, within the in-flight window |
-| `queued` | `in_progress` | claim (worker) | job `running`, `attempt_count < max_attempts` |
+| `queued` | `in_progress` | claim (worker) | job `running`, `attempt_count < max_attempts`; `lease_epoch` advances by exactly one (ADR-0011) |
 | `in_progress` | `in_progress` | takeover claim (worker) | lease expired by the database clock; `lease_epoch` is incremented |
 | `in_progress` | `fetched` / `skipped` / `failed` | result commit (worker) | fencing check passes; the database requires `result_epoch = lease_epoch` (ADR-0010) |
 | `in_progress` | `pending` | retryable failure (worker) | fencing check passes; `next_attempt_at = now() + backoff` |
@@ -440,38 +449,81 @@ Terminal outcomes:
 
 ## 8. Crawl semantics
 
-### 8.1 URL normalization
+### 8.1 URL normalization (implemented in Phase 2C)
 
-Normalization is a pure function, covered by table-driven tests. It runs before any scope check,
-deduplication, or storage:
+`normalize_url()` in `backend/app/crawler/urls.py` is a pure function: no network, DNS or database
+access. The API applies it to seed URLs. The crawler (Phase 3) will apply it to every discovered
+link, after resolving the link against its document (RFC 3986 section 5, honoring `<base href>`).
+It runs before any scope check, deduplication, or storage.
 
-1. Resolve relative references against the document URL, honoring `<base href>`.
-2. Accept only `http` and `https`. Reject userinfo (`user:pass@`), empty hosts, and URLs over the length
-   limit.
-3. Lowercase the scheme and host, convert internationalized hosts to IDNA, and drop any trailing dot from
-   the host.
-4. Remove default ports (`:80` for http, `:443` for https).
-5. Drop the fragment.
-6. Normalize the path:
-   - remove dot segments;
-   - turn an empty path into `/`;
-   - uppercase the hex digits in percent-encodings;
-   - decode percent-encoded unreserved characters.
-7. Keep the query string as it is, apart from percent-encoding normalization. Sorting parameters or
-   stripping tracking parameters changes the meaning of some sites' URLs, so both are opt-in.
+**Rule.** Two inputs normalize to the same URL only when the URI standards define them as
+equivalent (RFC 3986 sections 6.2.2 and 6.2.3; RFC 9110 section 4.2.3 for http and https), or when
+an invalid character is replaced by its only valid percent-encoding.
 
-The deduplication key is the SHA-256 of the normalized URL.
+**Changed**, because the forms are equivalent:
 
-### 8.2 Scope
+- the scheme and the host are lowercased;
+- internationalized hosts become IDNA A-labels (IDNA 2008 with UTS #46 mapping, as in current
+  browsers). The `idna` package is used because Python's built-in codec implements IDNA 2003,
+  which maps distinct names such as `faß.de` and `fass.de` to the same host;
+- IPv6 hosts are written in compressed form;
+- empty and default ports (`:80` for http, `:443` for https) are removed;
+- an empty path becomes `/`, and `.` and `..` segments are resolved;
+- percent-encodings get uppercase hex digits, and encoded unreserved characters
+  (`A-Z a-z 0-9 - . _ ~`) are decoded;
+- characters that a URL cannot contain literally (non-ASCII, space, and
+  `` " < > [ ] ^ ` { | } `` outside the host) are percent-encoded as UTF-8;
+- the fragment is removed;
+- leading and trailing spaces and control characters are ignored, as browsers do.
 
-A URL is in scope for a job when all of the following hold:
+**Kept**, because they can be meaningful:
 
-- the scheme is http or https;
-- the host is in the job's `allowed_hosts` (exact match by default);
-- the port is allowed;
-- the origin is in the deployment allowlist.
+- the case of the path, trailing slashes and repeated slashes;
+- the query string as written: parameter order, duplicates, empty values, `+`, and an empty `?`.
+  Sorting parameters or stripping tracking parameters would merge URLs that some sites treat
+  differently;
+- encoded reserved characters such as `%2F`;
+- a trailing dot in the host. The Phase 0 design dropped it, but `example.com.` and `example.com`
+  are different authorities for HTTP (Host header, TLS name, cookies), so dropping it would merge
+  distinct URLs.
 
-Out-of-scope links are recorded (`is_internal = false`) but never fetched.
+**Rejected**, with a message the API returns to the client:
+
+- relative URLs, and schemes other than http and https;
+- credentials (`user:password@`);
+- control characters inside the URL (tabs and line breaks included), and backslashes, which
+  browsers read as `/` but other parsers do not;
+- empty, malformed or percent-encoded hosts;
+- numeric hosts that are not dotted-decimal IPv4, such as `127.1`, `0x7f.0.0.1` or `2130706433`,
+  because parsers disagree about them;
+- IPv6 zone identifiers, invalid ports, and malformed percent-encodings;
+- URLs longer than 2048 bytes after normalization.
+
+The output is printable ASCII of at most 2048 bytes, which is exactly the contract of the
+database CHECK constraints. The deduplication key is the normalized URL itself (ADR-0009). Unit
+tests cover every rule, idempotence, the database contract, and a fixed-seed fuzz run.
+
+### 8.2 Scope (implemented in Phase 2C)
+
+Two levels decide whether a URL may be crawled ([ADR-0012](adr/0012-approved-crawl-targets.md)):
+
+1. **The deployment's approved targets** (`backend/app/crawler/scope.py`):
+   - the host matches an entry of `SITESCOPE_CRAWL_ALLOWED_HOSTS` as a whole normalized name.
+     `docs.example.com` approves exactly that host. `*.example.com` approves every subdomain of
+     example.com, but not example.com itself;
+   - the scheme is in `SITESCOPE_CRAWL_ALLOWED_SCHEMES`;
+   - the effective port (explicit, or the scheme's default) is in
+     `SITESCOPE_CRAWL_ALLOWED_PORTS`.
+2. **The job's scope:** the host is in the job's `allowed_hosts`, which holds exactly the seed's
+   host. Other hosts are outside the job, including other approved subdomains.
+
+The API checks the seed against both levels when it creates a job. The crawler (Phase 3) will
+check every URL again before fetching it, so narrowing the deployment's approvals also applies to
+existing jobs. Out-of-scope links are recorded (`is_internal = false`) but never fetched.
+
+These checks are syntactic, with no DNS lookups. They are **not** a complete SSRF defense: an
+approved name can resolve to any address, and DNS answers can change. Before every request, the
+safe fetcher (section 12.3) must validate the resolved address and pin the connection to it.
 
 ### 8.3 BFS depth correctness
 
@@ -524,7 +576,7 @@ depths does not depend on the number of workers or on timing. The tests check th
 
 ### 8.6 Cancellation
 
-`POST /api/v1/jobs/{id}/cancel` runs one transaction that takes the job row lock, moves the job from
+`POST /api/v1/crawls/{id}/cancel` (planned for Phase 6) will run one transaction that takes the job row lock, moves the job from
 `running` to `cancelling` (or from `queued` to `cancelled`), and cancels every `pending` and `queued`
 URL. After that:
 
@@ -550,7 +602,7 @@ can show "nothing in progress" while new work is about to appear.
 
 | | Transaction | Steps | Notes |
 |---|---|---|---|
-| T1 | Create job | insert job + seed URL | repeating an `Idempotency-Key` returns the existing job; a different request body returns `409` |
+| T1 | Create job (Phase 2C) | insert job + seed URL | one transaction, no Redis. Planned for Phase 6: repeating an `Idempotency-Key` returns the existing job, and a different request body returns `409` |
 | T2 | Activate | compare-and-set `queued -> running` | |
 | T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task |
 | T4 | Claim | compare-and-set update (sketch below) | committed before any network I/O |
@@ -566,7 +618,7 @@ Claim (sketch):
 ```sql
 UPDATE crawl_urls AS u
 SET    state            = 'in_progress',
-       lease_epoch      = u.lease_epoch + 1,
+       lease_epoch      = u.lease_epoch + 1,  -- exactly +1, and only in a claim (ADR-0011)
        attempt_count    = u.attempt_count + 1,
        lease_owner      = :consumer,
        lease_expires_at = clock_timestamp() + make_interval(secs => :lease_seconds),
@@ -674,7 +726,7 @@ Initial defaults are starting points to validate in tests, not measured values:
 
 | # | Failure | State left behind | Recovery | Outcome |
 |---|---|---|---|---|
-| F1 | API crashes after commit, before responding | job exists | client retries with the same `Idempotency-Key` | same job, no duplicate |
+| F1 | API crashes after commit, before responding | job exists | client retries with the same `Idempotency-Key` (planned for Phase 6; until then a retry creates a second job) | same job, no duplicate |
 | F2 | Dispatcher crashes after `XADD`, before commit | URL still `pending`; message in the stream | URL is dispatched again | duplicate message; the second claim is a no-op |
 | F3 | Worker crashes before claiming | message pending under a dead consumer | another worker runs `XAUTOCLAIM` | delay only |
 | F4 | Worker crashes after claiming, before commit | URL `in_progress` with a running lease | `XAUTOCLAIM` after min-idle, then a takeover claim (`lease_epoch + 1`) | page fetched again; the attempt is counted |
@@ -722,7 +774,7 @@ Initial defaults are starting points to validate in tests, not measured values:
 
 ## 11. Correctness invariants
 
-The integration, concurrency, and fault tests (Phases 3 to 5) check these after every scenario:
+The integration, concurrency, and fault tests (Phases 4 to 6) check these after every scenario:
 
 1. Each `(job_id, normalized URL)` appears at most once in `crawl_urls`.
 2. `admitted_count` equals the job's number of `crawl_urls` rows and is at most `max_pages`.
@@ -750,11 +802,18 @@ what dependency pinning and auditing catch.
 
 ### 12.2 Target allowlist and scope
 
-- Every deployment has an explicit allowlist of crawl origins. There is no "crawl anything" mode;
-  developers add hosts to their local allowlist.
+- Every deployment has an explicit allowlist of crawl targets, and it is empty by default. There is
+  no "crawl anything" mode; developers add hosts to their local configuration. The format and the
+  matching rules are in section 8.2 and [ADR-0012](adr/0012-approved-crawl-targets.md).
+- Development conveniences cannot reach a public deployment. With `SITESCOPE_ENVIRONMENT=production`,
+  the process refuses to start if the allowlist contains `localhost`, a `.localhost` name or an IP
+  literal. Link-local addresses (including 169.254.169.254), multicast, unspecified and reserved
+  addresses are refused in every environment.
 - The public demo allows only the controlled demo site and any public site explicitly approved for it.
-- The API validates the seed, and the worker re-checks the policy before every fetch. Changes to the
-  allowlist therefore apply to existing jobs too.
+- The API validates the seed (Phase 2C), and the worker will re-check the policy before every
+  fetch. Changes to the allowlist therefore apply to existing jobs too.
+- The allowlist check is syntactic. Address validation and pinning (section 12.3) are what stop
+  SSRF.
 
 ### 12.3 SSRF and DNS rebinding
 
@@ -811,7 +870,7 @@ All values are configurable. The defaults are starting points, not measurements.
     is a deliberately conservative choice.
   - Redirects: followed for up to five hops.
 - Python's `urllib.robotparser` applies the first matching rule and does not support path wildcards, so
-  it is not RFC 9309-compliant. Phase 5 will choose a compliant parser: either a small, well-tested
+  it is not RFC 9309-compliant. Phase 3 will choose a compliant parser: either a small, well-tested
   library or our own implementation with tests.
 - Page-level `<meta name="robots">` and `X-Robots-Tag` are honored. `noindex` keeps the page out of
   search, and `nofollow` stops its links from being admitted.
@@ -896,7 +955,7 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 
 - `GET /health` and `GET /api/v1/health/live` are liveness probes: the process is up and serving
   requests. They check no dependencies. Both were implemented in Phase 1.
-- `GET /api/v1/health/ready` (Phase 2) reports whether PostgreSQL and Redis are reachable.
+- `GET /api/v1/health/ready` (Phase 2B) reports whether PostgreSQL and Redis are reachable.
 - The scheduler and the workers log periodic heartbeats, which the Compose health checks use.
 
 **Progress views**
@@ -915,8 +974,7 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 - Settings groups:
   - environment
   - connections
-  - target policy
-  - crawl caps
+  - target policy and crawl caps (implemented in Phase 2C)
   - concurrency
   - timing
   - retries
@@ -930,7 +988,7 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 
 Deployment uses Docker Compose. Since Phase 2B, `backend/compose.yaml` runs PostgreSQL 18.6 and Redis
 8.10.3 for development: ports bound to 127.0.0.1, named volumes, health checks, `restart:
-unless-stopped`. Phase 9 runs the full stack.
+unless-stopped`. Phase 11 runs the full stack.
 
 | Service | Networks | Port published | Notes |
 |---|---|---|---|
@@ -946,7 +1004,7 @@ unless-stopped`. Phase 9 runs the full stack.
 
 - One backend image runs every Python role (with different commands) as a non-root user.
 - In the public profile, the `crawl` network has no general internet egress.
-- Before Phase 9, the Python processes run on Windows from `backend/.venv` against the PostgreSQL and
+- Before Phase 11, the Python processes run on Windows from `backend/.venv` against the PostgreSQL and
   Redis containers started by Compose.
 
 ## 16. Repository structure (proposed)
@@ -956,7 +1014,7 @@ SITESCOPE/
 |-- CLAUDE.md                    # stable context and rules for contributors and Claude
 |-- README.md                    # Phase 11: overview, quickstart, design highlights
 |-- .gitignore, .gitattributes  # Phase 1: ignore rules, LF line endings
-|-- docker-compose.yml           # Phase 9: full stack (reuses backend/compose.yaml)
+|-- docker-compose.yml           # Phase 11: full stack (reuses backend/compose.yaml)
 |-- .github/workflows/ci.yml     # added once a GitHub remote exists; extended in later phases
 |-- backend/
 |   |-- .venv/                   # existing; never committed, never recreated
@@ -965,16 +1023,16 @@ SITESCOPE/
 |   |-- pyproject.toml           # dependencies + ruff / mypy / pytest config
 |   |-- alembic.ini              # Phase 2B
 |   |-- alembic/                 # Phase 2B: migrations
-|   |-- Dockerfile               # Phase 9
+|   |-- Dockerfile               # Phase 11
 |   |-- app/
 |   |   |-- main.py              # FastAPI app factory, lifespan, routers, error handlers
 |   |   |-- core/                # settings, logging, domain errors
-|   |   |-- api/                 # routers (jobs, search, links, system), schemas, dependencies
+|   |   |-- api/                 # routers (crawls since Phase 2C; search, links, system), schemas
 |   |   |-- services/            # use cases that own transactions: jobs, frontier, indexing, search, links
 |   |   |-- db/                  # SQLAlchemy models, engine and session factory
 |   |   |-- queue/               # Redis Streams adapter, versioned message schemas
 |   |   |-- scheduler/           # activator, dispatcher, level advancer, relay, reconciler, leader lock
-|   |   |-- crawler/             # URL normalization, scope, destination policy, resolver, safe fetcher,
+|   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, safe fetcher,
 |   |   |                        #   robots.txt, rate limiter, HTML parser (no database imports)
 |   |   |-- indexing/            # search document building
 |   |   `-- workers/             # crawler and indexer entrypoints, shared consumer runtime
@@ -982,8 +1040,8 @@ SITESCOPE/
 |       |-- unit/
 |       |-- integration/
 |       `-- fault/
-|-- frontend/                    # Phase 8 (currently empty)
-|-- demo-site/                   # Phase 5/9: static site + robots.txt, the approved demo target
+|-- frontend/                    # Phase 9 (currently empty)
+|-- demo-site/                   # Phases 3 and 11: static site + robots.txt, the approved demo target
 |-- benchmarks/                  # Phase 10: scripts, raw results, environment notes
 `-- docs/
     |-- architecture.md
@@ -998,7 +1056,9 @@ SITESCOPE/
 - There is no generic repository layer. Query functions live with the service that owns the transaction,
   and `db/` holds the models and session management.
 - Dependency direction:
-  - `api` depends on `services`, which depends on `db`.
+  - `api` depends on `services`, which depends on `db` and on the pure functions of `crawler`
+    (URL normalization and scope).
+  - `core.config` validates the approved hosts with `crawler.scope` at startup.
   - `scheduler` and `workers` depend on `services`, `queue`, `crawler`, and `indexing`.
   - `crawler` and `queue` have no domain or database dependencies, which keeps them unit-testable.
 
@@ -1013,9 +1073,10 @@ SITESCOPE/
 | PostgreSQL driver | asyncpg 0.32 | mature async driver; verified in Phase 2B on Windows with the default Proactor event loop (psycopg's async mode would need the selector loop) |
 | Queue | Redis 8.10.3 Streams (`redis:8.10.3-alpine3.23`; 7.0+ required) | consumer groups, pending entries list, `XAUTOCLAIM`. Redis 8 is tri-licensed (AGPLv3 / RSALv2 / SSPLv1); Valkey is a BSD-licensed alternative if that matters later |
 | Redis client | redis-py 8.1 (`redis.asyncio`) | the official client; its automatic retries are disabled so failures surface immediately (callers retry deliberately) |
-| HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport; Phase 5 chooses between `httpx` and its successor `httpx2`, which Starlette 1.x's TestClient already uses |
+| HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport; Phase 3 chooses between `httpx` and its successor `httpx2`, which Starlette 1.x's TestClient already uses |
+| URL hosts | `idna` 3.20 (already installed with AnyIO and httpx2) | IDNA 2008 / UTS #46; the standard library's codec implements IDNA 2003, which merges distinct host names |
 | HTML parsing | BeautifulSoup 4 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it |
-| robots.txt | chosen in Phase 5 | must be RFC 9309-compliant (§12.5) |
+| robots.txt | chosen in Phase 3 | must be RFC 9309-compliant (§12.5) |
 | Logging | stdlib `logging` + a JSON formatter | no extra dependency |
 | Tests | pytest with warnings treated as errors; Starlette's TestClient (needs `httpx2`); AnyIO's bundled pytest plugin for async tests; the HTTP client's mock transport for crawler tests | no extra plugin dependency: AnyIO is already installed with Starlette |
 | Quality | ruff (lint and format), mypy | |
@@ -1070,6 +1131,8 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 - HTML only, no JavaScript rendering, and English-only text search.
 - Basic relevance ranking (no BM25).
 - No incremental re-crawl; storage is duplicated across jobs.
+- Until Phase 6 adds `Idempotency-Key`, a client that retries job creation after a lost response
+  creates a second job.
 
 ## 20. Decision records
 
@@ -1085,3 +1148,5 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 | [0008](adr/0008-search-documents-as-index-outbox.md) | `search_documents` is both the index store and the indexing outbox |
 | [0009](adr/0009-dedup-on-normalized-url.md) | Deduplicate URLs on the normalized URL itself |
 | [0010](adr/0010-database-enforced-fencing.md) | Fencing is enforced by the database, not only by worker code |
+| [0011](adr/0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims |
+| [0012](adr/0012-approved-crawl-targets.md) | Approved crawl targets are host patterns, plus allowed schemes and ports |

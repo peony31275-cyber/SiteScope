@@ -12,18 +12,25 @@ Settings are validated when they are first loaded, so a misconfigured process fa
 instead of misbehaving later. In production, the PostgreSQL and Redis passwords are mandatory. In
 development they may be missing: the application still starts, and the readiness probe reports
 the dependencies as unavailable.
+
+List settings (approved crawl hosts, schemes, ports) are comma-separated in the environment, e.g.
+``SITESCOPE_CRAWL_ALLOWED_HOSTS=docs.example.com,*.example.org``.
 """
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
+
+from app.crawler.scope import parse_host_pattern
 
 Environment = Literal["development", "test", "production"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+CrawlScheme = Literal["http", "https"]
+Port = Annotated[int, Field(ge=1, le=65535)]
 
 # This file is <backend>/app/core/config.py, so parents[2] is the backend directory.
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
@@ -72,10 +79,59 @@ class Settings(BaseSettings):
     # Maximum seconds each dependency check in the readiness probe may take.
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
 
+    # --- Crawl targets and limits ----------------------------------------------------------------
+    # Approved crawl targets (policy: app/crawler/scope.py). "docs.example.com" approves exactly
+    # that host; "*.example.com" approves its subdomains, not example.com itself. Empty by
+    # default: until an operator approves a host, every crawl request is rejected.
+    crawl_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ()
+    # Schemes and ports (explicit, or the scheme's default) a crawl target may use.
+    crawl_allowed_schemes: Annotated[tuple[CrawlScheme, ...], NoDecode, Field(min_length=1)] = (
+        "http",
+        "https",
+    )
+    crawl_allowed_ports: Annotated[tuple[Port, ...], NoDecode, Field(min_length=1)] = (80, 443)
+    # The largest max_depth and max_pages a crawl job may request.
+    crawl_max_depth_limit: int = Field(default=5, ge=0, le=50)
+    crawl_max_pages_limit: int = Field(default=1000, ge=1, le=100_000)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("crawl_allowed_hosts", "crawl_allowed_ports", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: object) -> object:
+        return _split_list(value)
+
+    @field_validator("crawl_allowed_schemes", mode="before")
+    @classmethod
+    def _split_and_lowercase_schemes(cls, value: object) -> object:
+        value = _split_list(value)
+        if isinstance(value, tuple | list):
+            return tuple(item.lower() if isinstance(item, str) else item for item in value)
+        return value
+
+    @field_validator("crawl_allowed_hosts")
+    @classmethod
+    def _normalize_allowed_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        # Invalid entries raise HostPatternError, a ValueError, which fails startup.
+        return tuple(dict.fromkeys(str(parse_host_pattern(entry)) for entry in value))
+
+    @model_validator(mode="after")
+    def _reject_development_targets_in_production(self) -> Self:
+        if self.environment == "production":
+            local = [
+                entry
+                for entry in self.crawl_allowed_hosts
+                if parse_host_pattern(entry).development_only
+            ]
+            if local:
+                raise ValueError(
+                    "production does not allow development-only crawl targets"
+                    " (localhost, .localhost names, IP addresses): " + ", ".join(local)
+                )
+        return self
 
     @model_validator(mode="after")
     def _require_credentials_in_production(self) -> Self:
@@ -115,6 +171,13 @@ class Settings(BaseSettings):
             port=self.postgres_port,
             database=self.postgres_db,
         )
+
+
+def _split_list(value: object) -> object:
+    """Turn a comma-separated environment value into a tuple; leave other values unchanged."""
+    if isinstance(value, str):
+        return tuple(item.strip() for item in value.split(",") if item.strip())
+    return value
 
 
 @lru_cache(maxsize=1)

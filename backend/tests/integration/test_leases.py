@@ -1,6 +1,6 @@
 """Leases and fencing tokens on crawl_urls (ADR-0003).
 
-The SQL statements below are the claim and commit patterns the Phase 3 worker will use. Here
+The SQL statements below are the claim and commit patterns the Phase 5 worker will use. Here
 they verify that the schema supports them, and that PostgreSQL itself rejects stale results.
 """
 
@@ -53,6 +53,34 @@ COMPLETE_WITHOUT_FENCING = text(
     """
     UPDATE crawl_urls
     SET state = 'fetched', http_status = 200, outcome = 'html_stored', result_epoch = :epoch,
+        lease_owner = NULL, lease_expires_at = NULL, finished_at = clock_timestamp()
+    WHERE id = :url_id
+    """
+)
+
+# A buggy claim that grants the lease without issuing a new fencing token.
+CLAIM_WITHOUT_NEW_TOKEN = text(
+    """
+    UPDATE crawl_urls AS u
+    SET state = 'in_progress',
+        attempt_count = u.attempt_count + 1,
+        lease_owner = :owner,
+        lease_expires_at = clock_timestamp() + make_interval(secs => 90),
+        result_epoch = NULL
+    WHERE u.id = :url_id
+      AND (u.state = 'queued'
+           OR (u.state = 'in_progress' AND u.lease_expires_at < clock_timestamp()))
+    RETURNING u.lease_epoch
+    """
+)
+
+# A stale worker that records its outcome under a newer epoch it issues to itself. Every CHECK
+# constraint holds (result_epoch = lease_epoch), so only a transition rule can reject it.
+COMPLETE_WITH_SELF_ISSUED_EPOCH = text(
+    """
+    UPDATE crawl_urls
+    SET state = 'fetched', http_status = 200, outcome = 'html_stored',
+        lease_epoch = lease_epoch + 1, result_epoch = lease_epoch + 1,
         lease_owner = NULL, lease_expires_at = NULL, finished_at = clock_timestamp()
     WHERE id = :url_id
     """
@@ -245,3 +273,97 @@ async def test_a_claim_must_clear_the_previous_outcome(database: Database) -> No
         )
     # The real claim statement clears it and succeeds.
     assert await claim(database, url.id, "worker-b") == 2
+
+
+# --- Fencing tokens are issued only by claims (migration 0002, ADR-0011) --------------------------
+#
+# Regression tests for gaps found in the Phase 2C review. Under migration 0001 alone, each
+# statement below was accepted, and fencing silently stopped working:
+#
+# * a claim without a new token leaves the previous holder's token valid, so a stale worker's
+#   correctly fenced commit (WHERE lease_epoch = :token) still matches the row;
+# * a stale worker can issue itself a newer epoch and record its outcome under it, which
+#   satisfies every CHECK constraint (result_epoch = lease_epoch).
+
+
+async def execute(database: Database, statement: Any, **parameters: Any) -> None:
+    async with database.transaction() as session:
+        await session.execute(statement, parameters)
+
+
+async def test_a_claim_must_issue_a_new_fencing_token(database: Database) -> None:
+    url = await queued_url(database)
+
+    with pytest.raises(IntegrityError, match="requires a new lease_epoch"):
+        await execute(database, CLAIM_WITHOUT_NEW_TOKEN, url_id=url.id, owner="worker-a")
+
+    assert (await load(database, url.id)).state == "queued"
+
+
+async def test_a_takeover_must_issue_a_new_fencing_token(database: Database) -> None:
+    url = await queued_url(database)
+    stale_epoch = await claim(database, url.id, "worker-a")
+    await expire_lease(database, url.id)
+
+    # Accepted under 0001: worker-b would then share epoch 1 with the stalled worker-a, whose
+    # fenced commit would still match the row and overwrite worker-b's lease.
+    with pytest.raises(IntegrityError, match="requires a new lease_epoch"):
+        await execute(database, CLAIM_WITHOUT_NEW_TOKEN, url_id=url.id, owner="worker-b")
+
+    stored = await load(database, url.id)
+    assert (stored.lease_owner, stored.lease_epoch) == ("worker-a", stale_epoch)
+
+
+async def test_a_stale_worker_cannot_issue_itself_a_newer_epoch(database: Database) -> None:
+    url = await queued_url(database)
+    await claim(database, url.id, "worker-a")
+    await expire_lease(database, url.id)
+    current_epoch = await claim(database, url.id, "worker-b")
+
+    # Accepted under 0001: the stale worker's result replaced worker-b's lease.
+    with pytest.raises(IntegrityError, match="may only advance by one, in a claim"):
+        await execute(database, COMPLETE_WITH_SELF_ISSUED_EPOCH, url_id=url.id)
+
+    # The current lease holder still commits normally.
+    async with database.transaction() as session:
+        completed = (
+            await session.execute(COMPLETE, {"url_id": url.id, "epoch": current_epoch})
+        ).scalar_one_or_none()
+    assert completed == url.id
+    assert (await load(database, url.id)).result_epoch == current_epoch
+
+
+async def test_a_claim_advances_the_fencing_token_by_exactly_one(database: Database) -> None:
+    url = await queued_url(database)
+
+    with pytest.raises(IntegrityError, match="may only advance by one, in a claim"):
+        await update_url(
+            database,
+            url.id,
+            state="in_progress",
+            lease_epoch=2,
+            lease_owner="worker-a",
+            lease_expires_at=func.now(),
+        )
+
+
+async def test_leaving_in_progress_keeps_the_fencing_token(database: Database) -> None:
+    """Releases for retry, results and cancellation never change lease_epoch; they still work."""
+    url = await queued_url(database)
+    epoch = await claim(database, url.id, "worker-a")
+
+    # Retryable failure: the lease holder releases the URL for a later attempt.
+    await update_url(
+        database,
+        url.id,
+        state="pending",
+        result_epoch=epoch,
+        lease_owner=None,
+        lease_expires_at=None,
+        next_attempt_at=func.now(),
+    )
+    # The reconciler cancels a URL whose job is being cancelled.
+    await update_url(database, url.id, state="cancelled", finished_at=func.now())
+
+    stored = await load(database, url.id)
+    assert (stored.state, stored.lease_epoch) == ("cancelled", epoch)

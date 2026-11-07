@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.core.config import Settings, get_settings
+from app.core.config import ENV_FILE, Settings, get_settings
 
 
 def test_defaults() -> None:
@@ -186,3 +186,119 @@ def test_rejects_out_of_range_connection_settings(
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+# --- Crawl targets and limits -----------------------------------------------------------------
+
+
+def test_crawl_defaults_approve_no_target() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.crawl_allowed_hosts == ()
+    assert settings.crawl_allowed_schemes == ("http", "https")
+    assert settings.crawl_allowed_ports == (80, 443)
+    assert (settings.crawl_max_depth_limit, settings.crawl_max_pages_limit) == (5, 1000)
+
+
+def test_crawl_lists_are_comma_separated_and_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "SITESCOPE_CRAWL_ALLOWED_HOSTS",
+        " Docs.Example.COM , *.Example.org,,bücher.example,docs.example.com",
+    )
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_SCHEMES", "HTTPS")
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_PORTS", "443, 8443")
+
+    settings = Settings(_env_file=None)
+
+    # Normalized like URL hosts, duplicates removed, order kept.
+    assert settings.crawl_allowed_hosts == (
+        "docs.example.com",
+        "*.example.org",
+        "xn--bcher-kva.example",
+    )
+    assert settings.crawl_allowed_schemes == ("https",)
+    assert settings.crawl_allowed_ports == (443, 8443)
+
+
+def test_an_empty_host_list_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_HOSTS", "")
+
+    assert Settings(_env_file=None).crawl_allowed_hosts == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_CRAWL_ALLOWED_HOSTS", "*.com"),
+        ("SITESCOPE_CRAWL_ALLOWED_HOSTS", "https://docs.example.com"),
+        ("SITESCOPE_CRAWL_ALLOWED_HOSTS", "docs.example.com:8080"),
+        ("SITESCOPE_CRAWL_ALLOWED_HOSTS", "169.254.169.254"),
+        ("SITESCOPE_CRAWL_ALLOWED_SCHEMES", "ftp"),
+        ("SITESCOPE_CRAWL_ALLOWED_SCHEMES", ""),
+        ("SITESCOPE_CRAWL_ALLOWED_PORTS", "0"),
+        ("SITESCOPE_CRAWL_ALLOWED_PORTS", "http"),
+        ("SITESCOPE_CRAWL_ALLOWED_PORTS", ""),
+        ("SITESCOPE_CRAWL_MAX_DEPTH_LIMIT", "51"),
+        ("SITESCOPE_CRAWL_MAX_DEPTH_LIMIT", "-1"),
+        ("SITESCOPE_CRAWL_MAX_PAGES_LIMIT", "0"),
+        ("SITESCOPE_CRAWL_MAX_PAGES_LIMIT", "100001"),
+    ],
+)
+def test_rejects_invalid_crawl_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "hosts", ["localhost", "app.localhost", "127.0.0.1", "[::1]", "docs.example.com,192.0.2.10"]
+)
+def test_production_refuses_development_only_crawl_targets(
+    monkeypatch: pytest.MonkeyPatch, hosts: str
+) -> None:
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_HOSTS", hosts)
+
+    with pytest.raises(ValidationError, match="development-only crawl targets"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password=SecretStr("real-postgres-secret"),
+            redis_password=SecretStr("real-redis-secret"),
+        )
+
+
+def test_development_allows_local_crawl_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.crawl_allowed_hosts == ("localhost", "127.0.0.1", "[::1]")
+
+
+def test_production_accepts_public_crawl_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITESCOPE_CRAWL_ALLOWED_HOSTS", "docs.example.com,*.example.org,demo-site")
+
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        postgres_password=SecretStr("real-postgres-secret"),
+        redis_password=SecretStr("real-redis-secret"),
+    )
+
+    assert settings.crawl_allowed_hosts == ("docs.example.com", "*.example.org", "demo-site")
+
+
+def test_env_example_documents_every_setting_with_valid_values() -> None:
+    """backend/.env.example must load, and must list every setting (CLAUDE.md, Configuration)."""
+    template = ENV_FILE.parent / ".env.example"
+    keys = {
+        line.split("=", 1)[0]
+        for line in template.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+
+    Settings(_env_file=template)
+    assert keys == {f"SITESCOPE_{name.upper()}" for name in Settings.model_fields}

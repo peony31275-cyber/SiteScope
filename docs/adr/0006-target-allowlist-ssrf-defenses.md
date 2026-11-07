@@ -1,6 +1,7 @@
 # ADR-0006: Target allowlist and layered SSRF defenses
 
-- Status: Accepted
+- Status: Accepted. Extended by [ADR-0012](0012-approved-crawl-targets.md) (the format and
+  matching rules of the allowlist).
 - Date: 2026-11-06
 
 ## Context

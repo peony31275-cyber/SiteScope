@@ -5,6 +5,7 @@ These are the development commands for the Windows 10 development machine:
 - The backend commands were run in Windows PowerShell 5.1 at the end of Phase 1.
 - The Docker commands were run during the Docker setup on 2026-11-06 (see [Docker (WSL 2)](#docker-wsl-2)).
 - The database and Compose commands were run in Phase 2B.
+- The crawl job commands were run in Phase 2C.
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
@@ -84,6 +85,7 @@ While the server is running, use a second PowerShell window:
 Invoke-RestMethod http://127.0.0.1:8000/
 Invoke-RestMethod http://127.0.0.1:8000/health
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/live
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready    # needs PostgreSQL and Redis
 ```
 
 To see response headers such as `X-Request-ID`, use `curl.exe`. In Windows PowerShell 5.1, plain
@@ -94,6 +96,45 @@ curl.exe -i http://127.0.0.1:8000/health
 curl.exe -i -H "X-Request-ID: my-trace-1" http://127.0.0.1:8000/health
 curl.exe -i http://127.0.0.1:8000/does-not-exist    # 404 application/problem+json
 ```
+
+### Crawl jobs
+
+No crawl target is approved by default (see [Crawl targets and limits](#crawl-targets-and-limits)),
+so approve one for the server process first. The example hosts belong to `example.com` and
+`example.org`, which are reserved for documentation (RFC 2606) and serve no real site. Start the
+server in a window where the variable is set:
+
+```powershell
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "docs.example.com,*.example.org"   # this window only
+.\.venv\Scripts\python.exe -m uvicorn app.main:app
+```
+
+Then, in a second window (from `backend\`):
+
+```powershell
+$base = "http://127.0.0.1:8000/api/v1/crawls"
+$body = '{"seed_url": "https://docs.example.com/guide/", "max_depth": 3, "max_pages": 500}'
+$job = Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body $body
+$job                                                       # "queued", normalized seed_url
+Invoke-RestMethod "$base/$($job.id)" | ConvertTo-Json -Depth 5   # the job and its progress
+Invoke-RestMethod ($base + "?limit=20")                    # newest first, with next_cursor
+```
+
+`Invoke-RestMethod` throws on an error status. The problem+json body is in
+`$_.ErrorDetails.Message`:
+
+```powershell
+$bad = '{"seed_url": "https://www.google.com/", "max_depth": 1, "max_pages": 10}'
+try { Invoke-RestMethod -Method Post -Uri $base -ContentType "application/json" -Body $bad } catch { $_.ErrorDetails.Message }
+```
+
+The rows are in PostgreSQL:
+
+```powershell
+wsl docker compose exec -T postgres psql -U sitescope -d sitescope -c "SELECT id, status, seed_url, admitted_count FROM crawl_jobs ORDER BY created_at DESC LIMIT 5"
+```
+
+Jobs stay `queued`: nothing crawls them until the scheduler and the workers exist (Phases 3–5).
 
 ## Tests, lint, format, and type check
 
@@ -357,6 +398,27 @@ All settings use the `SITESCOPE_` prefix. They are read from the environment or 
   (`pool_pre_ping`) and recycled after 30 minutes.
 - **No automatic Redis retries.** The Redis client fails fast instead of retrying silently.
 
+## Crawl targets and limits
+
+No crawl target is approved by default. Until you list one, `POST /api/v1/crawls` rejects every
+request with `target_not_allowed`. Set the targets in `backend\.env`, or as environment
+variables for one PowerShell session (as in [Crawl jobs](#crawl-jobs)).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_CRAWL_ALLOWED_HOSTS` | empty | approved hosts, comma-separated: `docs.example.com` approves exactly that host; `*.example.org` approves its subdomains, not `example.org` itself |
+| `SITESCOPE_CRAWL_ALLOWED_SCHEMES` | `http,https` | schemes a crawl target may use |
+| `SITESCOPE_CRAWL_ALLOWED_PORTS` | `80,443` | ports a crawl target may use: the explicit port, or the scheme's default |
+| `SITESCOPE_CRAWL_MAX_DEPTH_LIMIT` | `5` | the largest `max_depth` a job may request (0–50) |
+| `SITESCOPE_CRAWL_MAX_PAGES_LIMIT` | `1000` | the largest `max_pages` a job may request (1–100000) |
+
+- Entries are normalized like URL hosts and matched as whole host names, never as substrings.
+- `localhost`, names under `.localhost`, and IP addresses are for development and tests only.
+  With `SITESCOPE_ENVIRONMENT=production` the application refuses to start if the list contains
+  any of them.
+- The checks look only at the URL. They are not an SSRF defense: the Phase 3 safe fetcher must
+  validate every resolved address ([architecture.md](architecture.md), section 12).
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to
@@ -364,7 +426,7 @@ keep. Run the commands from `backend\`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head      # apply all pending migrations
-.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0001 (head)"
+.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0002 (head)"
 .\.venv\Scripts\python.exe -m alembic history           # the migration chain
 .\.venv\Scripts\python.exe -m alembic upgrade head --sql    # print the SQL without connecting
 ```
@@ -374,7 +436,7 @@ To change the schema:
 1. **Update the models.** Change `app/db/models.py`.
 2. **Generate a draft.** It needs a database at head:
    ```powershell
-   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0002
+   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0003
    ```
 3. **Review and complete the draft.**
    - Autogenerate handles tables, columns, indexes, foreign keys and unique constraints.
@@ -425,6 +487,8 @@ PostgreSQL and Redis containers. They never touch the development data:
   test truncates the tables afterwards.
 - **Migration tests.** These use a second disposable database, `sitescope_test_migrations`.
 - **Redis.** Redis tests use logical database 15 and namespaced keys.
+- **Crawl job tests** set their own approved hosts and limits, so they do not depend on the
+  crawl settings in `backend\.env`.
 
 To run them, make sure:
 
@@ -458,4 +522,6 @@ Windows a refused localhost connection takes about 2 s before it fails.
 | `GET /api/v1/health/ready` returns 503 | Read `checks`. If a service is `unavailable` or `timeout`, check `wsl docker compose ps`, and make sure a WSL session is open. |
 | `password authentication failed` after editing `.env` | PostgreSQL kept the password from the volume's first start. `ALTER ROLE ... PASSWORD`, or reset (Option 2). |
 | Integration tests are all skipped | The skip reason names the unreachable service. Start it, or run with `--require-services` to make this an error. |
+| `POST /api/v1/crawls` returns 422 `target_not_allowed`: "no crawl targets are approved on this server" | Set `SITESCOPE_CRAWL_ALLOWED_HOSTS` (see [Crawl targets and limits](#crawl-targets-and-limits)) and restart the server. |
+| Startup fails with "production does not allow development-only crawl targets" | Remove `localhost`, `.localhost` names and IP addresses from `SITESCOPE_CRAWL_ALLOWED_HOSTS`, or run in `development`. |
 | `alembic` says "Can't locate revision" | The database was migrated by a different branch of the code. Check `alembic current` against `alembic history`. |

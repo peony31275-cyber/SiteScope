@@ -100,3 +100,30 @@ def api_client(test_database: Settings) -> Iterator[TestClient]:
     """The real application, wired to the test database and Redis DB 15."""
     with TestClient(create_app(test_database)) as client:
         yield client
+
+
+# Approved crawl targets for the crawl job tests. They are written in normalized form, because
+# model_copy() does not run the settings validators.
+CRAWL_TEST_TARGETS = ("docs.example.com", "*.example.org")
+
+
+@pytest.fixture
+def crawl_settings(test_database: Settings) -> Settings:
+    """The test database, with fixed approved crawl targets and limits (independent of .env)."""
+    return test_database.model_copy(
+        update={
+            "crawl_allowed_hosts": CRAWL_TEST_TARGETS,
+            "crawl_allowed_schemes": ("http", "https"),
+            "crawl_allowed_ports": (80, 443),
+            "crawl_max_depth_limit": 5,
+            "crawl_max_pages_limit": 1000,
+        }
+    )
+
+
+@pytest.fixture
+def crawl_client(crawl_settings: Settings, database: Database) -> Iterator[TestClient]:
+    """The real application with approved crawl targets. ``database`` empties the tables after
+    the test (it is torn down after this client)."""
+    with TestClient(create_app(crawl_settings)) as client:
+        yield client

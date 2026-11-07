@@ -12,31 +12,46 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 1 | Backend foundation | **Done** (2026-11-06) |
 | 2A | Docker environment (WSL 2) | **Done** (2026-11-06) |
 | 2B | PostgreSQL, Redis, and database infrastructure | **Done** (2026-11-06) |
-| 2C | Job API and URL normalization | Not started |
-| 3 | Task distribution core | Not started |
-| 4 | Fault tolerance and recovery | Not started |
-| 5 | Safe HTTP crawling | Not started |
-| 6 | Indexing pipeline and search API | Not started |
-| 7 | Link analysis | Not started |
-| 8 | React + TypeScript dashboard | Not started |
-| 9 | Docker Compose deployment and demo site | Not started |
-| 10 | Benchmarks | Not started |
-| 11 | CI hardening and documentation | Not started |
+| 2C | Crawl job API, URL normalization, and transactional job creation | **Done** (2026-11-06) |
+| 3 | Safe HTTP fetching and HTML parsing | Not started |
+| 4 | BFS crawling and persistence | Not started |
+| 5 | Distributed scheduling and workers | Not started |
+| 6 | Fault tolerance and recovery | Not started |
+| 7 | Asynchronous search indexing | Not started |
+| 8 | Search and analysis APIs | Not started |
+| 9 | React dashboard | Not started |
+| 10 | Testing, benchmarking, and observability | Not started |
+| 11 | Final deployment and documentation | Not started |
 
-## Repository state after Phase 2B
+Phases 3–11 were renumbered in Phase 2C at the owner's request. Earlier reports and commits use
+the old numbers:
+
+| Old phase | Now |
+|---|---|
+| 3 Task distribution core | 4 (BFS crawl logic) and 5 (scheduler, Redis Streams, workers) |
+| 4 Fault tolerance and recovery | 6 |
+| 5 Safe HTTP crawling | 3 |
+| 6 Indexing pipeline and search API | 7 (indexing) and 8 (search API) |
+| 7 Link analysis | 8 |
+| 8 React + TypeScript dashboard | 9 |
+| 9 Docker Compose deployment and demo site | 11 (the first demo-site content arrives in 3) |
+| 10 Benchmarks | 10 |
+| 11 CI hardening and documentation | 11 |
+
+## Repository state after Phase 2C
 
 Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B). |
-| `backend/alembic/` | Migration `0001` (the six-table schema). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C). |
+| `backend/alembic/` | Migrations `0001` (the six-table schema) and `0002` (fencing tokens issued only by claims). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 165 tests: 89 unit, 76 integration (real PostgreSQL and Redis). |
-| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
+| `backend/tests/` | 520 tests: 417 unit, 103 integration (real PostgreSQL and Redis). |
+| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0010, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0012, API conventions, development guide. |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -45,7 +60,7 @@ Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's f
 | Node.js 24.14, npm 11.9 | available |
 | WSL 3.0.3 with Ubuntu 24.04.3 LTS (WSL 2, systemd enabled) | available |
 | Docker Engine 29.9.3 + Docker Compose v5.7.0, inside WSL Ubuntu | installed and verified (2026-11-06) |
-| PostgreSQL, Redis | not installed locally; they will run as Docker containers (Phase 2) |
+| PostgreSQL 18.6, Redis 8.10.3 | Docker containers inside WSL (`backend/compose.yaml`, Phase 2B) |
 
 ## Environment setup (done, 2026-11-06)
 
@@ -244,124 +259,146 @@ workers.
 - **Refused connections on Windows.** A refused localhost connection takes about 2 s to fail on
   Windows. The tests and the documentation account for this.
 
-### Phase 2C: Job API and URL normalization
+### Phase 2C: Crawl job API, URL normalization, and transactional job creation (done)
 
-**Goal.** The remaining scope of the original Phase 2: creating, listing, inspecting and
-cancelling crawl jobs, on top of the Phase 2B schema.
+**Goal.** Create, inspect and list crawl jobs on top of the Phase 2B schema, with a URL normalizer
+and a crawl-scope validator that the crawler will reuse. No crawling, fetching, scheduling, Redis
+publication or workers.
 
-**Scope**
+**Delivered**
 
-- URL normalization, scope checks and allowlist validation, as pure functions with table-driven
-  tests. The output must satisfy the database's URL CHECK (ADR-0009).
-- Service functions that own the transactions:
-  - create the job and its seed URL atomically;
-  - cancel a job (architecture section 8.6);
-  - record job lifecycle events in `crawl_events`.
-- Job API:
-  - `POST /api/v1/jobs` (with `Idempotency-Key` and a request fingerprint)
-  - `GET /api/v1/jobs` (keyset pagination, status filter)
-  - `GET /api/v1/jobs/{id}` (state counts, current level, budget)
-  - `POST /api/v1/jobs/{id}/cancel`
-- The CI workflow (deferred from Phase 1), if a GitHub remote exists by then.
+- **URL normalization:** `app/crawler/urls.py`.
+  - A pure function, with no network, DNS or database access, reusable by the Phase 3 crawler.
+  - It merges only forms that the standards define as equivalent. It keeps the case of the path,
+    the query string, and a trailing dot in the host. It rejects credentials, ambiguous numeric
+    hosts, control characters and backslashes.
+  - IDNA 2008 through the `idna` package, and an output that always satisfies the database URL
+    CHECK.
+  - The full policy is in architecture section 8.1.
+- **Crawl scope:** `app/crawler/scope.py`, decided in ADR-0012.
+  - Approved hosts with exact and `*.domain` subdomain matching, plus scheme and port
+    restrictions.
+  - Empty by default. Development-only entries (localhost, IP literals) are refused in production,
+    and some address classes are refused everywhere.
+  - Documented as a syntactic check that is not an SSRF defense.
+- **Configuration:**
+  - `SITESCOPE_CRAWL_ALLOWED_HOSTS`, `_SCHEMES` and `_PORTS` (comma-separated lists), plus
+    `SITESCOPE_CRAWL_MAX_DEPTH_LIMIT` and `_MAX_PAGES_LIMIT`, all validated at startup.
+  - A test now checks that `.env.example` documents every setting with a valid value.
+- **Service:** `app/services/crawl_jobs.py`.
+  - One transaction creates the job (`queued`, level 0, `admitted_count` 1) and its depth-0
+    `pending` seed URL. Nothing is published to Redis.
+  - Reads run in their own short transactions. The job detail is a single SQL statement, so the
+    job and its URL counts come from one snapshot.
+  - Listing uses keyset pagination on `(created_at, id)`, served by `ix_crawl_jobs_created_at_id`.
+- **API:** `app/api/v1/crawls.py` and `crawl_schemas.py`.
+  - `POST /api/v1/crawls` answers 201 with a `Location` header. `GET /api/v1/crawls` pages with a
+    cursor, at most 100 jobs per page. `GET /api/v1/crawls/{job_id}` reports progress counted from
+    the URL rows, and a 404 problem for an unknown job.
+  - The request schema is strict: unknown fields and non-integer numbers are rejected.
+  - Rule violations are reported like schema errors (`422 validation_failed`, field-level
+    `errors`), and the OpenAPI document describes error bodies as `ProblemDetails`.
+- **Database fix:** migration `0002` (ADR-0011) adds a trigger that lets `lease_epoch` change only
+  in a claim, by exactly one, and requires a new token for every lease grant. See the findings.
+- **Phase plan:** Phases 3–11 renumbered to the owner's list (table above).
 
-**Tests**
+**Verification** (2026-11-06; Windows 10, Python 3.13.7, services in WSL)
 
-- Unit: the normalization corpus; allowlist and cap validation.
-- Integration:
-  - the job and its seed URL are created atomically;
-  - an `Idempotency-Key` replay returns the same job, and a mismatched body returns 409;
-  - cancel transitions;
-  - errors are returned as problem+json.
+- `pytest --require-services`: 520 passed (417 unit, 103 integration). New tests include:
+  - normalization and scope tables, idempotence, the database URL contract, and a fixed-seed fuzz
+    run of 3000 inputs;
+  - API validation without a database;
+  - against PostgreSQL:
+    - creation stores both rows in one transaction;
+    - an injected failure of the seed insert rolls back the job, both in the service and as a
+      generic 500 through the API;
+    - rejected requests write nothing;
+    - the same seed in several jobs, sequentially and in 8 concurrent creations;
+    - URL counts per job;
+    - pagination: newest first, stable while jobs are created, ties broken by ID;
+    - the listing query plan uses `ix_crawl_jobs_created_at_id`;
+    - creation works while Redis is down, and an unreachable PostgreSQL gives a 503 problem.
+- `ruff check` and `ruff format --check`: clean. `mypy` strict (57 files): no issues.
+- Alembic:
+  - the development database was upgraded from `0001` to `0002 (head)`;
+  - on disposable databases: a linear history, a step down to `0001` and back, and a downgrade to
+    base and upgrade again.
+- Fencing gaps:
+  - the four new regression tests failed against `0001` (`DID NOT RAISE`) and pass with `0002`;
+  - a scenario script on a disposable database showed the stale worker's commit succeeding under
+    `0001` and rejected under `0002`.
+- Real server (uvicorn on Windows, against the development database):
+  - `/health`, `/api/v1/health/live` and `/api/v1/health/ready`: 200.
+  - `POST /api/v1/crawls`: 201, with the normalized seed. The detail reports one `pending` URL,
+    and pagination works with a cursor.
+  - Rejected with 422: an ftp URL, credentials, an unapproved host, the
+    `docs.example.com.evil.test` suffix trick, the 169.254.169.254 metadata address, and limits
+    above the caps. An unknown job gave 404, a malformed ID and a forged cursor gave 422.
+  - `psql` showed exactly the created jobs and seed URLs, written in one transaction each.
+  - The logs held no passwords and no rejected URLs.
+- `docker compose config --quiet` is valid, and both services are healthy.
+- **Left in the development database:** three test jobs whose seeds are on `docs.example.com`
+  (reserved for documentation). They stay `queued`, and nothing crawls them. They were not
+  deleted, because that would be a destructive operation on the development database. If wanted,
+  remove them with `DELETE FROM crawl_jobs WHERE seed_url LIKE 'https://docs.example.com/%'`;
+  the seed URLs follow by cascade.
 
-**Needs.** The Phase 2B services, and a WSL session kept open.
+**Findings and design adjustments**
 
-### Phase 3: Task distribution core
+- **Fencing gaps (fixed, ADR-0011).** Under `0001`, the database accepted two kinds of statement:
+  - a claim or takeover that granted a lease without a new token. The stalled previous holder's
+    correctly fenced commit then succeeded, and the real lease holder was fenced out;
+  - a stale worker recording its result under an epoch it issued to itself.
 
-**Goal.** Distributed crawl execution with correct BFS, exact budgets, and processing that is safe against
-duplicates, driven by a test-double fetcher.
+  No production code was affected, because no worker exists yet. ADR-0011 also lists what no
+  constraint can catch, such as `result_epoch = lease_epoch` copied from the column.
+- **Other review results (no change needed now):**
+  - Job status transitions are protected by consistency CHECKs, not by transition rules. The
+    scheduler (Phase 5) must use conditional updates (invariant 8).
+  - `admitted_count` is bounded by a CHECK, but its equality with the number of URL rows is kept
+    by the services.
+  - `search_documents` lets `indexed_content_version` move backwards. The Phase 7 indexer must
+    write with a version guard.
+- **URL policy.** A trailing dot in the host is now kept: the Phase 0 design dropped it, which
+  would merge distinct authorities. Python's built-in IDNA codec (IDNA 2003) maps `faß.de` to
+  `fass.de`, so the `idna` package is used. `urllib.parse.urlsplit` silently deletes tabs and line
+  breaks, so URLs are split with the RFC 3986 grammar and control characters are rejected.
+- **`ipaddress` quirk.** Python counts `::1` as reserved (it lies in `::/8`). A unit test caught
+  IPv6 loopback being treated as "never allowed" instead of development-only.
+- **Deferred from the earlier 2C plan** (not in the owner's 2C request):
+  - `Idempotency-Key` and the cancel endpoint go to Phase 6;
+  - lifecycle records in `crawl_events` go to Phase 4, with the first state transitions;
+  - a status filter on the listing is not scheduled;
+  - the CI workflow goes to Phase 11 and needs a GitHub remote;
+  - request body size limits go to Phase 11 (only `seed_url` is bounded, at 4096 characters).
 
-**Scope**
+**Not done, by design:** crawling, fetching, BFS, Redis publication, workers, indexing, the
+frontend and benchmarks.
 
-- `app/queue`:
-  - a Redis Streams adapter: idempotent group creation, publish, read, ack, autoclaim, and dead-letter;
-  - versioned message schemas.
-- `app/scheduler`:
-  - job activation;
-  - a dispatcher that treats the frontier as the outbox, gates by level, enforces a per-job in-flight
-    window, and serves jobs round-robin;
-  - level advancement and job completion.
-- Start from the claim and fenced-commit statements already exercised against the real schema in
-  `tests/integration/test_leases.py`.
-- `app/workers`:
-  - a consumer runtime with bounded concurrency and graceful shutdown;
-  - the crawl task flow: claim (compare-and-set + `lease_epoch`) → `Fetcher` protocol → fenced result
-    commit → `XACK`.
-- A deterministic in-memory site that implements `Fetcher`, used only as a test double. It is not a
-  crawler and is not presented as one; the real fetcher arrives in Phase 5.
+### Phase 3: Safe HTTP fetching and HTML parsing
 
-**Tests**
-
-- Stream-adapter semantics.
-- A duplicate message has a single effect, and publishing before commit is safe.
-- 1, 2, 4, and 8 concurrent workers crawl synthetic graphs that contain cycles, diamonds, and shortcuts to
-  deep nodes. The tests check:
-  - the architecture's correctness invariants;
-  - that 1-worker and N-worker results are identical.
-- Repeated runs, to shake out races.
-
-**Done when.** All invariant tests pass across repeated runs.
-
-### Phase 4: Fault tolerance and recovery
-
-**Goal.** Survive crashes, stalls, Redis data loss, and cancellation, and prove it with automated tests.
-
-**Scope**
-
-- An `XAUTOCLAIM` recovery loop and lease takeover, with fencing that rejects stale workers.
-- Durable retries with exponential backoff and full jitter, and attempt limits.
-- Dead-letter streams.
-- A reconciler for lost or trimmed messages, abandoned leases, and exhausted attempts.
-- Cancellation end to end (`cancelling -> cancelled`).
-- Stream trimming and cleanup of idle consumers.
-- A scheduler leader lock.
-- Startup validation of the timing order.
-
-**Tests.** One automated test per failure window F1–F13 in the architecture, including:
-
-- a crash before claim, after claim, and after commit but before ack;
-- a stalled worker that resumes after another worker has taken over;
-- `FLUSHALL` mid-crawl, after which the crawl completes with identical results;
-- a dispatcher crash between `XADD` and commit;
-- a poison message that lands in the DLQ;
-- cancellation while tasks are in flight;
-- killing a real worker subprocess.
-
-**Done when.** Every failure window has a passing test, or is documented as untested together with the
-reason.
-
-### Phase 5: Safe HTTP crawling
-
-**Goal.** Replace the test double with the real, safe fetcher.
+**Goal.** Fetch approved URLs safely, and extract what the crawler needs from HTML, before any
+distributed machinery exists.
 
 **Scope**
 
 - An HTTPX client with `trust_env=False`, no automatic redirects, and HTTP/1.1.
-- DNS resolution and the destination policy, with each connection pinned to the validated IP. TLS SNI and
-  certificate checks still use the hostname.
+- DNS resolution and the destination policy, with each connection pinned to the validated IP.
+  TLS SNI and certificate checks still use the hostname. Every request first re-checks the
+  Phase 2C crawl scope (`app/crawler/scope.py`).
 - Request limits:
   - per-operation timeouts plus a task deadline;
   - a streamed limit on decoded body size;
   - a content-type allowlist.
-- robots.txt handling (RFC 9309), cached in Redis.
+- robots.txt handling (RFC 9309) with a compliant parser, cached in Redis.
 - Per-host rate limiting with a GCRA Lua script based on Redis time.
 - HTML extraction with BeautifulSoup:
   - title, headings, and text;
-  - links with their positions;
-  - `<base href>`;
+  - links with their positions, resolved against the document (RFC 3986 section 5, `<base href>`)
+    and normalized with the Phase 2C normalizer;
   - meta robots.
-- Redirects handled through same-level admission.
-- A local fixture site for tests (loopback is allowed only in the test configuration), plus the first
-  demo-site content with its own robots.txt.
+- A local fixture site for tests (loopback is allowed only in development and test), plus the
+  first demo-site content with its own robots.txt.
 - Findings carried over from Phase 1:
   - choose between `httpx` and its successor `httpx2`; Starlette 1.x's TestClient already uses
     `httpx2`;
@@ -377,12 +414,103 @@ reason.
   - redirects to private addresses;
   - DNS rebinding through a scripted resolver.
 - Size limits and slow-response limits.
-- robots.txt semantics, the rate limiter, and the parser.
-- An end-to-end crawl of the fixture site over real HTTP, with the exact expected URLs and depths.
+- robots.txt semantics, the rate limiter, the parser, and link resolution.
+- Fetching and parsing the fixture site over real HTTP, with exact expected results.
 
-**Done when.** All safety tests pass and the end-to-end crawl produces the expected result.
+**Done when.** All safety tests pass and the fixture site is fetched and parsed exactly as
+expected.
 
-### Phase 6: Indexing pipeline and search API
+### Phase 4: BFS crawling and persistence
+
+**Goal.** Crawl a site breadth-first and persist pages and links with the architecture's
+correctness rules, in one process, before the work is distributed.
+
+**Scope**
+
+- Service-layer use cases that the Phase 5 workers and scheduler will share:
+  - claim (compare-and-set plus `lease_epoch`) and the fenced result commit: page, links,
+    `search_documents` row, URL outcome. Start from the statements in
+    `tests/integration/test_leases.py`, within the ADR-0011 rules;
+  - same-level redirect admission under the job row lock;
+  - level advancement and job completion (ADR-0004), with the exact page budget;
+  - lifecycle records in `crawl_events`.
+- A single-process crawl driver, without Redis, that runs these use cases against the Phase 3
+  fetcher. It is used for development and tests.
+
+**Tests**
+
+- Crawls of synthetic graphs with cycles, diamonds, and shortcuts to deep nodes: exact URL sets
+  and depths, the budget prefix, redirects.
+- The correctness invariants of architecture section 11.
+
+**Done when.** Single-process crawls of the fixture graphs match the expected results exactly.
+
+### Phase 5: Distributed scheduling and workers
+
+**Goal.** Run the Phase 4 crawl across processes. The scheduler publishes committed work to Redis
+Streams, and workers claim and process it.
+
+**Scope**
+
+- `app/queue`:
+  - a Redis Streams adapter: idempotent group creation, publish, read, ack, autoclaim, and
+    dead-letter;
+  - versioned message schemas.
+- `app/scheduler`:
+  - job activation: `queued` jobs found through `ix_crawl_jobs_active` move to `running` with a
+    conditional update;
+  - a dispatcher that treats the frontier as the outbox, gates by level, enforces a per-job
+    in-flight window, and serves jobs round-robin;
+  - level advancement and job completion.
+- `app/workers`:
+  - a consumer runtime with bounded concurrency and graceful shutdown;
+  - the crawl task flow: claim → fetch → fenced result commit → `XACK`;
+  - consumer names unique per process start (ADR-0011).
+- A deterministic in-memory site that implements the fetcher interface, used only as a test
+  double. It is not a crawler and is not presented as one.
+
+**Tests**
+
+- Stream-adapter semantics.
+- A duplicate message has a single effect, and publishing before commit is safe.
+- 1, 2, 4, and 8 concurrent workers crawl synthetic graphs. The tests check the correctness
+  invariants, and that 1-worker and N-worker results are identical.
+- Repeated runs, to shake out races.
+
+**Done when.** All invariant tests pass across repeated runs.
+
+### Phase 6: Fault tolerance and recovery
+
+**Goal.** Survive crashes, stalls, Redis data loss, and cancellation, and prove it with automated
+tests.
+
+**Scope**
+
+- An `XAUTOCLAIM` recovery loop and lease takeover, with fencing that rejects stale workers.
+- Durable retries with exponential backoff and full jitter, and attempt limits.
+- Dead-letter streams.
+- A reconciler for lost or trimmed messages, abandoned leases, and exhausted attempts.
+- Cancellation end to end: `POST /api/v1/crawls/{id}/cancel` (`cancelling -> cancelled`).
+- `Idempotency-Key` on `POST /api/v1/crawls` (failure window F1). The columns exist since
+  Phase 2B.
+- Stream trimming and cleanup of idle consumers.
+- A scheduler leader lock.
+- Startup validation of the timing order.
+
+**Tests.** One automated test per failure window F1–F13 in the architecture, including:
+
+- a crash before claim, after claim, and after commit but before ack;
+- a stalled worker that resumes after another worker has taken over;
+- `FLUSHALL` mid-crawl, after which the crawl completes with identical results;
+- a dispatcher crash between `XADD` and commit;
+- a poison message that lands in the DLQ;
+- cancellation while tasks are in flight;
+- killing a real worker subprocess.
+
+**Done when.** Every failure window has a passing test, or is documented as untested together with
+the reason.
+
+### Phase 7: Asynchronous search indexing
 
 **Scope**
 
@@ -390,42 +518,50 @@ reason.
   worker.
 - A weighted `tsvector` with truncation. The `search_documents` table and its GIN index exist
   since Phase 2B.
-- `GET /api/v1/search`:
-  - `websearch_to_tsquery` for parsing and `ts_rank_cd` for ranking;
-  - safe `ts_headline` snippets;
-  - pagination;
-  - scoped to a job.
-- Indexing progress shown on the job detail.
+- Index writes guarded by the content version, so a slow indexer cannot overwrite a newer version
+  (Phase 2C review finding).
+- Indexing progress on the job detail, and `indexing_completed_at`.
 
 **Tests**
 
 - The relay crash window (duplicate publish).
 - Duplicate and replayed index events.
-- A title match outranks a body match.
-- Arbitrary query strings never cause an error.
-- Search over the fixture crawl.
+- A stale index write is rejected.
 
-### Phase 7: Link analysis
+### Phase 8: Search and analysis APIs
 
 **Scope**
 
-- Reports on broken, redirecting, unchecked, and external links.
-- Link statistics: in-link and out-link counts, the depth distribution, and the most-linked pages.
-- API endpoints, and the indexes that support them.
+- `GET /api/v1/search`:
+  - `websearch_to_tsquery` for parsing and `ts_rank_cd` for ranking;
+  - safe `ts_headline` snippets;
+  - pagination;
+  - scoped to a job.
+- The pages of a job.
+- Link analysis:
+  - reports on broken, redirecting, unchecked, and external links;
+  - link statistics: in-link and out-link counts, the depth distribution, and the most-linked
+    pages;
+  - API endpoints, and the indexes that support them.
 
-**Tests.** A fixture site with known broken links, redirect chains, and depth-limited links, checked
-against exact expected reports.
+**Tests**
 
-### Phase 8: React + TypeScript dashboard
+- A title match outranks a body match.
+- Arbitrary query strings never cause an error.
+- Search over the fixture crawl.
+- A fixture site with known broken links, redirect chains, and depth-limited links, checked against
+  exact expected reports.
+
+### Phase 9: React dashboard
 
 **Needs.** Node.js (installed).
 
 **Scope**
 
 - A Vite + React + TypeScript app.
-- A jobs list and a create-job form limited to allowlisted targets and caps.
-- A job detail page with polled progress (state counts, current level, budget, indexing progress), the
-  page list, and link reports.
+- A jobs list and a create-job form limited to approved targets and caps.
+- A job detail page with polled progress (state counts, current level, budget, indexing progress),
+  the page list, and link reports.
 - A search page with safe highlighting.
 - Loading, error, and empty states.
 
@@ -435,47 +571,41 @@ against exact expected reports.
 - `tsc --noEmit`.
 - A production build.
 
-### Phase 9: Docker Compose deployment and demo site
+### Phase 10: Testing, benchmarking, and observability
 
 **Scope**
 
-- A backend image: one image for every Python role, running as a non-root user.
-- A frontend image: built, then served by nginx with an `/api` reverse proxy.
-- A demo-site container.
-- A full `docker-compose.yml` with:
-  - health checks;
-  - a one-shot migration service;
-  - internal networks (in the public profile, workers have no general egress);
-  - worker scaling.
-- Quickstart documentation.
-
-**Tests.** A scripted smoke test: `docker compose up` → create a job → wait for completion → check that
-search returns results → `docker compose down`.
-
-### Phase 10: Benchmarks
-
-**Scope**
-
-- A `benchmarks/` harness that runs against the demo site. It uses a documented, development-only higher
-  rate limit.
+- Benchmarks: a `benchmarks/` harness that runs against the demo site, with a documented,
+  development-only higher rate limit.
 - Measurements:
   - crawl throughput vs. worker count (1, 2, 4, 8);
   - job completion time;
   - dispatch-to-claim latency;
   - indexing throughput;
   - search latency p50/p95/p99 over a fixed query set.
-- Environment capture: CPU, RAM, OS, versions, and settings.
-- Raw results committed to the repository.
-- `docs/benchmarks.md`, describing the methodology and its limitations.
+- Environment capture (CPU, RAM, OS, versions, settings), raw results committed to the
+  repository, and `docs/benchmarks.md` describing the methodology and its limitations.
+- Observability: queue statistics (approximate, from Redis) next to progress (from PostgreSQL),
+  context fields in logs (`job_id`, `url_id`, `worker_id`, `lease_epoch`), and process heartbeats.
+- Test hardening: the end-to-end and fault suites run repeatedly.
 
-**Rule.** Every reported number comes from a run in this repository and is published with its command and
-raw output. Nothing is extrapolated.
+**Rule.** Every reported number comes from a run in this repository and is published with its
+command and raw output. Nothing is extrapolated.
 
-### Phase 11: CI hardening and documentation
+### Phase 11: Final deployment and documentation
 
 **Scope**
 
-- CI:
+- Images: one backend image for every Python role, running as a non-root user; a frontend image
+  served by nginx with an `/api` reverse proxy; a demo-site container.
+- A full `docker-compose.yml` with:
+  - health checks;
+  - a one-shot migration service;
+  - internal networks (in the public profile, workers have no general egress);
+  - worker scaling;
+  - request size limits at the proxy;
+  - a PostgreSQL role for the application that is not a superuser (ADR-0011).
+- CI, once a GitHub remote exists:
   - backend lint, type check, and unit tests;
   - integration and fault tests against PostgreSQL and Redis service containers;
   - frontend type check, tests, and build;
@@ -485,6 +615,9 @@ raw output. Nothing is extrapolated.
   - a README with an overview, diagram, quickstart, design highlights, and limitations;
   - an operations runbook covering recovery procedures and DLQ inspection;
   - a review of the ADRs.
+
+**Tests.** A scripted smoke test: `docker compose up` → create a job → wait for completion →
+check that search returns results → `docker compose down`.
 
 **Done when**
 
