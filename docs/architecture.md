@@ -14,9 +14,13 @@
 >   same-level redirects, level advancement, exact budget; sections 8 and 9, ADR-0014), robots.txt
 >   (RFC 9309) and per-host politeness shared through Redis (sections 12.4 and 12.5, ADR-0015),
 >   page directives (`noindex`, `nofollow`; migration `0003`), and a single-process crawl driver.
+> - Phase 5: distributed execution. A scheduler process and crawler worker processes share the
+>   work through a Redis stream and consumer group: publication inside the dispatch transaction,
+>   explicit acknowledgment rules, `XAUTOCLAIM` takeover, reconciliation of lost messages, safe
+>   stream trimming, backpressure, and graceful shutdown (sections 3, 6, 9 and 10, ADR-0016).
 >
-> Distributed scheduling (Redis Streams), the crawler workers, retries, cancellation and search
-> are not implemented yet.
+> Crawl retries, cancellation, idempotent job creation, indexing and search are not implemented
+> yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -116,9 +120,10 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 |---|---|---|---|
 | Dashboard | static SPA behind nginx | create and cancel jobs; show progress, pages, link reports, search | n/a |
 | API | `api`: `uvicorn app.main:app` | input validation, job commands, read models, search queries | stateless, N replicas |
-| Scheduler | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, index relay, reconciliation, stream maintenance | one active leader; standbys are safe |
-| Crawler worker | `crawler-worker`: `python -m app.workers.crawler` | consume the crawl stream, claim URL leases, fetch safely, parse, commit results (fenced), ack, adopt abandoned messages | N processes, each with bounded concurrency |
+| Scheduler (Phase 5) | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, reconciliation, stream maintenance; index relay (Phase 7) | 1..N, no leader (ADR-0016) |
+| Crawler worker (Phase 5) | `crawler-worker`: `python -m app.workers.crawler` | consume the crawl stream, claim URL leases, fetch safely, parse, commit results (fenced), ack, adopt abandoned messages | N processes, each with bounded concurrency |
 | Local crawl driver (Phase 4) | `python -m app.workers.local_crawler <job-id>` | runs one job in one process: dispatch without a stream, claims, crawl tasks, fenced results, level advancement | development and tests only |
+| Diagnostics (Phase 5) | `python -m app.scheduler.status` | read-only JSON report: jobs, URL states, live leases per worker, stream and consumer-group statistics | on demand |
 | Indexer worker | `indexer-worker`: `python -m app.workers.indexer` | consume the index stream, build a weighted `tsvector`, upsert idempotently, ack | 1..N |
 | PostgreSQL | service | durable state, constraints, row locks, full-text index | single instance |
 | Redis | service | streams and consumer groups, per-host rate-limit state, robots.txt cache | single instance, AOF on |
@@ -136,35 +141,55 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 - Follows [`api-conventions.md`](api-conventions.md): versioned routes under `/api/v1`, an
   `X-Request-ID` header on every response, and RFC 9457 problem+json errors.
 
-**Scheduler.** One asyncio process running independent periodic loops:
+**Scheduler** (Phase 5: `app/scheduler/scheduler.py`). One asyncio process. Every
+`SITESCOPE_SCHEDULER_INTERVAL_SECONDS` it runs one pass, each step its own short transaction:
 
-- *Activator*: moves jobs from `queued` to `running` while the running-jobs cap allows it.
-- *Dispatcher*: publishes eligible frontier rows to the crawl stream and marks them `queued`. A row is
-  eligible when its state is `pending`, its depth equals the job's `current_level`, and
-  `next_attempt_at <= now()`. The dispatcher respects a per-job in-flight window and rotates fairly
-  across jobs.
+- *Activator*: moves the oldest jobs from `queued` to `running` while fewer than
+  `SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS` run. A transaction-level advisory lock makes the cap
+  exact across schedulers.
 - *Level advancer / finalizer*: when a running job has no unfinished URLs, admits the next BFS level from
-  the recorded links, or completes the job. Moves `cancelling` jobs to `cancelled` once no URL is in
-  progress.
-- *Index relay*: publishes `pending` `search_documents` rows to the index stream and marks
+  the recorded links, or completes the job (T6). Moving `cancelling` jobs to `cancelled` arrives with
+  cancellation (Phase 6).
+- *Dispatcher*: publishes eligible frontier rows to the crawl stream and marks them `queued` (T3). A row
+  is eligible when its state is `pending`, its depth equals the job's `current_level`, and
+  `next_attempt_at <= now()`. Backpressure: a per-job in-flight window
+  (`SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`), a cap on queued and in-progress URLs over all jobs
+  (`SITESCOPE_SCHEDULER_MAX_OUTSTANDING`), and a batch size per job and pass. The free room is shared
+  fairly among jobs, oldest first.
+- *Reconciler*: every `reconcile_after / 4` (at most 30 s), publishes again the tasks without progress
+  for `SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` whose stream entry is gone (F7 in section 10.4).
+  Abandoned leases and exhausted attempts are recovered by the workers, through `XAUTOCLAIM` and the
+  rules of section 10.3.
+- *Maintenance*: every `retention / 4` (at most 60 s), trims the stream (never an undelivered or pending
+  entry), removes idle consumers that have nothing pending, and logs statistics.
+- *Index relay* (Phase 7): publishes `pending` `search_documents` rows to the index stream and marks
   them `queued` (the indexing outbox, ADR-0008).
-- *Reconciler*: repairs divergence between PostgreSQL and Redis: lost or trimmed messages, abandoned
-  leases, and exhausted attempts.
-- *Maintenance*: trims streams and removes idle consumers.
 
-A leader is elected with `pg_try_advisory_lock` on a dedicated connection. This is an optimization, not a
-correctness requirement: every scheduler action is either a conditional update or uses `SKIP LOCKED`, so
-two overlapping schedulers produce at most duplicate messages.
+There is no leader (ADR-0016). Several schedulers may run at once: activation is serialized by the
+advisory lock, level advancement by the job row lock, dispatch and reconciliation skip rows another
+scheduler holds (`SKIP LOCKED`), and trimming is idempotent. Overlapping schedulers produce at most
+duplicate messages; the backpressure limits become approximate.
 
-**Crawler worker**
+A pass looks at every running job, not only as many as the cap (which limits activation only). A job
+whose step fails for a reason of its own is logged (`scheduler.job_failed`) and skipped for that pass,
+so one broken job cannot stop the others; a transient error (PostgreSQL or Redis unreachable) fails the
+whole pass, which is retried with backoff.
 
-- Reads from the crawl stream with `XREADGROUP`, never requesting more messages than it has free
-  concurrency slots.
+**Crawler worker** (Phase 5: `app/workers/crawler.py`)
+
+- Has a name unique per process start, `crawler-<host>-<pid>-<random>`: its consumer name, its lease
+  owner, and a field of every log line of its tasks.
+- Reads from the crawl stream with `XREADGROUP` (blocking up to `SITESCOPE_STREAM_READ_BLOCK_MS`),
+  never requesting more messages than it has free task slots (`SITESCOPE_CRAWL_CONCURRENCY`).
 - Handles each message as: claim (compare-and-set) → policy checks, robots.txt, per-host rate limit →
-  fetch (outside any transaction) → parse → fenced result commit → `XACK`.
+  fetch (outside any transaction) → parse (in a worker thread) → fenced result commit → `XACK`.
+  Section 10.3 lists when it acknowledges a message.
 - Runs `XAUTOCLAIM` periodically to adopt messages abandoned by crashed or stalled consumers.
-- On shutdown, stops reading, finishes in-flight tasks within a grace period, and exits. Other workers
-  recover anything left unfinished.
+- After a PostgreSQL or Redis error, leaves the message pending and pauses reading (exponential backoff
+  with full jitter), so an outage does not churn through the stream.
+- On SIGINT or SIGTERM (Windows: Ctrl+C or `CTRL_BREAK_EVENT`), stops reading, lets running tasks finish
+  within `SITESCOPE_SHUTDOWN_GRACE_SECONDS`, cancels the rest, and exits. A cancelled task keeps its
+  lease and its pending message, and other workers recover it.
 
 **Indexer worker**
 
@@ -180,16 +205,18 @@ two overlapping schedulers produce at most duplicate messages.
    against the approved targets and the server's caps, without any network access. One transaction
    inserts the job (`queued`, `current_level = 0`, `admitted_count = 1`) and the seed URL
    (`pending`, depth 0). Nothing is published to Redis.
-2. **Activate.** The scheduler finds `queued` jobs in PostgreSQL (index `ix_crawl_jobs_active`) and
+2. **Activate** (Phase 5). The scheduler finds `queued` jobs in PostgreSQL (index `ix_crawl_jobs_active`) and
    sets each to `running` with `current_level = 0` once the running-jobs cap allows it.
-3. **Dispatch.** The dispatcher locks eligible rows (`FOR UPDATE SKIP LOCKED`) and `XADD`s one
-   `{job_id, url_id}` message per row. It then marks the rows `queued` and commits.
+3. **Dispatch** (Phase 5). The dispatcher locks eligible rows (`FOR UPDATE SKIP LOCKED`) and
+   `XADD`s one `{v, job_id, url_id}` message per row. It then marks the rows `queued` with their entry
+   IDs and commits.
 4. **Claim.** A worker receives the message and claims the URL with a compare-and-set:
    - the state becomes `in_progress`;
    - `lease_epoch` and `attempt_count` are incremented;
    - `lease_expires_at` is set from the database clock.
 
-   The claim commits immediately.
+   The claim commits immediately. It first locks the row, which waits for a dispatch of that row still in
+   flight (ADR-0016).
 5. **Fetch.** Outside any transaction: check robots.txt, wait for a per-host rate-limit slot, resolve DNS
    and validate the IP, then send the HTTP request pinned to that IP. The body is streamed under size and
    time limits.
@@ -202,8 +229,8 @@ two overlapping schedulers produce at most duplicate messages.
      page is `noindex`;
    - for a redirect, admits its target at the same depth (section 8.5).
 
-   A retryable failure will return the URL to `pending` with a backoff (Phase 6; in Phase 4
-   every failure is terminal). Then the worker sends `XACK`.
+   A retryable failure will return the URL to `pending` with a backoff (Phase 6; in Phases 4 and
+   5 every failure is terminal). Then the worker sends `XACK`, never before the commit.
 7. **Advance.** When none of the job's URLs is unfinished, the scheduler takes the job row lock. It
    admits the next level's URLs from links recorded by the current level, in deterministic order, up to
    the remaining page budget. If nothing can be admitted, it marks the job `completed`, or `failed` if
@@ -392,7 +419,7 @@ recoverable. The full list of windows is in section 10.4.
 | Window | Outcome | What the schema provides |
 |---|---|---|
 | Relay `XADD` succeeded, commit failed | row still `pending`, so it is published again | duplicate tolerated: the second claim finds the row no longer `queued` |
-| Commit succeeded, Redis later lost the entry (restart, trim) | row `queued`, no message | `dispatched_at` and `stream_entry_id` let the reconciler re-publish |
+| Commit succeeded, Redis later lost the entry (restart, trim) | row `queued`, no message | `dispatched_at` and `stream_entry_id` let the reconciler find the task, check its entry, and re-publish it (Phase 5) |
 | Worker committed, but its `XACK` was lost | message redelivered | URL is terminal, so the claim matches no row and the worker only acks |
 | Worker crashed while holding a lease | `in_progress` with an expired lease | `ix_crawl_urls_lease_expiry`; a takeover claim increments `lease_epoch` |
 | Stale worker commits after a takeover | rejected | the `result_epoch` CHECK rolls the transaction back |
@@ -404,7 +431,7 @@ recoverable. The full list of windows is in section 10.4.
 |---|---|---|
 | `sitescope:crawl` | stream; group `crawlers` | crawl tasks `{v, job_id, url_id}` |
 | `sitescope:index` | stream; group `indexers` | index tasks `{v, page_id}` |
-| `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters (malformed or unclaimable messages), kept for inspection |
+| `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters, kept for inspection and capped near 10,000 entries: the original fields, entry ID and reason (Phase 5: malformed messages, and messages naming an unknown URL or another job) |
 | `sitescope:rate:{<host>}:last` | string with TTL | the start of the host's latest request, in microseconds of Redis time (Phase 4) |
 | `sitescope:rate:{<host>}:active` | sorted set with TTL | the host's politeness slots in use: slot token -> expiry (Phase 4) |
 | `sitescope:rate:{<host>}:queue` | sorted set with TTL | requests waiting for a slot, in arrival order: slot token -> first attempt (Phase 4) |
@@ -416,10 +443,15 @@ recoverable. The full list of windows is in section 10.4.
 - Consumer groups are created idempotently at startup with `XGROUP CREATE <stream> <group> 0 MKSTREAM`,
   ignoring `BUSYGROUP` errors.
 - Each worker process uses a unique consumer name. Maintenance removes idle consumers that have no pending
-  entries.
-- Streams are trimmed by age with `XTRIM ... MINID ~ ...`. Trimming can delete entries that were never
-  delivered. That is acceptable only because PostgreSQL still records the task as outstanding, and the
-  reconciler re-publishes it.
+  entries, in one Lua script that checks and deletes atomically (`XGROUP DELCONSUMER` would drop the
+  pending entries of a consumer that resumed in between).
+- Replies are decoded leniently: bytes that are not UTF-8 become U+FFFD. Strict decoding failed a whole
+  `XREADGROUP` or `XAUTOCLAIM` batch on one such entry, leaving the batch's valid tasks pending forever
+  (Phase 5 review); now the entry is malformed and dead-lettered.
+- Streams are trimmed by age with `XTRIM ... MINID ~ ...` (Phase 5). The trim point is capped by the
+  oldest pending entry and by each group's last-delivered ID, so trimming never deletes an entry that
+  is undelivered or pending. Entries lost in other ways (Redis restarted without its data) are
+  recovered by the reconciler, because PostgreSQL still records the task as outstanding.
 - Redis 7.0 or later is required. `XAUTOCLAIM` arrived in 6.2, and 7.0 added reporting of entries that
   were deleted from the stream.
 - The key prefix is configurable (`SITESCOPE_REDIS_KEY_PREFIX`), so test runs can be isolated:
@@ -648,15 +680,15 @@ can show "nothing in progress" while new work is about to appear.
 | | Transaction | Steps | Notes |
 |---|---|---|---|
 | T1 | Create job (Phase 2C) | insert job + seed URL | one transaction, no Redis. Planned for Phase 6: repeating an `Idempotency-Key` returns the existing job, and a different request body returns `409` |
-| T2 | Activate | compare-and-set `queued -> running` | Phase 4 |
-| T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task. Phase 4 marks rows `queued` without `XADD` and hands the IDs to in-process tasks |
-| T4 | Claim | compare-and-set update (sketch below) | committed before any network I/O; a takeover is logged as a `url.recovered` event (Phase 4) |
+| T2 | Activate | compare-and-set `queued -> running`; the scheduler's batch version holds a transaction-level advisory lock, so the running-jobs cap is exact | Phase 4; batch in Phase 5 |
+| T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task (Phase 5). The single-process driver marks rows `queued` without `XADD` and hands the IDs to in-process tasks |
+| T4 | Claim | lock the URL row (it waits for a dispatch of the row in flight) → compare-and-set update (sketch below) | committed before any network I/O; a takeover is logged as a `url.recovered` event (Phase 4; the row lock since Phase 5) |
 | T5 | Result | fenced update of the URL (outcome, `result_epoch = :token`) → page → links → `search_documents` row (`pending`, not for `noindex`) → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing (Phase 4, ADR-0014); zero rows from the fenced update: roll back, discard, do not `XACK`; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
 | T6 | Advance | lock job → verify no unfinished URLs → admit next level or set terminal | a single writer per job (Phase 4) |
 | T7 | Cancel | lock job → set status → cancel `pending` and `queued` URLs | |
 | T8 | Index relay | lock `pending` `search_documents` rows `FOR UPDATE SKIP LOCKED` → `XADD` → set `queued`, `dispatched_at`, `stream_entry_id` | same publish-then-mark pattern as T3 |
 | T9 | Index | write `search_vector`, `indexed_content_version`, `status = 'indexed'` → commit → `XACK` | idempotent |
-| T10 | Reconcile | per-row compare-and-set: re-publish, fail, or cancel | |
+| T10 | Reconcile | lock stale `queued` and long-expired `in_progress` rows `FOR UPDATE SKIP LOCKED` → check their stream entries → `XADD` the lost ones → set `dispatched_at`, `stream_entry_id` | Phase 5: re-publishes only; exhausted URLs are failed by the workers (recovery claim) |
 
 Claim (sketch):
 
@@ -718,12 +750,24 @@ Rules:
   it must not insert a key that may exist: redirect admission checks for a known target with a plain
   `SELECT` first, and level advancement inserts only targets that `NOT EXISTS` found absent
   (ADR-0014).
-- **Contention.** The dispatcher and the relay select rows with `SKIP LOCKED`, so concurrent instances
-  never block each other and never pick the same rows.
+- **Contention.** The dispatcher, the reconciler and the relay select rows with `SKIP LOCKED`, so
+  concurrent instances never block each other and never pick the same rows. Such a selection is a
+  `MATERIALIZED` CTE when an `UPDATE` follows: `UPDATE ... WHERE id IN (SELECT ... LIMIT n FOR UPDATE
+  SKIP LOCKED)` updated more than `n` rows, because PostgreSQL may rescan the subquery per outer row
+  and a rescan skips the rows already updated (found in Phase 5; ADR-0016).
+- **Dispatch and claim.** The dispatcher publishes before it commits, so a worker can read a message
+  while the row is still `pending` in committed state. The claim therefore locks the row first
+  (`SELECT ... FOR NO KEY UPDATE`): it waits for the dispatch to commit or roll back, then its
+  compare-and-set sees the outcome.
 - **Uniqueness.** Unique constraints keep racing duplicate inserts safe even when application-level
   checks race.
-- **No network I/O inside a transaction.** The only exception is the short `XADD` in T3 and T8, which is
-  bounded by a Redis timeout.
+- **No network I/O inside a transaction.** The only exceptions are the short Redis calls of T3, T8
+  and T10 (`XADD`, and the reconciler's entry check), each bounded by the Redis socket timeout. The
+  scheduler's sessions end themselves after twice that timeout plus 5 s idle inside a transaction
+  (`idle_in_transaction_session_timeout`), so a stalled scheduler cannot keep its row locks. The
+  workers' sessions do so after the lease margin (10 s): their transactions never wait on the network,
+  and a worker frozen inside its claim would otherwise block every takeover of its URL (Phase 5
+  review).
 
 ## 10. Reliability model
 
@@ -756,9 +800,14 @@ A worker gives up before its lease ends. A message therefore becomes reclaimable
 worker has finished, failed, or stalled abnormally. If a stalled worker later resumes, the fencing check
 rejects its commit. The process refuses to start with settings that violate this ordering.
 
-Implemented in Phase 4: `SITESCOPE_CRAWL_LEASE_SECONDS` (90) must be at least the fetch deadline
-plus 10 s, and each task runs under a deadline that ends 10 s before its lease. `reclaim_min_idle`
-and `reconcile_after` arrive with the streams and the reconciler (Phases 5 and 6).
+Implemented: `SITESCOPE_CRAWL_LEASE_SECONDS` (90) must be at least the fetch deadline plus
+`SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS` (10), and each task runs under a deadline that ends that margin
+before its lease (Phase 4). Phase 5 adds `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120),
+`SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` (600) and `SITESCOPE_STREAM_RETENTION_SECONDS` (3600),
+and the startup check `task_deadline < lease <= reclaim_min_idle <= reconcile_after <= retention`.
+
+Leases are never renewed (ADR-0016). The deadline already bounds every task, so a live task never needs
+a longer lease, and a worker that kept renewing while stuck would hold its URL forever.
 
 Initial defaults are starting points to validate in tests, not measured values:
 
@@ -773,15 +822,27 @@ Initial defaults are starting points to validate in tests, not measured values:
 
 ### 10.3 How the crawler worker handles a message
 
+Implemented in Phase 5 (`judge_unclaimed` in `backend/app/workers/crawler.py`; ADR-0016). The rule:
+acknowledge only when no work is left that the message stands for.
+
 1. **Malformed message.** Dead-letter it and ack.
 2. **Claim succeeds.** Process the URL, run the fenced commit, then ack.
    - If the commit is fenced out, discard the result and **do not ack**. The message now belongs to the
      new lease holder, and `XACK` acts on the whole group, so acking would hide it.
-3. **Claim fails.** Read the URL row and act on what it shows:
+   - On any error, or a cancellation at shutdown, **do not ack** either: the outcome may be uncertain
+     (a commit whose reply was lost). The message is redelivered, and the rules below sort it out.
+3. **Claim fails.** Read the URL row (`inspect_url`) and act on what it shows:
    - the URL is terminal, or the job is no longer running: ack;
+   - the URL is `pending`: the dispatch that published this message rolled back (the claim waited for
+     it, section 9). Ack; the next dispatch publishes the task again;
+   - the URL is `queued`, or its lease expired with attempts left: claim again (a takeover);
    - another live worker holds the lease: leave the message pending, to be re-examined after
      `reclaim_min_idle`;
-   - attempts are exhausted: mark the URL `failed` (compare-and-set) and ack.
+   - the lease expired after the last attempt: fail the URL as `max_attempts_exceeded` (a fenced
+     recovery claim) and ack;
+   - the URL does not exist, or belongs to another job: dead-letter it and ack.
+4. **The ack fails.** Log it. The message stays pending, and its redelivery is acknowledged once the
+   claim finds the URL finished.
 
 ### 10.4 Failure windows
 
@@ -793,13 +854,34 @@ Initial defaults are starting points to validate in tests, not measured values:
 | F4 | Worker crashes after claiming, before commit | URL `in_progress` with a running lease | `XAUTOCLAIM` after min-idle, then a takeover claim (`lease_epoch + 1`) | page fetched again; the attempt is counted |
 | F5 | Worker stalls past its lease, then resumes | another worker holds the lease | the stale commit fails fencing and rolls back | no duplicate effects |
 | F6 | Worker crashes after commit, before `XACK` | URL terminal; message pending | redelivered → claim fails → ack | no duplicate effects |
-| F7 | Redis loses or trims messages | URL `queued` or `in_progress` with no live stream entry | reconciler re-publishes | delay only |
-| F8 | Redis is unavailable | jobs are still accepted; nothing is dispatched | dispatcher, relay, and workers retry with backoff | delay only |
+| F7 | Redis loses messages, or they are deleted | URL `queued` or `in_progress` with no live stream entry | the reconciler re-publishes once the entry is gone (trimming never deletes undelivered or pending entries) | delay only |
+| F8 | Redis is unavailable | jobs are still accepted; nothing is dispatched | dispatcher, relay, and workers retry with backoff | delay; politeness slots whose release failed stay held until their TTL (below) |
 | F9 | PostgreSQL is unavailable | no claims or commits; messages stay pending | resumes through `XAUTOCLAIM` and the reconciler | delay; PostgreSQL is the hard dependency |
 | F10 | Index relay crashes after `XADD`, before commit | search document still `pending` | published again | duplicate index task; indexing again is a no-op |
 | F11 | Indexer crashes before or after commit | message pending | redelivery | idempotent upsert |
-| F12 | Scheduler crashes, or two schedulers overlap | none | restart; advisory-lock leader; `SKIP LOCKED` + compare-and-set | at most duplicate messages |
-| F13 | Poison message repeatedly crashes workers | delivery count grows | `attempt_count` bounds claims, ending in `failed`; unclaimable messages are dead-lettered after N deliveries | bounded work |
+| F12 | Scheduler crashes, or schedulers overlap | a dispatch may roll back after its `XADD` | restart, or another scheduler continues; no leader: advisory lock (activation), job row lock (advancement), `SKIP LOCKED` + compare-and-set (dispatch, reconciliation) | at most duplicate messages |
+| F13 | Poison message repeatedly crashes workers | delivery count grows | `attempt_count` bounds claims, ending in `failed`; malformed and unmatched messages are dead-lettered (Phase 5); dead-lettering after N deliveries is Phase 6 | bounded work |
+
+Phase 5 tests the crawl-stream windows with real services, most of them with real processes:
+
+| Window | Test (backend/tests/...) |
+|---|---|
+| F2 | `integration/test_task_dispatch.py` (a publish whose transaction fails); `fault/test_recovery.py` (a scheduler killed exactly between `XADD` and `COMMIT`, held there by a table lock; a scheduler killed mid-crawl, D) |
+| F3 | `fault/test_recovery.py` (a message abandoned before its claim, B); `integration/test_crawler_worker.py` |
+| F4 | `fault/test_recovery.py` (a worker killed during a fetch, B; a worker stopped after its grace period) |
+| F5 | `fault/test_recovery.py` (a worker frozen mid-fetch is fenced out, C); `integration/test_crawler_worker.py` |
+| F6 | `integration/test_crawler_worker.py` (a lost `XACK`, repaired by the redelivery) |
+| F7 | `integration/test_task_dispatch.py`, `integration/test_scheduler.py` (lost entries re-published, live ones left alone) |
+| F8, F9 | `fault/test_recovery.py` (Redis, then PostgreSQL, cut off through a TCP proxy, G) |
+| F12 | `integration/test_distributed.py` (three scheduler processes, F); `integration/test_task_dispatch.py` |
+| F13 | dead-lettering in `integration/test_crawler_worker.py` and `integration/test_streams.py`, including entries that are not UTF-8 |
+
+**Politeness slots after a crash or an outage.** A worker that dies, or loses Redis, while it holds a
+politeness slot cannot release it: the slot stays held until its TTL (the fetch deadline + 10 s, 70 s by
+default). With one slot per host (the default), the host's next requests wait, and those waiting longer
+than `SITESCOPE_POLITENESS_MAX_WAIT_SECONDS` (30 s) fail as `rate_limited`, which is terminal until
+Phase 6 retries retryable failures. The outage test (G) observed this: invariants held and the job
+completed, but URLs can end as `failed: rate_limited`.
 
 ### 10.5 Retries and backoff
 
@@ -810,19 +892,22 @@ Initial defaults are starting points to validate in tests, not measured values:
   to the cap.
 - **Durability:** a retry sets the URL back to `pending` with a future `next_attempt_at`. A crash never
   loses a retry, and a waiting retry never occupies a worker slot.
-- **Infrastructure calls:** PostgreSQL and Redis calls get a few short in-process retries. After that, the
-  message stays pending and is recovered as in F3 and F4.
-- **Phase 4:** no retries yet. A retryable failure ends its URL as `failed` with the failure kind as
-  its outcome, and the single-process driver stops on a PostgreSQL or Redis error (its leases
-  expire, and the next run takes them over).
+- **Infrastructure calls** (Phase 5): a failed PostgreSQL or Redis call is not retried in-process. The
+  worker leaves the message pending and pauses reading with exponential backoff and full jitter (base
+  0.5 s, cap 10 s); the message is then recovered as in F3 and F4. The scheduler retries its whole pass
+  with backoff (cap 30 s).
+- **Phases 4 and 5:** no crawl retries yet. A retryable failure ends its URL as `failed` with the failure
+  kind as its outcome. The single-process driver stops on a PostgreSQL or Redis error (its leases
+  expire, and the next run takes them over); the distributed processes keep running and recover on
+  their own.
 
 ### 10.6 Redis and PostgreSQL consistency limitations
 
 - No commit spans both systems. The outbox gives at-least-once publication, so duplicates are expected
   and tolerated.
 - With AOF `everysec`, a Redis crash can lose about a second of writes, and more with weaker persistence
-  settings. Correctness does not depend on Redis persistence, because the reconciler restores liveness
-  within `reconcile_after`.
+  settings. Correctness does not depend on Redis persistence, because the reconciler restores liveness:
+  a task whose entry was lost is published again `reconcile_after` after its last progress.
 - A message re-published as a new entry starts with a fresh delivery count. PostgreSQL's `attempt_count`
   is therefore the authoritative retry limit.
 - Queue statistics read from Redis (stream lengths, pending counts) are approximate. Job progress always
@@ -855,6 +940,13 @@ The integration, concurrency, and fault tests (Phases 4 to 6) check these after 
 Phase 4 checks invariants 1, 2, 4, 5 and 6, the parent-depth rule behind 3, and 7 (every
 connection recorded) after every end-to-end crawl, and compares the exact expected depths
 (`backend/tests/integration/test_local_crawler.py`).
+
+Phase 5 checks invariants 1, 2, 4, 5 and 6 and the parent-depth rule after every multi-process crawl
+(`backend/tests/integration/test_distributed.py`, `backend/tests/fault/test_recovery.py`), with the
+exact expected URLs and depths. From the test servers' side it also checks that each page was
+requested once in failure-free runs and with injected duplicates, that every level was requested
+only after the previous one was finished (strict BFS across processes), and the per-host politeness
+limits (requests in flight, spacing) across processes.
 
 ## 12. Security model
 
@@ -1054,6 +1146,7 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 | Recovery | `lease.taken_over`, `reconcile.republished` |
 | Fetching (Phase 3) | `fetch.destination_blocked` (WARNING: host and address classes, never the URL or the addresses), `fetch.completed` (DEBUG) |
 | Crawl (Phase 4) | `crawl.run_started`, `crawl.run_finished`, `job.started`, `job.level_advanced`, `job.completed`, `job.failed`, `task.completed`, `task.fenced`, `task.parse_failed`, `lease.taken_over`, `url.failed`, `robots.fetched`, `robots.fetch_failed`, `politeness.rate_limited`, `politeness.release_failed` |
+| Distributed (Phase 5) | `worker.started`, `worker.stats`, `worker.error`, `worker.recovered`, `worker.stopping`, `worker.tasks_cancelled`, `worker.stopped`; `task.handled` (one line per message: disposition, reason, message ID, consumer, epoch, depth, outcome, duration), `task.reclaimed`, `task.reclaim_deleted`, `task.settle_failed`, `task.cancelled`, `task.dispatched`, `task.republished`; `scheduler.started`, `scheduler.pass`, `scheduler.pass_failed`, `scheduler.recovered`, `scheduler.stats`, `scheduler.stopped`; `stream.group_recreated`, `stream.consumers_removed` |
 | Indexing | `outbox.published`, `index.upserted` |
 
 Since Phase 4, a crawl task's log lines carry `job_id`, `url_id`, `worker_id` and `lease_epoch`
@@ -1066,7 +1159,10 @@ lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) a
 - `GET /health` and `GET /api/v1/health/live` are liveness probes: the process is up and serving
   requests. They check no dependencies. Both were implemented in Phase 1.
 - `GET /api/v1/health/ready` (Phase 2B) reports whether PostgreSQL and Redis are reachable.
-- The scheduler and the workers log periodic heartbeats, which the Compose health checks use.
+- The workers log `worker.stats` every 60 s, and the scheduler `scheduler.stats` at each
+  maintenance (Phase 5). `python -m app.scheduler.status` prints jobs, URL states, live leases
+  per worker, and stream and consumer-group statistics, read-only. Compose health checks
+  arrive in Phase 11.
 
 **Progress views**
 
@@ -1088,7 +1184,10 @@ lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) a
   - concurrency
   - timing
   - retries
-  - crawling (Phase 4): concurrency of the local driver, lease duration, attempts
+  - crawling (Phase 4): concurrency of a crawl process, lease duration and margin, attempts
+  - streams and scheduler (Phase 5): read block time, reclaim interval, idle time and batch,
+    retention, consumer idle time; scheduler interval, batch size, per-job and overall in-flight
+    limits, running-jobs cap, reconcile time; shutdown grace period
   - politeness (Phase 4): interval, requests in flight per host, maximum wait, robots.txt cache
     and retry times, crawl-delay cap, and the crawler name for the user agent `<name>/<version>`
     (default `SiteScopeBot`)
@@ -1143,22 +1242,23 @@ SITESCOPE/
 |   |   |-- api/                 # routers (crawls since Phase 2C; search, links, system), schemas
 |   |   |-- services/            # use cases that own transactions: jobs, frontier, indexing, search, links
 |   |   |-- db/                  # SQLAlchemy models, engine and session factory
-|   |   |-- queue/               # Redis Streams adapter, versioned message schemas
-|   |   |-- scheduler/           # activator, dispatcher, level advancer, relay, reconciler, leader lock
+|   |   |-- queue/               # Phase 5: Redis Streams adapter, versioned message schema
+|   |   |-- scheduler/           # Phase 5: scheduler passes (activation, advancement, dispatch,
+|   |   |                        #   reconciliation, maintenance), read-only status command
 |   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, resolver,
 |   |   |                        #   safe fetcher, content limits, encodings, HTML parser (Phase 3);
 |   |   |                        #   robots.txt, politeness gate, page directives (Phase 4);
 |   |   |                        #   no database imports (Redis for politeness and robots.txt)
 |   |   |-- indexing/            # search document building
-|   |   `-- workers/             # crawl task, single-process driver (Phase 4); crawler and
-|   |                            #   indexer entrypoints, shared consumer runtime (Phases 5, 7)
+|   |   `-- workers/             # crawl task, single-process driver (Phase 4); crawler worker,
+|   |                            #   shared runtime (Phase 5); indexer (Phase 7)
 |   `-- tests/
 |       |-- unit/
 |       |-- integration/
-|       `-- fault/
+|       `-- fault/               # Phase 5: crash and outage recovery with real processes
 |-- frontend/                    # Phase 9 (currently empty)
 |-- demo-site/                   # Phase 4: static site + robots.txt; Phase 11: its container
-|-- benchmarks/                  # Phase 10: scripts, raw results, environment notes
+|-- benchmarks/                  # Phase 5: distributed throughput; Phase 10: the full set
 `-- docs/
     |-- architecture.md
     |-- development-roadmap.md
@@ -1215,11 +1315,16 @@ SITESCOPE/
 | Crawl state (Phase 4) | claims, takeovers, fenced results and rollback, redirect admission, level advancement, recovery; budget and deduplication under concurrent transactions; the SQL sent binds the worker's token | PostgreSQL |
 | Politeness and robots.txt (Phase 4) | the gate on a fake clock with an in-memory store (no real waiting); the Lua script on real Redis, with exact spacing read from Redis; robots.txt parsing, matching and status mapping; the policy against local servers | nothing; Redis; local servers |
 | Local crawls (Phase 4) | the single-process driver over fixture graphs and the demo site on 127.0.0.1: exact URL sets and depths, budget prefix, directives, failures, redirects, robots.txt, crash recovery with a short lease, politeness spacing, 1 vs N concurrent tasks; invariants after every crawl | PostgreSQL, Redis, local servers |
+| Streams and workers (Phase 5) | the stream adapter on real Redis (groups, blocking reads, acks, `XAUTOCLAIM`, deleted entries, dead letters, trimming, `delivering`); dispatch with publication and its failure windows; a claim waiting for a dispatch; reconciliation; the worker's acknowledgment rules with a test-double fetcher; scheduler passes | PostgreSQL, Redis |
+| Processes (Phase 5) | real scheduler and worker processes crawling local sites: participation from the workers' own logs, injected duplicates, competing schedulers, a killed worker, a frozen worker (fenced out), a killed scheduler, Redis and PostgreSQL cut off through a TCP proxy, graceful stops; the invariants, and BFS order and politeness from the servers' request timelines | PostgreSQL, Redis, local servers |
 | End-to-end | crawl a local fixture site over real HTTP, then check search results and link reports | full stack |
 | Frontend | components and the API client; type check; production build | Node.js |
 
 Tests that need unavailable services skip with an explicit reason. Benchmarks are kept separate from
-tests (Phase 10): fixed parameters, a recorded environment, and raw output committed to the repository.
+tests: fixed parameters, a recorded environment, and raw output committed to the repository
+(`benchmarks/`; the first one in Phase 5, the full set in Phase 10). The concurrency row above was
+planned with an in-memory site; Phase 5 uses real processes and local HTTP servers instead. Not done
+yet: `FLUSHALL` with real processes (lost entries are tested at the service level).
 
 ## 19. Assumptions and known limitations
 
@@ -1270,6 +1375,17 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
   (lease minus 10 s) can end it first, as `deadline_exceeded`, which Phase 6 will retry.
 - The single-process driver stops on a PostgreSQL or Redis error. The next run continues once the
   stopped run's leases expire.
+- A worker that dies, or loses Redis, while it holds a politeness slot leaves the slot held until its
+  TTL (70 s by default). With one slot per host, the host's requests wait meanwhile, and those
+  waiting longer than the maximum wait (30 s) fail as `rate_limited` until Phase 6 adds retries
+  (section 10.4).
+- Recovery is deliberately unhurried with the defaults: a crashed worker's tasks resume after the
+  reclaim idle time (120 s), a lost message after the reconcile time (10 minutes). A transient
+  PostgreSQL error during a claim also leaves the message pending, so that task waits for the reclaim
+  idle time too.
+- With several schedulers, the backpressure limits (per job, overall) are approximate.
+- A graceful stop on Windows needs a console event (Ctrl+C or `CTRL_BREAK_EVENT`). Terminating the
+  process instead is safe, but running tasks then wait for their leases to expire.
 - HTML only, no JavaScript rendering, and English-only text search.
 - HTTP/1.1 only. A response without a `Content-Type` is not sniffed: it is refused as
   unsupported. Only the first member of a multi-member gzip body is read.
@@ -1299,3 +1415,4 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 | [0013](adr/0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop |
 | [0014](adr/0014-crawl-state-transactions-and-redirects.md) | Crawl state transactions, same-level redirects, and page directives |
 | [0015](adr/0015-robots-txt-and-per-host-politeness.md) | robots.txt (RFC 9309) and per-host politeness through Redis |
+| [0016](adr/0016-distributed-execution-redis-streams.md) | Distributed execution over Redis Streams: publication, acknowledgment, recovery |

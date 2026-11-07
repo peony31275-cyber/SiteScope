@@ -1,7 +1,8 @@
 # ADR-0002: Transactional outbox for publishing to Redis
 
 - Status: Accepted. The index-event part (`index_outbox`) is superseded by
-  [ADR-0008](0008-search-documents-as-index-outbox.md).
+  [ADR-0008](0008-search-documents-as-index-outbox.md). Extended by
+  [ADR-0016](0016-distributed-execution-redis-streams.md) (publication inside the dispatch transaction).
 - Date: 2026-11-06
 
 ## Context

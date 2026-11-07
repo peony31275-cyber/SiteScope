@@ -1,10 +1,10 @@
 r"""The single-process crawl driver: runs one crawl job to completion in this process.
 
-It drives the Phase 4 use cases (``services.crawl_state``) the way the scheduler and the
-distributed workers will in Phase 5, in one process and without Redis Streams: the IDs of
-dispatched URLs go straight to in-process tasks instead of through a stream. It is a tool for
-development, tests and demonstrations, not the production worker. Redis is still required:
-politeness slots and the robots.txt cache are shared through it.
+It drives the same use cases (``services.crawl_state``) as the scheduler and the crawler
+workers (``app.scheduler``, ``app.workers.crawler``, Phase 5), in one process and without Redis
+Streams: the IDs of dispatched URLs go straight to in-process tasks instead of through a
+stream. It is a tool for development, tests and demonstrations, not the distributed system.
+Redis is still required: politeness slots and the robots.txt cache are shared through it.
 
 The loop, for one job:
 
@@ -15,8 +15,8 @@ The loop, for one job:
    lease expired (left behind by a stopped run; they are taken over with a new fencing token),
    then newly dispatched ``pending`` URLs (T3);
 4. each task claims its URL (T4), runs ``crawl_task.crawl_url`` under a deadline that ends
-   ``LEASE_MARGIN_SECONDS`` before its lease, and records the result (T5). A fenced-out result
-   is discarded;
+   ``SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS`` before its lease, and records the result (T5). A
+   fenced-out result is discarded;
 5. a URL whose expired lease used its last attempt is failed (``recover_exhausted_url``);
 6. if the level has unfinished URLs that this process cannot act on (live leases of another
    process), wait and look again.
@@ -40,30 +40,22 @@ import argparse
 import asyncio
 import json
 import logging
-import os
-import secrets
-import socket
 import sys
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Self
 
-from app.core.config import LEASE_MARGIN_SECONDS, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError
 from app.core.logging import configure_logging, task_context_var
+from app.core.process import int_in_range, process_name
 from app.core.redis import create_redis_client
-from app.crawler.fetcher import build_fetcher
-from app.crawler.html_parser import ParseLimits
-from app.crawler.politeness import build_gate
-from app.crawler.robots import build_robots_policy
-from app.db.models import UrlState
 from app.db.session import Database
-from app.services.crawl_jobs import CrawlJobProgress, get_crawl_job, target_policy
+from app.services.crawl_jobs import CrawlJobProgress, get_crawl_job
 from app.services.crawl_state import (
     AdvanceAction,
     RecordStatus,
-    UrlResult,
     activate_job,
     advance_job,
     claim_url,
@@ -72,7 +64,8 @@ from app.services.crawl_state import (
     record_result,
     recover_exhausted_url,
 )
-from app.workers.crawl_task import CrawlContext, crawl_url
+from app.workers.crawl_task import CrawlContext
+from app.workers.runtime import build_crawl_context, crawl_within, worker_database
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +74,7 @@ _FINISHED = (AdvanceAction.COMPLETED, AdvanceAction.FAILED, AdvanceAction.NOT_RU
 
 def worker_name() -> str:
     """A lease owner name unique per process start (ADR-0011)."""
-    return f"local-{socket.gethostname()}-{os.getpid()}-{secrets.token_hex(4)}"
+    return process_name("local")
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +98,7 @@ class DriverConfig:
         return cls(
             concurrency=concurrency if concurrency is not None else settings.crawl_concurrency,
             lease_seconds=settings.crawl_lease_seconds,
-            task_deadline=settings.crawl_lease_seconds - LEASE_MARGIN_SECONDS,
+            task_deadline=settings.crawl_lease_seconds - settings.crawl_lease_margin_seconds,
             max_attempts=settings.crawl_max_attempts,
             max_redirect_hops=settings.fetch_max_redirects,
         )
@@ -248,15 +241,7 @@ class LocalCrawler:
                 "lease_epoch": lease.token,
             }
         )
-        try:
-            async with asyncio.timeout(config.task_deadline):
-                result = await crawl_url(self._context, lease)
-        except TimeoutError:
-            result = UrlResult(
-                UrlState.FAILED,
-                "deadline_exceeded",
-                error=f"the task did not finish within {config.task_deadline:g} s",
-            )
+        result = await crawl_within(self._context, lease, deadline=config.task_deadline)
         async with self._database.session() as session:
             recorded = await record_result(
                 session, lease, result, max_redirect_hops=config.max_redirect_hops
@@ -280,20 +265,13 @@ async def run(
     settings: Settings, job_id: uuid.UUID, *, concurrency: int | None = None
 ) -> CrawlJobProgress:
     """Build the crawl context from settings and run one job (the CLI's work)."""
-    database = Database(settings, application_name="sitescope-local-crawler")
+    database = worker_database(settings, application_name="sitescope-local-crawler")
     redis = create_redis_client(settings, client_name="sitescope-local-crawler")
     try:
-        gate = build_gate(settings, redis)
-        fetcher = build_fetcher(settings, gate=gate)
-        context = CrawlContext(
-            fetcher=fetcher,
-            robots=build_robots_policy(settings, fetcher=fetcher, redis=redis, delay_sink=gate),
-            targets=target_policy(settings),
-            parse_limits=ParseLimits.from_settings(settings),
-            crawler_name=settings.crawler_name,
-        )
         crawler = LocalCrawler(
-            database, context, DriverConfig.from_settings(settings, concurrency=concurrency)
+            database,
+            build_crawl_context(settings, redis),
+            DriverConfig.from_settings(settings, concurrency=concurrency),
         )
         return await crawler.run(job_id)
     finally:
@@ -323,9 +301,9 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
     parser.add_argument("job_id", type=uuid.UUID, help="the ID of a queued or running crawl job")
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=int_in_range(1, 64),
         default=None,
-        help="tasks in flight (default: SITESCOPE_CRAWL_CONCURRENCY)",
+        help="tasks in flight, 1 to 64 (default: SITESCOPE_CRAWL_CONCURRENCY)",
     )
     args = parser.parse_args(argv)
     settings = settings or get_settings()

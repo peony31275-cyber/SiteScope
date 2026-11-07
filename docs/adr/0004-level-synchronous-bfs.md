@@ -3,7 +3,7 @@
 - Status: Accepted. The deduplication key is amended by
   [ADR-0009](0009-dedup-on-normalized-url.md) (`normalized_url` instead of `url_hash`).
   Extended by [ADR-0014](0014-crawl-state-transactions-and-redirects.md) (same-level
-  redirect admission, nofollow).
+  redirect admission, nofollow), and by [ADR-0016](0016-distributed-execution-redis-streams.md) (several schedulers without a leader).
 - Date: 2026-11-06
 
 ## Context

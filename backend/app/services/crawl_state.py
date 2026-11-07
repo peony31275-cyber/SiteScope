@@ -1,14 +1,23 @@
-"""Crawl state: the URL frontier, leases, fenced results, and level-synchronous BFS (Phase 4).
+"""Crawl state: the URL frontier, leases, fenced results, and level-synchronous BFS.
 
-These are the use cases every crawler process shares: the single-process driver
-(``app.workers.local_crawler``) now, the scheduler and the distributed workers in Phase 5.
-PostgreSQL is the source of truth. Each function runs one short transaction, and no
-transaction is open during network I/O (architecture, section 9):
+These are the use cases every crawler process shares: the scheduler and the crawler workers
+(Phase 5), and the single-process driver (``app.workers.local_crawler``, Phase 4). PostgreSQL is
+the source of truth. Each function runs one short transaction, and no transaction is open during
+network I/O to a crawl target (architecture, section 9):
 
-* **T2** ``activate_job``: ``queued`` -> ``running``, a compare-and-set.
+* **T2** ``activate_job`` and ``activate_jobs``: ``queued`` -> ``running``, compare-and-set; the
+  scheduler's batch version holds an advisory lock so that the running-jobs cap is exact.
 * **T3** ``dispatch_urls``: ``pending`` URLs at the job's current level -> ``queued``, selected
-  with ``FOR UPDATE SKIP LOCKED``. Phase 5 publishes each one to Redis Streams inside this
-  transaction; here the caller receives the IDs directly.
+  with ``FOR UPDATE SKIP LOCKED``. With a ``publish`` callback (the scheduler), the locked rows
+  are published to Redis Streams first and marked ``queued`` with their stream entry IDs in the
+  same transaction: a crash or a failed commit after ``XADD`` leaves the rows ``pending``, so
+  they are published again (a duplicate message, never a lost task). The ``XADD`` round trip is
+  the one network call made inside a transaction, bounded by the Redis timeout (architecture,
+  section 9).
+* **Reconciliation** ``republish_stale``: a ``queued`` task, or an expired lease, that has made
+  no progress for ``older_than`` seconds is published again if its stream entry is no longer
+  delivering (Redis lost its data, or the entry was trimmed or acknowledged). Duplicates are
+  harmless.
 * **T4** ``claim_url``: ``queued``, or ``in_progress`` with a lease that expired by the database
   clock, -> ``in_progress``. The claim issues a new fencing token (``lease_epoch + 1``,
   ADR-0011) and counts an attempt; a URL with no attempts left is never claimed.
@@ -43,7 +52,9 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Final
 
@@ -74,6 +85,17 @@ EXHAUSTED_OUTCOME: Final = "max_attempts_exceeded"
 # How long a recovery claim's lease lasts; it is released in the same transaction.
 _RECOVERY_LEASE_SECONDS: Final = 60.0
 _OUTCOME = re.compile(r"[a-z][a-z0-9_]*")
+# Transaction-level advisory lock that serializes job activation across schedulers, so that
+# the running-jobs cap is never exceeded (an arbitrary constant: "sitescope activation").
+ACTIVATION_LOCK: Final = 0x5173_0001
+
+# Publishes (job_id, url_id) tasks to the task stream; returns their entry IDs in order.
+Publisher = Callable[[Sequence[tuple[uuid.UUID, uuid.UUID]]], Awaitable[list[str]]]
+# For each stream entry ID (None: never published), whether the stream still delivers it:
+# not delivered yet, or pending in the consumer group (``CrawlStream.delivering``).
+DeliveryCheck = Callable[[Sequence[str | None]], Awaitable[list[bool]]]
+# Where a reconciliation scan stopped: the (dispatched_at, id) of the last row it examined.
+ReconcileCursor = tuple[datetime, uuid.UUID]
 
 
 # --- Results produced by a crawl task ----------------------------------------------------------
@@ -180,6 +202,37 @@ class FrontierUrl:
     exhausted: bool  # its lease expired after its last allowed attempt: recover, do not claim
 
 
+@dataclass(frozen=True, slots=True)
+class UrlStatus:
+    """What a worker needs to know about a URL it could not claim (``inspect_url``)."""
+
+    url_id: uuid.UUID
+    job_id: uuid.UUID
+    job_status: JobStatus
+    state: UrlState
+    attempt_count: int
+    lease_owner: str | None
+    lease_live: bool  # in progress under a lease that has not expired (database clock)
+
+
+@dataclass(frozen=True, slots=True)
+class Reconciliation:
+    """One ``republish_stale`` call."""
+
+    examined: int  # stale tasks looked at
+    republished: int  # of those, published again: their stream entry was gone
+    resume_after: ReconcileCursor | None  # pass to the next call; None: start from the oldest
+
+
+@dataclass(frozen=True, slots=True)
+class JobFrontier:
+    """A running job's unfinished URLs, for the scheduler (``running_frontiers``)."""
+
+    job_id: uuid.UUID
+    unfinished: int  # pending, queued or in progress
+    in_flight: int  # queued or in progress
+
+
 class _FencedOutError(Exception):
     """The fenced update matched no row; raised inside the transaction to roll it back."""
 
@@ -197,11 +250,14 @@ _ACTIVATE = text(
     """
 )
 
+# The selection is a MATERIALIZED CTE, evaluated exactly once. With "WHERE id IN (SELECT ...
+# LIMIT n FOR UPDATE SKIP LOCKED)" PostgreSQL may rescan the subquery for each outer row, and a
+# rescan skips the rows this statement already updated, so more than n rows were updated (found
+# in Phase 5; regression tests test_dispatch_never_exceeds_its_limit and
+# test_concurrent_activations_never_exceed_the_running_jobs_cap).
 _DISPATCH = text(
     """
-    UPDATE crawl_urls AS u
-    SET state = 'queued', dispatched_at = clock_timestamp()
-    WHERE u.state = 'pending' AND u.id IN (
+    WITH picked AS MATERIALIZED (
         SELECT c.id
         FROM crawl_urls AS c
         JOIN crawl_jobs AS j ON j.id = c.job_id
@@ -212,12 +268,125 @@ _DISPATCH = text(
         LIMIT :limit
         FOR UPDATE OF c SKIP LOCKED
     )
+    UPDATE crawl_urls AS u
+    SET state = 'queued', dispatched_at = clock_timestamp()
+    FROM picked
+    WHERE u.id = picked.id AND u.state = 'pending'
     RETURNING u.id
     """
 )
 
+# T3 with publication: lock the due rows, publish them, then mark them with their entry IDs.
+_DISPATCH_LOCK = text(
+    """
+    SELECT c.id
+    FROM crawl_urls AS c
+    JOIN crawl_jobs AS j ON j.id = c.job_id
+    WHERE c.job_id = :job_id AND j.status = 'running'
+      AND c.state = 'pending' AND c.depth = j.current_level
+      AND c.next_attempt_at <= clock_timestamp()
+    ORDER BY c.next_attempt_at, c.id
+    LIMIT :limit
+    FOR UPDATE OF c SKIP LOCKED
+    """
+)
+
+_DISPATCH_MARK = text(
+    """
+    UPDATE crawl_urls AS u
+    SET state = 'queued', dispatched_at = clock_timestamp(), stream_entry_id = d.entry_id
+    FROM unnest(CAST(:ids AS uuid[]), CAST(:entries AS text[])) AS d(id, entry_id)
+    WHERE u.id = d.id AND u.state = 'pending'
+    RETURNING u.id
+    """
+)
+
+# Reconciliation: tasks that made no progress for :older_than seconds. A queued task should
+# have been claimed by then; an expired lease should have been taken over (XAUTOCLAIM). Keyset
+# pagination on (dispatched_at, id) lets successive calls cover every stale row.
+_STALE_LOCK = text(
+    """
+    SELECT u.id, u.job_id, u.stream_entry_id, u.dispatched_at
+    FROM crawl_urls AS u
+    JOIN crawl_jobs AS j ON j.id = u.job_id
+    WHERE j.status = 'running'
+      AND u.state IN ('queued', 'in_progress')
+      AND u.dispatched_at < clock_timestamp() - make_interval(secs => :older_than)
+      AND (u.state = 'queued'
+           OR u.lease_expires_at < clock_timestamp() - make_interval(secs => :older_than))
+      AND (CAST(:after_at AS timestamptz) IS NULL
+           OR (u.dispatched_at, u.id)
+              > (CAST(:after_at AS timestamptz), CAST(:after_id AS uuid)))
+    ORDER BY u.dispatched_at, u.id
+    LIMIT :limit
+    FOR UPDATE OF u SKIP LOCKED
+    """
+)
+
+_STALE_MARK = text(
+    """
+    UPDATE crawl_urls AS u
+    SET dispatched_at = clock_timestamp(), stream_entry_id = d.entry_id
+    FROM unnest(CAST(:ids AS uuid[]), CAST(:entries AS text[])) AS d(id, entry_id)
+    WHERE u.id = d.id AND u.state IN ('queued', 'in_progress')
+    RETURNING u.id
+    """
+)
+
+# A MATERIALIZED CTE, for the reason given at _DISPATCH: the cap must be exact.
+_ACTIVATE_BATCH = text(
+    """
+    WITH picked AS MATERIALIZED (
+        SELECT id FROM crawl_jobs WHERE status = 'queued'
+        ORDER BY created_at, id
+        LIMIT :limit
+        FOR UPDATE SKIP LOCKED
+    ),
+    started AS (
+        UPDATE crawl_jobs AS j
+        SET status = 'running', started_at = GREATEST(clock_timestamp(), j.created_at)
+        FROM picked
+        WHERE j.id = picked.id AND j.status = 'queued'
+        RETURNING j.id, j.created_at
+    )
+    SELECT id FROM started ORDER BY created_at, id
+    """
+)
+
+_RUNNING_FRONTIERS = text(
+    """
+    SELECT j.id AS job_id, coalesce(f.unfinished, 0) AS unfinished,
+           coalesce(f.in_flight, 0) AS in_flight
+    FROM (
+        SELECT id, created_at FROM crawl_jobs WHERE status = 'running'
+        ORDER BY created_at, id LIMIT :limit
+    ) AS j
+    LEFT JOIN LATERAL (
+        SELECT count(*) AS unfinished,
+               count(*) FILTER (WHERE u.state <> 'pending') AS in_flight
+        FROM crawl_urls AS u
+        WHERE u.job_id = j.id AND u.state IN ('pending', 'queued', 'in_progress')
+    ) AS f ON true
+    ORDER BY j.created_at, j.id
+    """
+)
+
+_INSPECT = text(
+    """
+    SELECT u.job_id, j.status AS job_status, u.state, u.attempt_count, u.lease_owner,
+           coalesce(u.lease_expires_at >= clock_timestamp(), false) AS lease_live
+    FROM crawl_urls AS u
+    JOIN crawl_jobs AS j ON j.id = u.job_id
+    WHERE u.id = :url_id
+    """
+)
+
+# Waits for a concurrent dispatch (or reconciliation) of this row to finish; see claim_url.
+_CLAIM_LOCK = text("SELECT 1 FROM crawl_urls WHERE id = :url_id FOR NO KEY UPDATE")
+
 # T4 (architecture, section 9). The token is the incremented lease_epoch, returned to the
-# claimant; old.* (PostgreSQL 18) tells a takeover from a first claim.
+# claimant; old.* (PostgreSQL 18) tells a takeover from a first claim. A message names its job,
+# and the claim matches only that job (:job_id NULL matches any).
 _CLAIM = text(
     """
     UPDATE crawl_urls AS u
@@ -229,6 +398,7 @@ _CLAIM = text(
         result_epoch = NULL
     FROM crawl_jobs AS j
     WHERE u.id = :url_id
+      AND u.job_id = coalesce(CAST(:job_id AS uuid), u.job_id)
       AND j.id = u.job_id AND j.status = 'running'
       AND u.attempt_count < :max_attempts
       AND (u.state = 'queued'
@@ -327,17 +497,162 @@ async def activate_job(session: AsyncSession, job_id: uuid.UUID) -> bool:
     return activated is not None
 
 
-async def dispatch_urls(session: AsyncSession, job_id: uuid.UUID, *, limit: int) -> list[uuid.UUID]:
+async def dispatch_urls(
+    session: AsyncSession,
+    job_id: uuid.UUID,
+    *,
+    limit: int,
+    publish: Publisher | None = None,
+) -> list[uuid.UUID]:
     """T3: mark up to ``limit`` due ``pending`` URLs of the job's current level ``queued``.
 
     Only a ``running`` job is dispatched, and only at its ``current_level`` (ADR-0004). Rows
     locked by a concurrent dispatcher are skipped, so two dispatchers never take the same URL.
+
+    With ``publish`` (the scheduler), the locked rows are published first and then marked with
+    their stream entry IDs, in one transaction; if publishing or the commit fails, the rows stay
+    ``pending`` and are dispatched again later. Without it (the single-process driver), the
+    caller processes the returned IDs itself.
     """
     if limit <= 0:
         return []
+    if publish is None:
+        async with session.begin():
+            rows = await session.execute(_DISPATCH, {"job_id": job_id, "limit": limit})
+            return [row.id for row in rows]
     async with session.begin():
-        rows = await session.execute(_DISPATCH, {"job_id": job_id, "limit": limit})
-        return [row.id for row in rows]
+        locked = [
+            row.id
+            for row in await session.execute(_DISPATCH_LOCK, {"job_id": job_id, "limit": limit})
+        ]
+        if not locked:
+            return []
+        entries = await publish([(job_id, url_id) for url_id in locked])
+        if len(entries) != len(locked):  # pragma: no cover - the publisher returns one per task
+            raise RuntimeError("the publisher returned a different number of entry IDs")
+        marked = await session.execute(_DISPATCH_MARK, {"ids": locked, "entries": entries})
+        dispatched = [row.id for row in marked]
+    logger.info(
+        "Tasks dispatched",
+        extra={"event": "task.dispatched", "job_id": str(job_id), "count": len(dispatched)},
+    )
+    return dispatched
+
+
+async def republish_stale(
+    session: AsyncSession,
+    *,
+    older_than: float,
+    limit: int,
+    publish: Publisher,
+    delivering: DeliveryCheck,
+    after: ReconcileCursor | None = None,
+) -> Reconciliation:
+    """Publish again the tasks of running jobs whose stream message is gone (failure window F7).
+
+    Examines up to ``limit`` tasks that made no progress for ``older_than`` seconds: ``queued``
+    URLs (not claimed), and ``in_progress`` URLs whose lease expired at least that long ago (not
+    taken over). A task whose stream entry is still delivering (``delivering``: undelivered, or
+    pending for ``XAUTOCLAIM``) is left alone, so a pause without workers publishes nothing.
+    The others (entry acknowledged, trimmed, or lost with Redis data) are published again and
+    marked with the new entry IDs. A duplicate is harmless: its claim is refused.
+
+    The rows stay locked (``FOR UPDATE SKIP LOCKED``) while the stream is checked and the tasks
+    are published, so concurrent schedulers never republish the same task; a worker's claim of
+    one of them waits for this transaction. Pass ``resume_after`` of the previous call as
+    ``after`` to continue the scan.
+    """
+    if limit <= 0:
+        return Reconciliation(0, 0, after)
+    async with session.begin():
+        rows = (
+            await session.execute(
+                _STALE_LOCK,
+                {
+                    "older_than": older_than,
+                    "limit": limit,
+                    "after_at": after[0] if after else None,
+                    "after_id": after[1] if after else None,
+                },
+            )
+        ).all()
+        if not rows:
+            return Reconciliation(0, 0, None)
+        alive = await delivering([row.stream_entry_id for row in rows])
+        lost = [row for row, live in zip(rows, alive, strict=True) if not live]
+        republished = 0
+        if lost:
+            entries = await publish([(row.job_id, row.id) for row in lost])
+            marked = await session.execute(
+                _STALE_MARK, {"ids": [row.id for row in lost], "entries": entries}
+            )
+            republished = len(marked.all())
+    if republished:
+        logger.warning(
+            "Tasks whose stream message was gone were published again",
+            extra={"event": "task.republished", "count": republished, "examined": len(rows)},
+        )
+    last = rows[-1]
+    cursor = (last.dispatched_at, last.id) if len(rows) == limit else None
+    return Reconciliation(len(rows), republished, cursor)
+
+
+async def activate_jobs(session: AsyncSession, *, max_running: int, limit: int) -> list[uuid.UUID]:
+    """T2 for the scheduler: start the oldest queued jobs while fewer than ``max_running`` run.
+
+    A transaction-level advisory lock serializes concurrent schedulers, so the cap is exact.
+    """
+    async with session.begin():
+        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ACTIVATION_LOCK})
+        running = await session.scalar(
+            select(func.count())
+            .select_from(CrawlJob)
+            .where(CrawlJob.status.in_([JobStatus.RUNNING.value, JobStatus.CANCELLING.value]))
+        )
+        room = min(limit, max_running - int(running or 0))
+        if room <= 0:
+            return []
+        activated = [row.id for row in await session.execute(_ACTIVATE_BATCH, {"limit": room})]
+        for job_id in activated:
+            _add_event(session, job_id, "job.started", from_state="queued", to_state="running")
+    for job_id in activated:
+        logger.info("Crawl job started", extra={"event": "job.started", "job_id": str(job_id)})
+    return activated
+
+
+async def running_frontiers(session: AsyncSession, *, limit: int) -> list[JobFrontier]:
+    """The oldest ``limit`` running jobs, with their unfinished and in-flight URL counts."""
+    async with session.begin():
+        rows = await session.execute(_RUNNING_FRONTIERS, {"limit": limit})
+        return [JobFrontier(row.job_id, row.unfinished, row.in_flight) for row in rows]
+
+
+async def outstanding_tasks(session: AsyncSession) -> int:
+    """URLs queued or in progress across all jobs (the scheduler's global backpressure)."""
+    async with session.begin():
+        count = await session.scalar(
+            select(func.count())
+            .select_from(CrawlUrl)
+            .where(CrawlUrl.state.in_([UrlState.QUEUED.value, UrlState.IN_PROGRESS.value]))
+        )
+    return int(count or 0)
+
+
+async def inspect_url(session: AsyncSession, url_id: uuid.UUID) -> UrlStatus | None:
+    """The authoritative state of a URL and its job, or None if it does not exist."""
+    async with session.begin():
+        row = (await session.execute(_INSPECT, {"url_id": url_id})).one_or_none()
+    if row is None:
+        return None
+    return UrlStatus(
+        url_id=url_id,
+        job_id=row.job_id,
+        job_status=JobStatus(row.job_status),
+        state=UrlState(row.state),
+        attempt_count=row.attempt_count,
+        lease_owner=row.lease_owner,
+        lease_live=row.lease_live,
+    )
 
 
 async def claim_url(
@@ -347,19 +662,29 @@ async def claim_url(
     owner: str,
     lease_seconds: float,
     max_attempts: int,
+    job_id: uuid.UUID | None = None,
 ) -> Lease | None:
     """T4: lease a URL to ``owner``. None if it is not claimable now (a no-op).
 
     Claimable: the job is running, the URL has attempts left, and it is ``queued`` or its
     lease expired by the database clock (a takeover). ``owner`` must be unique per process
-    start (ADR-0011). A takeover is recorded as a ``url.recovered`` event.
+    start (ADR-0011). A takeover is recorded as a ``url.recovered`` event. With ``job_id``
+    (from a task message), a URL of another job is never claimed.
+
+    The URL row is locked first. The scheduler publishes a task before its dispatch commits,
+    so a worker can receive the message while the row is still ``pending`` in committed state;
+    the lock waits for that dispatch to commit (or roll back), and the claim then sees the
+    outcome. Without it, the claim would fail, and the only message of a URL about to become
+    ``queued`` could be acknowledged as stale (found while designing Phase 5).
     """
     async with session.begin():
+        await session.execute(_CLAIM_LOCK, {"url_id": url_id})
         row = (
             await session.execute(
                 _CLAIM,
                 {
                     "url_id": url_id,
+                    "job_id": job_id,
                     "owner": owner,
                     "lease_seconds": lease_seconds,
                     "max_attempts": max_attempts,

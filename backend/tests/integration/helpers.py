@@ -96,15 +96,16 @@ def maintenance_url(settings: Settings) -> URL:
     return settings.database_url.set(database="postgres")
 
 
-def _require_disposable(name: str) -> None:
+def require_disposable(name: str) -> None:
+    """Refuse any database that is not a disposable ``*_test`` database."""
     if not _DISPOSABLE_DB.fullmatch(name):
-        raise RuntimeError(f"refusing to recreate or drop non-test database {name!r}")
+        raise RuntimeError(f"refusing to use non-test database {name!r}")
 
 
 async def recreate_database(settings: Settings) -> None:
     """Drop (if present) and create ``settings.postgres_db``. Test databases only."""
     name = settings.postgres_db
-    _require_disposable(name)
+    require_disposable(name)
     engine = create_async_engine(
         maintenance_url(settings), poolclass=NullPool, isolation_level="AUTOCOMMIT"
     )
@@ -118,7 +119,7 @@ async def recreate_database(settings: Settings) -> None:
 
 async def drop_database(settings: Settings) -> None:
     name = settings.postgres_db
-    _require_disposable(name)
+    require_disposable(name)
     engine = create_async_engine(
         maintenance_url(settings), poolclass=NullPool, isolation_level="AUTOCOMMIT"
     )

@@ -76,12 +76,15 @@ explanations for the project owner in Chinese.
    - Request handlers never publish to Redis.
    - The state row is the outbox: crawl tasks are published from `crawl_urls`, and index tasks from
      `search_documents` rows in status `pending`. There is no separate outbox table.
-   - The relay publishes, then marks the row as published, in the same transaction.
+   - The relay publishes, then marks the row as published, in the same transaction. A claim
+     locks the URL row first, so it waits for a dispatch of that row still in flight
+     (ADR-0016).
 4. **Leases with fencing tokens.**
    - A worker claims a URL with a compare-and-set that increments `lease_epoch`.
    - Its result transaction must re-check `state = 'in_progress' AND lease_epoch = :token` under a row
      lock.
-   - A fenced-out worker discards its result and does not `XACK`.
+   - A fenced-out worker discards its result and does not `XACK`. No worker acknowledges an
+     uncertain outcome (an error, a cancellation); the rules are in architecture section 10.3.
    - Timing must satisfy `task_deadline < lease_duration <= reclaim_min_idle`.
    - The database enforces fencing (ADR-0010, ADR-0011): an outcome must carry
      `result_epoch = lease_epoch` (CHECK), a claim must clear `result_epoch`, and `lease_epoch`
@@ -182,6 +185,10 @@ explanations for the project owner in Chinese.
   emits a deprecation warning, which would fail the run.
 - Concurrency and fault tests assert the invariants listed under "Correctness invariants" in
   `docs/architecture.md`.
+- Process tests (`tests/process_support.py`) start real scheduler and worker processes. Their
+  environment always names the test database: `child_environment` refuses any database that
+  is not a disposable `*_test` one. Never start `python -m app.scheduler` against the
+  development database: it starts every queued job there.
 
 ## Environment (Windows 10 development machine)
 
@@ -209,6 +216,9 @@ explanations for the project owner in Chinese.
   | Run the API | `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload` |
   | Tests | `.\.venv\Scripts\python.exe -m pytest --require-services` |
   | Run one crawl job in-process | `.\.venv\Scripts\python.exe -m app.workers.local_crawler <job-id>` |
+  | Run the scheduler (never against the development database) | `.\.venv\Scripts\python.exe -m app.scheduler` |
+  | Run a crawler worker (one per window) | `.\.venv\Scripts\python.exe -m app.workers.crawler` |
+  | Read-only crawl status | `.\.venv\Scripts\python.exe -m app.scheduler.status` |
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
   | Type check | `.\.venv\Scripts\python.exe -m mypy` |
@@ -221,10 +231,11 @@ explanations for the project owner in Chinese.
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
   app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-4: URLs,
                   scope, safe fetcher, HTML parser, robots.txt, politeness); workers/ (Phase 4:
-                  crawl task, single-process driver); queue/ scheduler/ indexing/ (later)
+                  crawl task, single-process driver; Phase 5: crawler worker); queue/
+                  scheduler/ (Phase 5: Redis Streams, scheduler, status); indexing/ (later)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
-  tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (later)
+  tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes)
   pyproject.toml  dependencies + ruff / mypy / pytest configuration
   .env.example    configuration template; copy to backend/.env (git-ignored)
 frontend/         React + TypeScript dashboard (Phase 9; currently empty)

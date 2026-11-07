@@ -486,7 +486,8 @@ politeness slot. Crawls go through the crawl driver below, which does both.
 
 `app/workers/local_crawler.py` runs one crawl job to completion in a single process: level by
 level, with claims, fenced results, robots.txt and per-host politeness. It is a development and
-test tool; the distributed scheduler and workers arrive in Phase 5. It needs PostgreSQL and Redis.
+test tool; the distributed scheduler and workers are in the next section (Phase 5). It needs
+PostgreSQL and Redis.
 The design is in [architecture.md](architecture.md) (sections 8, 9 and 12.4-12.5),
 [ADR-0014](adr/0014-crawl-state-transactions-and-redirects.md) and
 [ADR-0015](adr/0015-robots-txt-and-per-host-politeness.md).
@@ -494,8 +495,9 @@ The design is in [architecture.md](architecture.md) (sections 8, 9 and 12.4-12.5
 | Setting | Default | Meaning |
 |---|---|---|
 | `SITESCOPE_CRAWLER_NAME` | `SiteScopeBot` | sent as `SiteScopeBot/<version>` in User-Agent; matched against robots.txt and `<meta name="...">` |
-| `SITESCOPE_CRAWL_CONCURRENCY` | `4` | URLs the driver processes at once |
-| `SITESCOPE_CRAWL_LEASE_SECONDS` | `90` | lease of a claimed URL (database clock); at least the fetch deadline + 10 |
+| `SITESCOPE_CRAWL_CONCURRENCY` | `4` | URLs one crawl process (a worker, or the driver) processes at once |
+| `SITESCOPE_CRAWL_LEASE_SECONDS` | `90` | lease of a claimed URL (database clock); at least the fetch deadline + the margin |
+| `SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS` | `10` | a task is cut off this long before its lease ends |
 | `SITESCOPE_CRAWL_MAX_ATTEMPTS` | `3` | claims of one URL before it fails as `max_attempts_exceeded` |
 | `SITESCOPE_POLITENESS_INTERVAL_SECONDS` | `1` | minimum time between request starts to one host, across processes |
 | `SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST` | `1` | requests in flight to one host |
@@ -559,6 +561,92 @@ Remove the separate database afterwards with
 ```powershell
 wsl docker compose exec redis redis-cli -a "<password from backend/.env>" --no-auth-warning --scan --pattern "sitescope:*"
 ```
+
+## Distributed crawling (Phase 5)
+
+The scheduler (`python -m app.scheduler`) and any number of crawler workers
+(`python -m app.workers.crawler`) run as separate processes and share the work through the Redis
+stream `<prefix>:crawl` (consumer group `crawlers`). The design is in
+[architecture.md](architecture.md) (sections 3, 9 and 10) and
+[ADR-0016](adr/0016-distributed-execution-redis-streams.md).
+
+> **Never start the scheduler against the development database.** The scheduler starts every
+> `queued` job of its database. The development database (`sitescope`) holds three queued jobs
+> from Phase 2C that must not run. Always set `SITESCOPE_POSTGRES_DB` to a separate database in
+> the windows where the scheduler runs, as below. The workers only process tasks the scheduler
+> published, and `python -m app.scheduler.status` only reads.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_STREAM_READ_BLOCK_MS` | `2000` | how long `XREADGROUP` waits for tasks (below the Redis socket timeout) |
+| `SITESCOPE_STREAM_RECLAIM_INTERVAL_SECONDS` | `15` | how often a worker looks for abandoned tasks (`XAUTOCLAIM`) |
+| `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` | `120` | how long a task must have been idle before another worker takes it (at least the lease) |
+| `SITESCOPE_STREAM_RECLAIM_BATCH_SIZE` | `50` | tasks taken over per `XAUTOCLAIM` |
+| `SITESCOPE_STREAM_RETENTION_SECONDS` | `3600` | acknowledged entries older than this are trimmed |
+| `SITESCOPE_STREAM_CONSUMER_MAX_IDLE_SECONDS` | `3600` | consumers with nothing pending are removed after this idle time |
+| `SITESCOPE_SCHEDULER_INTERVAL_SECONDS` | `0.5` | pause between scheduler passes |
+| `SITESCOPE_SCHEDULER_DISPATCH_BATCH_SIZE` | `100` | tasks published per job and pass |
+| `SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB` | `100` | tasks of one job queued or in progress |
+| `SITESCOPE_SCHEDULER_MAX_OUTSTANDING` | `1000` | tasks queued or in progress over all jobs |
+| `SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS` | `10` | jobs running at once; the oldest queued start first |
+| `SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` | `600` | a task without progress this long is published again if its message is gone |
+| `SITESCOPE_SHUTDOWN_GRACE_SECONDS` | `30` | how long a stopping worker lets running tasks finish |
+
+The timing order is checked at startup: task deadline < lease <= reclaim min idle <= reconcile
+after <= retention.
+
+**Crawl the demo site with several workers.** Prepare the separate database `sitescope_manual`
+and serve the demo site as in [Crawling (Phase 4)](#crawling-phase-4). Then open one window per
+process, from `backend\`, each with the same environment:
+
+```powershell
+$env:SITESCOPE_POSTGRES_DB = "sitescope_manual"      # never the development database
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "127.0.0.1"
+$env:SITESCOPE_CRAWL_ALLOWED_PORTS = "8080"
+$env:SITESCOPE_FETCH_INTERNAL_ORIGINS = "http://127.0.0.1:8080"
+```
+
+```powershell
+.\.venv\Scripts\python.exe -m app.scheduler                   # window 1: the scheduler
+.\.venv\Scripts\python.exe -m app.workers.crawler             # windows 2 and 3: one worker each
+.\.venv\Scripts\python.exe -m uvicorn app.main:app            # window 4: the API
+```
+
+Create the job through the API as in the Phase 4 example. The scheduler activates it and
+publishes its tasks; the workers process them. Each process logs JSON lines. A worker logs
+`worker.started` with its name (`crawler-<host>-<pid>-<random>`, also its lease owner), and one
+`task.handled` line per message: `disposition` (`ack`, `keep`, `dead_letter`), `reason`
+(`completed`, `already_finished`, `fenced`, `leased`, ...), `message_id`, `job_id`, `url_id`,
+`lease_epoch`, `depth`, `outcome` and `duration_ms`.
+
+Diagnostics (read-only; it changes nothing in PostgreSQL or Redis):
+
+```powershell
+.\.venv\Scripts\python.exe -m app.scheduler.status
+```
+
+It prints the jobs by status, the running jobs with their URL states, the live leases per worker,
+expired leases, and the stream: length, dead letters, the group's pending count and lag, and each
+consumer's pending count and idle time.
+
+**Stopping.** Ctrl+C in a process's window stops it gracefully: a worker stops reading and lets
+its running tasks finish for up to `SITESCOPE_SHUTDOWN_GRACE_SECONDS`, then cancels the rest; a
+second Ctrl+C cancels at once. Another program can send `CTRL_BREAK_EVENT` to a process started
+with `CREATE_NEW_PROCESS_GROUP` (the tests do). Closing a window or killing a process is safe too:
+its unfinished tasks keep their leases and pending messages, and other workers take them over
+after `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120 s by default).
+
+**Redis keys.** The stream `sitescope:crawl` with its group `crawlers`, and the dead-letter
+stream `sitescope:crawl:dlq`:
+
+```powershell
+wsl docker compose exec redis redis-cli -a "<password from backend/.env>" --no-auth-warning XINFO GROUPS sitescope:crawl
+wsl docker compose exec redis redis-cli -a "<password from backend/.env>" --no-auth-warning XINFO CONSUMERS sitescope:crawl crawlers
+```
+
+**Benchmark.** `benchmarks/distributed_crawl.py` measures crawl throughput with 1, 2 and 4 worker
+processes against local servers, on its own disposable database; see
+[benchmarks/README.md](../benchmarks/README.md).
 
 ## Database migrations
 
@@ -639,6 +727,16 @@ PostgreSQL and Redis containers. They never touch the development data:
   `test_robots_policy.py` use real Redis; `test_local_crawler.py` crawls fixture sites and the
   demo site served on 127.0.0.1 (one test uses the standard library's static file server and
   the driver's command line). None of them contacts the internet.
+- **Distributed tests** (Phase 5): `test_streams.py`, `test_task_dispatch.py`,
+  `test_crawler_worker.py` and `test_scheduler.py` run in the test process.
+  `test_distributed.py` and `backend/tests/fault/test_recovery.py` (marker `fault`, also marked
+  `integration`) start real `python -m app.scheduler` and `python -m app.workers.crawler`
+  processes (`tests/process_support.py`). They crawl local servers, stop processes with
+  `CTRL_BREAK_EVENT`, kill or freeze them, and cut PostgreSQL or Redis off through a local TCP
+  proxy. The child processes read `backend\.env` for credentials, but always get the test
+  database and Redis database 15 explicitly: `child_environment` refuses any database that is not
+  a disposable `*_test` one. Each process writes its JSON log to the test's `tmp_path` (pytest
+  keeps the last three runs under `%TEMP%\pytest-of-<user>\`).
 
 To run them, make sure:
 
@@ -652,6 +750,7 @@ Then, from `backend\`:
 .\.venv\Scripts\python.exe -m pytest --require-services            # everything (unit + integration)
 .\.venv\Scripts\python.exe -m pytest -m "not integration"          # unit tests only, no services needed
 .\.venv\Scripts\python.exe -m pytest -m integration --require-services
+.\.venv\Scripts\python.exe -m pytest -m fault --require-services      # crash and outage tests only
 ```
 
 Without `--require-services`, a missing service makes the integration tests **skip**, and the skip
@@ -676,4 +775,7 @@ Windows a refused localhost connection takes about 2 s before it fails.
 | Startup fails with "production does not allow development-only crawl targets" | Remove `localhost`, `.localhost` names and IP addresses from `SITESCOPE_CRAWL_ALLOWED_HOSTS`, or run in `development`. |
 | The fetcher reports `blocked_destination` for a local server | Add its exact origin to `SITESCOPE_FETCH_INTERNAL_ORIGINS` (development only); approving the host is not enough. |
 | The fetcher reports `target_not_allowed` | Add the host to `SITESCOPE_CRAWL_ALLOWED_HOSTS`, and its port to `SITESCOPE_CRAWL_ALLOWED_PORTS` if it is not 80 or 443. |
+| The scheduler started jobs you did not want to run | It starts every queued job of its database. Stop it (Ctrl+C), and always set `SITESCOPE_POSTGRES_DB` to a separate database before starting it (see [Distributed crawling](#distributed-crawling-phase-5)). |
+| Tasks stay pending after a worker crashed | Expected for `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120 s by default); then a live worker takes them over. `python -m app.scheduler.status` shows the pending count per consumer. |
+| A worker does not stop on Ctrl+C | It is finishing running tasks (up to `SITESCOPE_SHUTDOWN_GRACE_SECONDS`). Press Ctrl+C again to cancel them; they are recovered later. |
 | `alembic` says "Can't locate revision" | The database was migrated by a different branch of the code. Check `alembic current` against `alembic history`. |

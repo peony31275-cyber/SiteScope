@@ -36,8 +36,8 @@ Port = Annotated[int, Field(ge=1, le=65535)]
 # This file is <backend>/app/core/config.py, so parents[2] is the backend directory.
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
-# A crawl task stops this many seconds before its lease expires (ADR-0003: task_deadline <
-# lease_duration).
+# The default margin: a crawl task stops this many seconds before its lease expires (ADR-0003:
+# task_deadline < lease_duration). Configurable as SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS.
 LEASE_MARGIN_SECONDS = 10.0
 
 # Values copied unchanged from backend/.env.example; they must never reach production.
@@ -124,14 +124,50 @@ class Settings(BaseSettings):
     # The crawler's name (RFC 9309 "product token"): sent as "<name>/<version>" in User-Agent,
     # and matched case-insensitively against robots.txt user-agent lines and meta robots names.
     crawler_name: str = Field(default="SiteScopeBot", pattern=r"^[A-Za-z_-]{1,40}$")
-    # URLs the single-process crawl driver (app/workers/local_crawler.py) processes at once.
+    # URLs one crawl process (a crawler worker, or the single-process driver) processes at once.
     crawl_concurrency: int = Field(default=4, ge=1, le=64)
     # How long a claimed URL stays leased (by the PostgreSQL clock). A task is cut off
-    # LEASE_MARGIN_SECONDS before its lease ends, so it never runs on an expired lease
-    # (task_deadline < lease_duration, ADR-0003).
+    # SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS before its lease ends, so it never runs on an expired
+    # lease (task_deadline < lease_duration, ADR-0003).
     crawl_lease_seconds: float = Field(default=90.0, gt=0, le=3600)
+    # The task deadline is the lease minus this margin, which leaves time to commit the result.
+    crawl_lease_margin_seconds: float = Field(default=LEASE_MARGIN_SECONDS, gt=0, le=60)
     # Claims of one URL before it fails with max_attempts_exceeded; bounds crash loops.
     crawl_max_attempts: int = Field(default=3, ge=1, le=10)
+
+    # --- Redis Streams task delivery (app/queue, Phase 5) ----------------------------------------
+    # How long a worker's XREADGROUP blocks waiting for tasks (below the Redis socket timeout).
+    stream_read_block_ms: int = Field(default=2000, ge=10, le=60_000)
+    # How often a worker looks for tasks abandoned by crashed or stalled workers (XAUTOCLAIM),
+    # and how long a task must have been idle first. The idle time must be at least the lease,
+    # so a task is never taken from a worker that still holds its lease.
+    stream_reclaim_interval_seconds: float = Field(default=15.0, gt=0, le=3600)
+    stream_reclaim_min_idle_seconds: float = Field(default=120.0, gt=0, le=86_400)
+    stream_reclaim_batch_size: int = Field(default=50, ge=1, le=1000)
+    # Delivered tasks older than this are trimmed from the stream; tasks still pending in a
+    # consumer group, and tasks not yet delivered, are never trimmed.
+    stream_retention_seconds: int = Field(default=3600, ge=60, le=7 * 86_400)
+    # Consumers (one per worker process start) with nothing pending are removed after this idle
+    # time.
+    stream_consumer_max_idle_seconds: int = Field(default=3600, ge=60, le=7 * 86_400)
+
+    # --- Scheduler (app/scheduler, Phase 5) ------------------------------------------------------
+    # Pause between two scheduler passes (activation, level advancement, dispatch).
+    scheduler_interval_seconds: float = Field(default=0.5, gt=0, le=60)
+    # Tasks published per job and pass.
+    scheduler_dispatch_batch_size: int = Field(default=100, ge=1, le=10_000)
+    # Tasks of one job queued or in progress at a time, and of all jobs together (backpressure).
+    scheduler_max_in_flight_per_job: int = Field(default=100, ge=1, le=100_000)
+    scheduler_max_outstanding: int = Field(default=1000, ge=1, le=1_000_000)
+    # Jobs running at the same time; the oldest queued jobs start first.
+    scheduler_max_running_jobs: int = Field(default=10, ge=1, le=10_000)
+    # A queued task, or an expired lease, that has made no progress this long is published
+    # again (its message may have been lost from Redis).
+    scheduler_reconcile_after_seconds: float = Field(default=600.0, gt=0, le=86_400)
+
+    # --- Process shutdown ------------------------------------------------------------------------
+    # On SIGINT or SIGTERM, how long a worker lets its running tasks finish before it stops them.
+    shutdown_grace_seconds: float = Field(default=30.0, ge=0, le=3600)
 
     # --- Politeness (app/crawler/politeness.py, app/crawler/robots.py) ---------------------------
     # Minimum seconds between the starts of two requests to one host, shared by every crawler
@@ -188,12 +224,37 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _check_crawl_timing(self) -> Self:
-        # A task (robots.txt check, politeness wait, fetch, parse) is cut off LEASE_MARGIN
-        # seconds before its lease ends; a page fetch must fit in what remains.
-        if self.crawl_lease_seconds < self.fetch_deadline_seconds + LEASE_MARGIN_SECONDS:
+        # The timing order of architecture section 10.2:
+        #   task_deadline < lease_duration <= reclaim_min_idle <= reconcile_after.
+        # A task (robots.txt check, politeness wait, fetch, parse) is cut off margin seconds
+        # before its lease ends; a page fetch must fit in what remains.
+        margin = self.crawl_lease_margin_seconds
+        if self.crawl_lease_seconds < self.fetch_deadline_seconds + margin:
             raise ValueError(
                 "SITESCOPE_CRAWL_LEASE_SECONDS must be at least SITESCOPE_FETCH_DEADLINE_SECONDS"
-                f" + {LEASE_MARGIN_SECONDS:g}"
+                f" + SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS ({margin:g})"
+            )
+        # A task is reclaimed from another worker only after its lease has expired.
+        if self.stream_reclaim_min_idle_seconds < self.crawl_lease_seconds:
+            raise ValueError(
+                "SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS must be at least"
+                " SITESCOPE_CRAWL_LEASE_SECONDS"
+            )
+        if self.scheduler_reconcile_after_seconds < self.stream_reclaim_min_idle_seconds:
+            raise ValueError(
+                "SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS must be at least"
+                " SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS"
+            )
+        if self.stream_retention_seconds < self.scheduler_reconcile_after_seconds:
+            raise ValueError(
+                "SITESCOPE_STREAM_RETENTION_SECONDS must be at least"
+                " SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS"
+            )
+        # A blocking read must return before the Redis client gives up on the socket.
+        if self.stream_read_block_ms >= self.redis_socket_timeout_seconds * 1000:
+            raise ValueError(
+                "SITESCOPE_STREAM_READ_BLOCK_MS must be shorter than"
+                " SITESCOPE_REDIS_SOCKET_TIMEOUT_SECONDS"
             )
         # A request that finds its host idle may still have to wait one interval.
         if self.politeness_interval_seconds > self.politeness_max_wait_seconds:

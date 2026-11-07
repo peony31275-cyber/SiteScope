@@ -1,0 +1,44 @@
+# CPU samples during the probe run (phase5-probe-4-hosts-4-workers.json), 1 per second.
+# Get-Counter: \Processor(_Total)\% Processor Time; \Process(python*) and \Process(vmmem*) (the WSL 2 VM:
+# PostgreSQL and Redis) as % of the whole machine (16 logical processors). The crawl ran from about
+# sample 3 to sample 23; earlier samples are database setup and process start-up, later ones idle.
+24% total | WSL VM 0.7% | python: 1.7 0
+40% total | WSL VM 0.4% | python: 5.3 5.4 0 5.3 4.9 0 0 5.2 0 0 0 0
+35% total | WSL VM 9.4% | python: 3 2.4 0 2.3 2 0 0 1.4 0 0 1 0
+43% total | WSL VM 13.0% | python: 2.2 2.4 0 2.2 1.9 0 0 0.8 0 0 1.2 0
+37% total | WSL VM 11.3% | python: 1.6 2.1 0 1.6 1.6 0 0 0.3 0 0 0.9 0
+34% total | WSL VM 8.9% | python: 0.9 1.4 0 1.7 1.3 0 0 0.6 0 0 1 0
+32% total | WSL VM 9.9% | python: 0.9 1.1 0 0.8 1.1 0 0 0.5 0 0 1.2 0
+34% total | WSL VM 8.9% | python: 1.4 1.5 0 1 1.1 0 0 0.8 0 0 1.3 0
+28% total | WSL VM 7.3% | python: 1 1 0 0.9 1 0 0 0.2 0 0 0.7 0
+28% total | WSL VM 6.9% | python: 1 1.3 0 1.4 1.4 0 0 0.8 0 0 1.2 0
+25% total | WSL VM 6.0% | python: 0.7 0.8 0 1 1 0 0 0.3 0 0 1 0
+33% total | WSL VM 11.0% | python: 1.3 1.3 0 1 1.2 0 0 0.5 0 0 0.9 0
+26% total | WSL VM 6.2% | python: 0.8 0.8 0 0.8 1.1 0 0 0.4 0 0 0.9 0
+32% total | WSL VM 8.4% | python: 1.8 1.4 0 1.1 1.4 0 0 0.3 0 0 0.9 0
+29% total | WSL VM 7.4% | python: 1.3 0.6 0 1.1 1.1 0 0 0.8 0 0 1.1 0
+29% total | WSL VM 6.7% | python: 1.3 1 0 1 1.1 0 0 0.5 0 0 1.3 0
+38% total | WSL VM 9.9% | python: 1.3 1.2 0 1.4 1.6 0 0 1 0 0 1.5 0
+33% total | WSL VM 9.1% | python: 1.3 1.7 0 1.5 1.8 0 0 0.4 0 0 1.3 0
+34% total | WSL VM 8.7% | python: 1.4 1.5 0 1.4 1.3 0 0 0.4 0 0 0.9 0
+38% total | WSL VM 10.5% | python: 1.8 1.4 0 1.2 1.5 0 0 0.7 0 0 1.4 0
+36% total | WSL VM 9.2% | python: 1.8 1.8 0 1.4 1.9 0 0 0.9 0 0 1.4 0
+37% total | WSL VM 9.0% | python: 1.6 1.7 0 1.7 2.2 0 0 1.7 0 0 1.1 0
+31% total | WSL VM 1.4% | python: 0 0 0 0 0 0 0 0 0 0 0 0
+6% total | WSL VM 0.1% | python: 
+6% total | WSL VM 0.5% | python: 
+7% total | WSL VM 0.9% | python: 
+4% total | WSL VM 0.2% | python: 
+6% total | WSL VM 0.2% | python: 
+9% total | WSL VM 0.0% | python: 
+6% total | WSL VM 1.0% | python: 
+6% total | WSL VM 0.0% | python: 
+6% total | WSL VM 0.2% | python: 
+5% total | WSL VM 0.0% | python: 
+5% total | WSL VM 0.1% | python: 
+6% total | WSL VM 1.1% | python: 
+12% total | WSL VM 0.0% | python: 
+5% total | WSL VM 0.2% | python: 
+11% total | WSL VM 0.2% | python: 
+11% total | WSL VM 0.6% | python: 
+8% total | WSL VM 1.8% | python: 

@@ -1,6 +1,6 @@
 # ADR-0001: PostgreSQL is the source of truth; Redis Streams only delivers work
 
-- Status: Accepted
+- Status: Accepted. Extended by [ADR-0016](0016-distributed-execution-redis-streams.md) (the stream protocol, acknowledgment and recovery).
 - Date: 2026-11-06
 
 ## Context

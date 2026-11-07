@@ -12,7 +12,7 @@ Usage rules:
   (docs/architecture.md, section 9).
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text
@@ -26,9 +26,19 @@ _POOL_RECYCLE_SECONDS = 1800
 
 
 class Database:
-    """Process-wide PostgreSQL access: one engine (connection pool) and a session factory."""
+    """Process-wide PostgreSQL access: one engine (connection pool) and a session factory.
 
-    def __init__(self, settings: Settings, *, application_name: str) -> None:
+    ``server_settings`` adds PostgreSQL session parameters (for example the scheduler's
+    ``idle_in_transaction_session_timeout``).
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        application_name: str,
+        server_settings: Mapping[str, str] | None = None,
+    ) -> None:
         self.engine = create_async_engine(
             settings.database_url,
             pool_size=settings.db_pool_size,
@@ -37,10 +47,16 @@ class Database:
             pool_recycle=_POOL_RECYCLE_SECONDS,
             # Test each pooled connection before use; replaces connections the server closed.
             pool_pre_ping=True,
+            # Keep statement parameters (URLs, page text) out of exception messages and logs.
+            hide_parameters=True,
             connect_args={
                 "timeout": settings.db_connect_timeout_seconds,
                 "command_timeout": settings.db_command_timeout_seconds,
-                "server_settings": {"application_name": application_name, "TimeZone": "UTC"},
+                "server_settings": {
+                    **(server_settings or {}),
+                    "application_name": application_name,
+                    "TimeZone": "UTC",
+                },
             },
         )
         # expire_on_commit=False: objects stay readable after commit without lazy reloads,

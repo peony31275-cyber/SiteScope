@@ -124,15 +124,38 @@ class ReceivedRequest:
     received_at: float = 0.0  # time.monotonic() when the request head arrived
 
 
+@dataclass(frozen=True)
+class Served:
+    """One request as the server saw it: from its head arriving to its reply being written."""
+
+    target: str
+    started: float  # time.monotonic()
+    finished: float
+
+
 class LocalHttpServer:
-    """A scripted HTTP/1.1 server on 127.0.0.1 (optionally TLS). One request per connection."""
+    """A scripted HTTP/1.1 server on a loopback address (optionally TLS). One request per
+    connection.
+
+    ``host`` may be any 127.x.y.z address: each one is a separate host for the crawler (its own
+    politeness slots), served by this process. ``active``/``max_active`` count requests in
+    flight; ``served`` is the timeline of finished requests.
+    """
 
     def __init__(
-        self, routes: Mapping[str, Reply] | None = None, *, tls: ssl.SSLContext | None = None
+        self,
+        routes: Mapping[str, Reply] | None = None,
+        *,
+        tls: ssl.SSLContext | None = None,
+        host: str = "127.0.0.1",
     ) -> None:
         self.routes: dict[str, Reply] = dict(routes or {})
         self.requests: list[ReceivedRequest] = []
+        self.served: list[Served] = []
         self.connections = 0
+        self.active = 0
+        self.max_active = 0
+        self.host = host
         self._tls = tls
         self._sni: dict[int, str | None] = {}
         self._server: asyncio.Server | None = None
@@ -147,7 +170,7 @@ class LocalHttpServer:
         return self._port
 
     async def __aenter__(self) -> Self:
-        self._server = await asyncio.start_server(self._accept, "127.0.0.1", 0, ssl=self._tls)
+        self._server = await asyncio.start_server(self._accept, self.host, 0, ssl=self._tls)
         self._port = self._server.sockets[0].getsockname()[1]
         return self
 
@@ -196,6 +219,7 @@ class LocalHttpServer:
                 name, _, value = line.partition(":")
                 headers[name.strip().lower()] = value.strip()
         ssl_object = writer.get_extra_info("ssl_object")
+        started = time.monotonic()
         self.requests.append(
             ReceivedRequest(
                 method=method,
@@ -203,9 +227,20 @@ class LocalHttpServer:
                 headers=headers,
                 peer=writer.get_extra_info("peername")[0],
                 sni=self._sni.get(id(ssl_object)) if ssl_object is not None else None,
-                received_at=time.monotonic(),
+                received_at=started,
             )
         )
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await self._reply(target, reader, writer)
+        finally:
+            self.active -= 1
+            self.served.append(Served(target, started, time.monotonic()))
+
+    async def _reply(
+        self, target: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         reply = self.routes.get(target.split("?")[0], Reply(status=404, reason="Not Found"))
         if reply.hold:
             await reader.read()  # until the client closes the connection

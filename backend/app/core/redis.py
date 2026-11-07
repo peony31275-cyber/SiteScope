@@ -9,6 +9,13 @@ Automatic retries are disabled. redis-py retries ConnectionError by default, wit
 backoff, and AuthenticationError is a subclass of it: a wrong password became a multi-second
 hang, and outages were hidden from the readiness probe (observed in Phase 2B). Callers apply
 their own bounded retry policy to transient failures (docs/architecture.md, section 10.5).
+
+Replies are decoded leniently: bytes that are not UTF-8 become U+FFFD instead of failing the
+whole reply. SiteScope writes only UTF-8, so only a foreign or damaged value can contain such
+bytes, and with strict decoding a single one of them in a stream entry failed every
+``XREADGROUP`` and ``XAUTOCLAIM`` batch it was in: the valid tasks of the batch stayed pending
+forever (found by the Phase 5 review). Now the entry decodes, fails the message contract, and
+is dead-lettered.
 """
 
 from redis.asyncio import Redis
@@ -33,4 +40,5 @@ def create_redis_client(settings: Settings, *, client_name: str) -> Redis:
         health_check_interval=30,
         retry=Retry(NoBackoff(), retries=0),
         decode_responses=True,
+        encoding_errors="replace",
     )

@@ -1,0 +1,287 @@
+{
+  "environment": {
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "command": "..\\benchmarks\\distributed_crawl.py --workers 1,2,4 --hosts 4 --per-host 16 --repeat 3 --output ..\\benchmarks\\results\\phase5-distributed-16-per-host.json --logs C:\\Users\\24419\\AppData\\Local\\Temp\\sitescope-bench-logs-16",
+    "date_utc": "2026-11-07T07:51:07Z"
+  },
+  "runs": [
+    {
+      "workers": 1,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 38.201,
+      "pages_per_second": 27.1,
+      "recorded_per_worker": {
+        "worker-1": 1036
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0
+      },
+      "repeat": 1
+    },
+    {
+      "workers": 1,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 38.64,
+      "pages_per_second": 26.8,
+      "recorded_per_worker": {
+        "worker-1": 1036
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0
+      },
+      "repeat": 2
+    },
+    {
+      "workers": 1,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 37.447,
+      "pages_per_second": 27.7,
+      "recorded_per_worker": {
+        "worker-1": 1036
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0
+      },
+      "repeat": 3
+    },
+    {
+      "workers": 2,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 20.896,
+      "pages_per_second": 49.6,
+      "recorded_per_worker": {
+        "worker-1": 517,
+        "worker-2": 519
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0
+      },
+      "repeat": 1
+    },
+    {
+      "workers": 2,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 21.093,
+      "pages_per_second": 49.1,
+      "recorded_per_worker": {
+        "worker-1": 519,
+        "worker-2": 517
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0
+      },
+      "repeat": 2
+    },
+    {
+      "workers": 2,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 21.369,
+      "pages_per_second": 48.5,
+      "recorded_per_worker": {
+        "worker-1": 509,
+        "worker-2": 527
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0
+      },
+      "repeat": 3
+    },
+    {
+      "workers": 4,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 11.862,
+      "pages_per_second": 87.3,
+      "recorded_per_worker": {
+        "worker-1": 257,
+        "worker-2": 255,
+        "worker-3": 260,
+        "worker-4": 264
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0,
+        "worker-3": 0,
+        "worker-4": 0
+      },
+      "repeat": 1
+    },
+    {
+      "workers": 4,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 11.765,
+      "pages_per_second": 88.1,
+      "recorded_per_worker": {
+        "worker-1": 258,
+        "worker-2": 259,
+        "worker-3": 259,
+        "worker-4": 260
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0,
+        "worker-3": 0,
+        "worker-4": 0
+      },
+      "repeat": 2
+    },
+    {
+      "workers": 4,
+      "hosts": 4,
+      "concurrency_per_worker": 4,
+      "requests_in_flight_per_host": 16,
+      "pages_per_host": 259,
+      "page_delay_seconds": 0.1,
+      "statuses": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "page_requests": 1036,
+      "elapsed_seconds": 12.118,
+      "pages_per_second": 85.5,
+      "recorded_per_worker": {
+        "worker-1": 259,
+        "worker-2": 259,
+        "worker-3": 260,
+        "worker-4": 258
+      },
+      "handled_by_reason": {
+        "completed": 1036
+      },
+      "exit_codes": {
+        "scheduler-1": 0,
+        "worker-1": 0,
+        "worker-2": 0,
+        "worker-3": 0,
+        "worker-4": 0
+      },
+      "repeat": 3
+    }
+  ]
+}

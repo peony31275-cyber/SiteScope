@@ -95,4 +95,5 @@ addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importli
 filterwarnings = ["error"]
 markers = [
     "integration: needs the real PostgreSQL and Redis services from backend/compose.yaml",
+    "fault: failure injection and recovery with real processes (tests/fault; also integration)",
 ]

@@ -15,6 +15,11 @@ from app.main import create_app
 from tests.support import LogReader
 
 INTEGRATION_DIR = Path(__file__).parent / "integration"
+FAULT_DIR = Path(__file__).parent / "fault"
+
+# Fixtures for the real PostgreSQL and Redis services, shared by tests/integration and
+# tests/fault.
+pytest_plugins = ("tests.service_fixtures",)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -28,9 +33,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Mark every test under tests/integration so `-m integration` selects them."""
+    """Mark tests by directory: tests/integration -> ``integration``; tests/fault -> ``fault``
+    and ``integration`` (they need the services too), so `-m "not integration"` stays unit-only.
+    """
     for item in items:
         if INTEGRATION_DIR in item.path.parents:
+            item.add_marker(pytest.mark.integration)
+        elif FAULT_DIR in item.path.parents:
+            item.add_marker(pytest.mark.fault)
             item.add_marker(pytest.mark.integration)
 
 

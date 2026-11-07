@@ -465,3 +465,112 @@ def test_accepts_a_lease_exactly_ten_seconds_longer_than_the_fetch_deadline(
     monkeypatch.setenv("SITESCOPE_CRAWL_LEASE_SECONDS", "40")
 
     assert Settings(_env_file=None).crawl_lease_seconds == 40
+
+
+# --- Redis Streams, scheduler, shutdown (Phase 5) ------------------------------------------------
+
+
+def test_stream_and_scheduler_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.crawl_lease_margin_seconds == 10
+    assert settings.stream_read_block_ms == 2000
+    assert settings.stream_reclaim_interval_seconds == 15
+    assert settings.stream_reclaim_min_idle_seconds == 120
+    assert settings.stream_reclaim_batch_size == 50
+    assert settings.stream_retention_seconds == 3600
+    assert settings.stream_consumer_max_idle_seconds == 3600
+    assert settings.scheduler_interval_seconds == 0.5
+    assert settings.scheduler_dispatch_batch_size == 100
+    assert settings.scheduler_max_in_flight_per_job == 100
+    assert settings.scheduler_max_outstanding == 1000
+    assert settings.scheduler_max_running_jobs == 10
+    assert settings.scheduler_reconcile_after_seconds == 600
+    assert settings.shutdown_grace_seconds == 30
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS", "0"),
+        ("SITESCOPE_CRAWL_CONCURRENCY", "65"),
+        ("SITESCOPE_STREAM_READ_BLOCK_MS", "9"),
+        ("SITESCOPE_STREAM_RECLAIM_INTERVAL_SECONDS", "0"),
+        ("SITESCOPE_STREAM_RECLAIM_BATCH_SIZE", "0"),
+        ("SITESCOPE_STREAM_RETENTION_SECONDS", "59"),
+        ("SITESCOPE_STREAM_CONSUMER_MAX_IDLE_SECONDS", "59"),
+        ("SITESCOPE_SCHEDULER_INTERVAL_SECONDS", "0"),
+        ("SITESCOPE_SCHEDULER_DISPATCH_BATCH_SIZE", "0"),
+        ("SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB", "0"),
+        ("SITESCOPE_SCHEDULER_MAX_OUTSTANDING", "0"),
+        ("SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS", "0"),
+        ("SITESCOPE_SHUTDOWN_GRACE_SECONDS", "-1"),
+    ],
+)
+def test_rejects_invalid_stream_and_scheduler_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (  # a custom margin counts, not the default one
+            {
+                "SITESCOPE_FETCH_DEADLINE_SECONDS": "60",
+                "SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS": "20",
+                "SITESCOPE_CRAWL_LEASE_SECONDS": "79",
+            },
+            "SITESCOPE_CRAWL_LEASE_SECONDS must be at least",
+        ),
+        (  # a message must never be taken from a worker that may still hold its lease
+            {"SITESCOPE_CRAWL_LEASE_SECONDS": "121"},
+            "SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS must be at least",
+        ),
+        (
+            {"SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS": "119"},
+            "SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS must be at least",
+        ),
+        (
+            {"SITESCOPE_STREAM_RETENTION_SECONDS": "599"},
+            "SITESCOPE_STREAM_RETENTION_SECONDS must be at least",
+        ),
+        (  # a blocking read must return before the Redis client gives up on the socket
+            {"SITESCOPE_STREAM_READ_BLOCK_MS": "5000"},
+            "SITESCOPE_STREAM_READ_BLOCK_MS must be shorter than",
+        ),
+    ],
+)
+def test_rejects_inconsistent_stream_timing(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, str], message: str
+) -> None:
+    """task_deadline < lease <= reclaim min idle <= reconcile after <= retention (ADR-0016)."""
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(_env_file=None)
+
+
+def test_accepts_the_fast_timing_of_the_process_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The short timings used by the multi-process tests satisfy the same order."""
+    values = {
+        "SITESCOPE_FETCH_DEADLINE_SECONDS": "3",
+        "SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS": "1",
+        "SITESCOPE_CRAWL_LEASE_SECONDS": "4",
+        "SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS": "4",
+        "SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS": "4",
+        "SITESCOPE_STREAM_RETENTION_SECONDS": "60",
+        "SITESCOPE_POLITENESS_MAX_WAIT_SECONDS": "3",
+        "SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS": "1",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.crawl_lease_seconds - settings.crawl_lease_margin_seconds == 3

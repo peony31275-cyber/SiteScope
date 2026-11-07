@@ -2,7 +2,8 @@
 
 - Status: Accepted. Extended by [ADR-0010](0010-database-enforced-fencing.md) (the database
   enforces fencing) and [ADR-0014](0014-crawl-state-transactions-and-redirects.md) (the
-  result transaction and the recovery of exhausted leases).
+  result transaction and the recovery of exhausted leases), and by
+  [ADR-0016](0016-distributed-execution-redis-streams.md) (acknowledgment rules, no lease renewal).
 - Date: 2026-11-06
 
 ## Context
