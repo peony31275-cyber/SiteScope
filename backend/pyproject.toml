@@ -17,6 +17,9 @@ dependencies = [
     "alembic>=1.20",                # schema migrations
     "redis>=8.1",                   # official Redis client (redis.asyncio)
     "idna>=3.20",                   # IDNA 2008 / UTS #46 host names (stdlib codec is IDNA 2003)
+    "httpcore2>=2.16",              # HTTP/1.1 transport of httpx2; its network backend pins IPs
+    "truststore>=0.10.5",           # TLS verification by the OS (Windows installs roots lazily)
+    "beautifulsoup4>=4.15",         # HTML parsing, with the stdlib html.parser
 ]
 
 [project.optional-dependencies]
@@ -25,6 +28,7 @@ dev = [
     "httpx2>=2.16",  # required by Starlette's TestClient (plain httpx is deprecated there)
     "ruff>=0.17",    # linter and formatter
     "mypy>=2.4",     # static type checker
+    "trustme>=1.2",  # throwaway CAs and certificates for HTTPS tests (no committed keys)
 ]
 
 [tool.setuptools.dynamic]

@@ -302,3 +302,86 @@ def test_env_example_documents_every_setting_with_valid_values() -> None:
 
     Settings(_env_file=template)
     assert keys == {f"SITESCOPE_{name.upper()}" for name in Settings.model_fields}
+
+
+# --- Safe fetcher and parser ------------------------------------------------------------------
+
+
+def test_fetch_and_parse_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert (settings.fetch_connect_timeout_seconds, settings.fetch_read_timeout_seconds) == (10, 10)
+    assert (settings.fetch_deadline_seconds, settings.fetch_max_redirects) == (60, 5)
+    assert settings.fetch_max_body_bytes == 2 * 1024 * 1024
+    assert settings.fetch_internal_origins == ()
+    assert (settings.parse_max_links, settings.parse_max_text_chars) == (1000, 1_000_000)
+
+
+def test_internal_origins_are_comma_separated_and_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "SITESCOPE_FETCH_INTERNAL_ORIGINS",
+        " HTTP://Demo-Site:80/ , http://localhost:8080,http://demo-site",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.fetch_internal_origins == ("http://demo-site", "http://localhost:8080")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_FETCH_INTERNAL_ORIGINS", "demo-site:8080"),
+        ("SITESCOPE_FETCH_INTERNAL_ORIGINS", "http://demo-site/path"),
+        ("SITESCOPE_FETCH_INTERNAL_ORIGINS", "ftp://demo-site"),
+        ("SITESCOPE_FETCH_CONNECT_TIMEOUT_SECONDS", "0"),
+        ("SITESCOPE_FETCH_READ_TIMEOUT_SECONDS", "121"),
+        ("SITESCOPE_FETCH_DEADLINE_SECONDS", "601"),
+        ("SITESCOPE_FETCH_MAX_BODY_BYTES", "1023"),
+        ("SITESCOPE_FETCH_MAX_BODY_BYTES", str(10 * 1024 * 1024 + 1)),
+        ("SITESCOPE_FETCH_MAX_REDIRECTS", "21"),
+        ("SITESCOPE_FETCH_MAX_REDIRECTS", "-1"),
+        ("SITESCOPE_PARSE_MAX_LINKS", "0"),
+        ("SITESCOPE_PARSE_MAX_TEXT_CHARS", "1000001"),
+    ],
+)
+def test_rejects_invalid_fetch_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "origins",
+    ["http://localhost:8080", "http://127.0.0.1:8000", "http://[::1]", "http://a.localhost"],
+)
+def test_production_refuses_local_internal_origins(
+    monkeypatch: pytest.MonkeyPatch, origins: str
+) -> None:
+    monkeypatch.setenv("SITESCOPE_FETCH_INTERNAL_ORIGINS", origins)
+
+    with pytest.raises(ValidationError, match="development-only internal origins"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            postgres_password=SecretStr("real-postgres-secret"),
+            redis_password=SecretStr("real-redis-secret"),
+        )
+
+
+def test_production_accepts_named_internal_origins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITESCOPE_FETCH_INTERNAL_ORIGINS", "http://demo-site:8080")
+
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        postgres_password=SecretStr("real-postgres-secret"),
+        redis_password=SecretStr("real-redis-secret"),
+    )
+
+    assert settings.fetch_internal_origins == ("http://demo-site:8080",)

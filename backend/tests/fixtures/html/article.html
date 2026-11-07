@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <title>  SiteScope
+    Guide  </title>
+  <meta name="description" content="How the   crawler works.">
+  <meta name="ROBOTS" content="NoIndex, nofollow">
+  <link rel="canonical" href="/guide/">
+  <link rel="stylesheet" href="/style.css">
+  <style>body { color: red }</style>
+  <script>var note = "not visible"; document.write("<a href='/from-script'>x</a>");</script>
+</head>
+<body>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/guide/intro.html">Intro</a>
+    <a href="intro.html#section-2">Intro again</a>
+    <a href="https://external.example.org/page?ref=1#top" rel="nofollow noopener">External</a>
+    <a href="mailto:docs@example.com">Mail us</a>
+    <a href="javascript:void(0)">Menu</a>
+    <a href="tel:+15550100">Call</a>
+    <a href="http://[::1">Broken</a>
+    <a>No href</a>
+  </nav>
+  <main>
+    <h1>The SiteScope Guide</h1>
+    <p>SiteScope crawls <em>approved</em> sites.</p>
+    <h2>Fetching</h2>
+    <p>Every request is pinned to a validated address.</p>
+    <img src="map.png" alt="" usemap="#m"><map name="m"><area href="/area-target" alt="Area link"></map>
+    <template><p>Template text</p><a href="/from-template">t</a></template>
+    <div hidden><p>Hidden text</p><a href="/hidden-link">hidden</a></div>
+    <noscript><p>Enable JavaScript.</p></noscript>
+  </main>
+</body>
+</html>

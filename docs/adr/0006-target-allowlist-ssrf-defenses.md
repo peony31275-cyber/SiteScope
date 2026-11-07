@@ -1,7 +1,8 @@
 # ADR-0006: Target allowlist and layered SSRF defenses
 
 - Status: Accepted. Extended by [ADR-0012](0012-approved-crawl-targets.md) (the format and
-  matching rules of the allowlist).
+  matching rules of the allowlist) and [ADR-0013](0013-safe-fetcher-pinned-connections.md) (how
+  the safe fetcher implements these defenses).
 - Date: 2026-11-06
 
 ## Context

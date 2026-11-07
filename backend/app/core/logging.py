@@ -22,6 +22,8 @@ from typing import Any
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 _HANDLER_NAME = "sitescope-json"
+# Third-party loggers limited to WARNING by configure_logging (they log full URLs).
+QUIET_HTTP_LOGGERS = ("httpx2", "httpcore2")
 
 # Attributes present on every LogRecord. Anything else on a record was passed via ``extra``.
 _STANDARD_RECORD_ATTRIBUTES = frozenset(
@@ -110,3 +112,8 @@ def configure_logging(level: str, *, service: str) -> None:
     access_logger.handlers.clear()
     access_logger.propagate = True
     access_logger.setLevel(logging.WARNING)
+
+    # The HTTP client libraries log full request URLs, query strings included, which may hold
+    # tokens: httpx2 at INFO, httpcore2 at DEBUG. Keep only their warnings and errors.
+    for name in QUIET_HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)

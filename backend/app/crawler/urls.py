@@ -1,8 +1,8 @@
 """URL normalization: the canonical form of every URL that SiteScope stores or compares.
 
-Pure functions: no network, no DNS, no database. The API normalizes seed URLs with them, and the
-crawler (Phase 3) will normalize discovered links with them, after resolving each link against its
-document (RFC 3986, section 5).
+Pure functions: no network, no DNS, no database. The API normalizes seed URLs with them. The HTML
+parser and the safe fetcher resolve links and redirect targets against their document with
+``join_url`` (RFC 3986, section 5), which normalizes the result with the same rules.
 
 **Policy** (also in docs/architecture.md, section 8.1). Two inputs normalize to the same URL only
 when the URI standards define them as equivalent (RFC 3986 sections 6.2.2 and 6.2.3; RFC 9110
@@ -151,6 +151,59 @@ def normalize_url(raw: str) -> NormalizedUrl:
     if len(url) > MAX_URL_BYTES:  # the URL is ASCII, so characters are bytes
         raise InvalidUrlError(f"URL is longer than {MAX_URL_BYTES} bytes after normalization")
     return NormalizedUrl(url=url, scheme=scheme, host=host, port=port)
+
+
+def join_url(base: str, reference: str) -> NormalizedUrl:
+    """Resolve ``reference`` (an href or a Location header) against ``base``, then normalize it.
+
+    ``base`` must be an absolute http(s) URL. Raises ``InvalidUrlError`` if the reference cannot
+    be resolved, or if the result is not an acceptable URL (``normalize_url``).
+    """
+    return normalize_url(resolve_reference(base, reference))
+
+
+def resolve_reference(base: str, reference: str) -> str:
+    """Resolve a URI reference against an absolute base URL (RFC 3986, section 5.2.2).
+
+    Strict parsing: a reference with a scheme is absolute even if the scheme equals the base's
+    (``http:page`` is not relative). Leading and trailing spaces and control characters are
+    ignored, as browsers do, but control characters inside the reference and backslashes are
+    rejected, exactly as ``normalize_url`` rejects them. Dot segments are left for
+    ``normalize_url`` to resolve, which gives the same result as resolving them here.
+    """
+    text = reference.strip(_STRIPPED)
+    if _CONTROL.search(text):
+        raise InvalidUrlError("URL contains control characters, such as tabs or line breaks")
+    if "\\" in text:
+        raise InvalidUrlError("URL contains a backslash; use '/' to separate path segments")
+    base_match = _URI_REFERENCE.fullmatch(base)
+    reference_match = _URI_REFERENCE.fullmatch(text)
+    if base_match is None or reference_match is None:  # pragma: no cover - matches any string
+        raise InvalidUrlError("URL is malformed")
+    base_scheme, base_authority, base_path, base_query = base_match.group(1, 2, 3, 4)
+    if base_scheme is None or base_authority is None:
+        raise InvalidUrlError("the base URL must be absolute, with a host")
+    scheme, authority, path, query = reference_match.group(1, 2, 3, 4)
+
+    if scheme is not None:
+        return text
+    if authority is None:
+        authority = base_authority
+        if not path:
+            path = base_path
+            query = query if query is not None else base_query
+        elif not path.startswith("/"):
+            # Merge with the base path (RFC 3986, section 5.2.3).
+            path = (base_path[: base_path.rfind("/") + 1] or "/") + path
+    resolved = f"{base_scheme}://{authority}{path}"
+    return resolved if query is None else f"{resolved}?{query}"
+
+
+def scheme_of(reference: str) -> str | None:
+    """The lowercase scheme of a URI reference, or None if the reference is relative."""
+    match = _URI_REFERENCE.fullmatch(reference.strip(_STRIPPED))
+    scheme = match.group(1) if match is not None else None
+    return scheme.lower() if scheme is not None and _SCHEME.fullmatch(scheme) else None
 
 
 def normalize_host(host: str) -> str:

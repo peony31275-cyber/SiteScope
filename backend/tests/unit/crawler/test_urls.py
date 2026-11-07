@@ -10,8 +10,11 @@ from app.crawler.urls import (
     InvalidUrlError,
     NormalizedUrl,
     ip_address_of,
+    join_url,
     normalize_host,
     normalize_url,
+    resolve_reference,
+    scheme_of,
 )
 from app.db import models
 
@@ -246,3 +249,131 @@ def test_random_inputs_are_normalized_or_rejected_never_crash() -> None:
         assert DATABASE_URL_FORMAT.fullmatch(url), raw
         assert len(url) <= MAX_URL_BYTES, raw
         assert normalize_url(url).url == url, raw
+
+
+# --- Reference resolution (RFC 3986, section 5) ---------------------------------------------
+
+RFC_BASE = "http://a/b/c/d;p?q"
+
+# RFC 3986, section 5.4: the normal and abnormal examples, with the results normalized by our
+# rules (fragments dropped, "/" for an empty path).
+RFC_EXAMPLES = [
+    ("g", "http://a/b/c/g"),
+    ("./g", "http://a/b/c/g"),
+    ("g/", "http://a/b/c/g/"),
+    ("/g", "http://a/g"),
+    ("//g", "http://g/"),
+    ("?y", "http://a/b/c/d;p?y"),
+    ("g?y", "http://a/b/c/g?y"),
+    ("#s", "http://a/b/c/d;p?q"),
+    ("g#s", "http://a/b/c/g"),
+    ("g?y#s", "http://a/b/c/g?y"),
+    (";x", "http://a/b/c/;x"),
+    ("g;x", "http://a/b/c/g;x"),
+    ("g;x?y#s", "http://a/b/c/g;x?y"),
+    ("", "http://a/b/c/d;p?q"),
+    (".", "http://a/b/c/"),
+    ("./", "http://a/b/c/"),
+    ("..", "http://a/b/"),
+    ("../", "http://a/b/"),
+    ("../g", "http://a/b/g"),
+    ("../..", "http://a/"),
+    ("../../", "http://a/"),
+    ("../../g", "http://a/g"),
+    ("../../../g", "http://a/g"),
+    ("../../../../g", "http://a/g"),
+    ("/./g", "http://a/g"),
+    ("/../g", "http://a/g"),
+    ("g.", "http://a/b/c/g."),
+    (".g", "http://a/b/c/.g"),
+    ("g..", "http://a/b/c/g.."),
+    ("..g", "http://a/b/c/..g"),
+    ("./../g", "http://a/b/g"),
+    ("./g/.", "http://a/b/c/g/"),
+    ("g/./h", "http://a/b/c/g/h"),
+    ("g/../h", "http://a/b/c/h"),
+    ("g;x=1/./y", "http://a/b/c/g;x=1/y"),
+    ("g;x=1/../y", "http://a/b/c/y"),
+    ("g?y/./x", "http://a/b/c/g?y/./x"),
+    ("g?y/../x", "http://a/b/c/g?y/../x"),
+    ("g#s/./x", "http://a/b/c/g"),
+    ("g#s/../x", "http://a/b/c/g"),
+]
+
+
+@pytest.mark.parametrize(("reference", "expected"), RFC_EXAMPLES)
+def test_references_resolve_as_rfc_3986_specifies(reference: str, expected: str) -> None:
+    assert join_url(RFC_BASE, reference).url == expected
+
+
+def test_a_reference_with_its_own_scheme_is_absolute() -> None:
+    # Strict parsing (RFC 3986, section 5.2.2): "http:g" is not relative to an http base.
+    assert resolve_reference(RFC_BASE, "g:h") == "g:h"
+    assert resolve_reference(RFC_BASE, "http:g") == "http:g"
+    with pytest.raises(InvalidUrlError, match="must include a host"):
+        join_url(RFC_BASE, "http:g")
+    with pytest.raises(InvalidUrlError, match="scheme 'g' is not supported"):
+        join_url(RFC_BASE, "g:h")
+
+
+@pytest.mark.parametrize(
+    ("base", "reference", "expected"),
+    [
+        (
+            "https://docs.example.com/guide/",
+            "  intro.html \n",
+            "https://docs.example.com/guide/intro.html",
+        ),
+        ("https://docs.example.com", "page", "https://docs.example.com/page"),  # empty base path
+        ("https://docs.example.com/a/b", "//cdn.example.org/x", "https://cdn.example.org/x"),
+        ("https://docs.example.com/a/", "café", "https://docs.example.com/a/caf%C3%A9"),
+        (
+            "https://docs.example.com/a/",
+            "HTTP://Docs.Example.com:443/B",
+            "http://docs.example.com:443/B",
+        ),
+    ],
+)
+def test_join_url_resolves_then_normalizes(base: str, reference: str, expected: str) -> None:
+    assert join_url(base, reference).url == expected
+
+
+@pytest.mark.parametrize(
+    ("reference", "message"),
+    [
+        ("/a\tb", "control characters"),
+        ("/a\nb", "control characters"),
+        (r"\\evil.example\x", "backslash"),
+        ("javascript:alert(1)", "scheme 'javascript' is not supported"),
+        ("mailto:docs@example.com", "scheme 'mailto' is not supported"),
+        ("//user:pw@example.com/", "credentials"),
+        ("http://[::1", "closing ']'"),
+    ],
+)
+def test_join_url_rejects_unusable_references(reference: str, message: str) -> None:
+    with pytest.raises(InvalidUrlError, match=re.escape(message)):
+        join_url("https://docs.example.com/a/", reference)
+
+
+def test_join_url_needs_an_absolute_base() -> None:
+    with pytest.raises(InvalidUrlError, match="base URL must be absolute"):
+        join_url("/relative/base", "page")
+
+
+@pytest.mark.parametrize(
+    ("reference", "scheme"),
+    [
+        ("https://example.com/", "https"),
+        ("  JavaScript:void(0)", "javascript"),
+        ("mailto:a@example.com", "mailto"),
+        ("tel:+1-555-0100", "tel"),
+        ("data:text/html,hi", "data"),
+        ("/relative", None),
+        ("//example.com/", None),
+        ("./a:b", None),
+        ("#top", None),
+        ("", None),
+    ],
+)
+def test_scheme_of(reference: str, scheme: str | None) -> None:
+    assert scheme_of(reference) == scheme

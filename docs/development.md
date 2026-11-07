@@ -6,6 +6,7 @@ These are the development commands for the Windows 10 development machine:
 - The Docker commands were run during the Docker setup on 2026-11-06 (see [Docker (WSL 2)](#docker-wsl-2)).
 - The database and Compose commands were run in Phase 2B.
 - The crawl job commands were run in Phase 2C.
+- The safe fetcher commands were run in Phase 3.
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
@@ -419,6 +420,63 @@ variables for one PowerShell session (as in [Crawl jobs](#crawl-jobs)).
 - The checks look only at the URL. They are not an SSRF defense: the Phase 3 safe fetcher must
   validate every resolved address ([architecture.md](architecture.md), section 12).
 
+## Safe fetcher and HTML parser
+
+`app/crawler/fetcher.py` fetches approved URLs over connections pinned to validated addresses.
+`app/crawler/html_parser.py` extracts the title, text, links and metadata. Nothing in the API
+calls them yet: the crawl logic arrives in Phase 4. The design is in
+[architecture.md](architecture.md) (sections 8 and 12) and
+[ADR-0013](adr/0013-safe-fetcher-pinned-connections.md).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_FETCH_CONNECT_TIMEOUT_SECONDS` | `10` | DNS resolution, TCP connect and TLS handshake |
+| `SITESCOPE_FETCH_READ_TIMEOUT_SECONDS` | `10` | each read or write |
+| `SITESCOPE_FETCH_DEADLINE_SECONDS` | `60` | the whole fetch, redirects included (stops slow-drip responses) |
+| `SITESCOPE_FETCH_MAX_BODY_BYTES` | `2097152` | the largest body after removing gzip or deflate (at most 10 MiB); larger bodies are rejected |
+| `SITESCOPE_FETCH_MAX_REDIRECTS` | `5` | redirects followed; every target is validated again |
+| `SITESCOPE_FETCH_INTERNAL_ORIGINS` | empty | exact origins that may resolve to private addresses (and, outside production, loopback) |
+| `SITESCOPE_PARSE_MAX_LINKS` / `_MAX_TEXT_CHARS` | `1000` / `1000000` | links and visible text kept per page |
+
+**Fetch a page by hand.** `app.crawler.cli` fetches one URL with the production settings and
+prints a JSON report of the fetch and the parsed page. The URL must be an approved crawl target.
+A local server also needs an internal origin, because its address is a loopback address.
+
+In one window, serve the HTML test fixtures, on 127.0.0.1 only:
+
+```powershell
+Set-Location C:\Users\24419\Desktop\SITESCOPE\backend\tests\fixtures\html
+C:\Users\24419\Desktop\SITESCOPE\backend\.venv\Scripts\python.exe -m http.server 8765 --bind 127.0.0.1
+```
+
+In a second window, from `backend\`:
+
+```powershell
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "127.0.0.1,localhost"
+$env:SITESCOPE_CRAWL_ALLOWED_PORTS = "8765"
+$env:SITESCOPE_FETCH_INTERNAL_ORIGINS = "http://127.0.0.1:8765,http://localhost:8765"
+.\.venv\Scripts\python.exe -m app.crawler.cli http://127.0.0.1:8765/article.html --links 3
+.\.venv\Scripts\python.exe -m app.crawler.cli http://localhost:8765/malformed.html --links 2
+$env:SITESCOPE_FETCH_INTERNAL_ORIGINS = ""     # now localhost is refused: blocked_destination
+.\.venv\Scripts\python.exe -m app.crawler.cli http://localhost:8765/article.html
+```
+
+`localhost` resolves to `::1` and `127.0.0.1`. The server listens on IPv4 only, so the fetcher
+falls back to the second validated address; on Windows the refused first attempt costs about 2 s.
+
+A public site works the same way, for example the documentation domain `example.com` (this
+contacts the internet):
+
+```powershell
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "example.com"
+$env:SITESCOPE_CRAWL_ALLOWED_PORTS = "80,443"
+.\.venv\Scripts\python.exe -m app.crawler.cli https://example.com/ --links 3
+```
+
+The exit status is 0 for a successful fetch and 1 for a failure. Failures report a
+`failure` kind (for example `blocked_destination`, `tls_error`, `too_large`) and whether a retry
+could succeed.
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to
@@ -487,6 +545,9 @@ PostgreSQL and Redis containers. They never touch the development data:
   test truncates the tables afterwards.
 - **Migration tests.** These use a second disposable database, `sitescope_test_migrations`.
 - **Redis.** Redis tests use logical database 15 and namespaced keys.
+- **Fetcher tests** (`tests/integration/test_fetcher.py`) start their own HTTP and TLS
+  servers on 127.0.0.1, with a throwaway certificate authority from `trustme`. They need
+  neither the containers nor the internet, and run even when the services are down.
 - **Crawl job tests** set their own approved hosts and limits, so they do not depend on the
   crawl settings in `backend\.env`.
 
@@ -524,4 +585,6 @@ Windows a refused localhost connection takes about 2 s before it fails.
 | Integration tests are all skipped | The skip reason names the unreachable service. Start it, or run with `--require-services` to make this an error. |
 | `POST /api/v1/crawls` returns 422 `target_not_allowed`: "no crawl targets are approved on this server" | Set `SITESCOPE_CRAWL_ALLOWED_HOSTS` (see [Crawl targets and limits](#crawl-targets-and-limits)) and restart the server. |
 | Startup fails with "production does not allow development-only crawl targets" | Remove `localhost`, `.localhost` names and IP addresses from `SITESCOPE_CRAWL_ALLOWED_HOSTS`, or run in `development`. |
+| The fetcher reports `blocked_destination` for a local server | Add its exact origin to `SITESCOPE_FETCH_INTERNAL_ORIGINS` (development only); approving the host is not enough. |
+| The fetcher reports `target_not_allowed` | Add the host to `SITESCOPE_CRAWL_ALLOWED_HOSTS`, and its port to `SITESCOPE_CRAWL_ALLOWED_PORTS` if it is not 80 or 443. |
 | `alembic` says "Can't locate revision" | The database was migrated by a different branch of the code. Check `alembic current` against `alembic history`. |

@@ -101,16 +101,19 @@ explanations for the project owner in Chinese.
    Zero rows means the race was lost: treat it as a no-op, log it, and move on.
 9. **No transaction spans a request to a crawl target.** Claim and commit, then fetch outside any
    transaction, then commit the result.
-10. **Every outbound request goes through the safe fetcher** (ADR-0006), which provides:
+10. **Every outbound request goes through the safe fetcher** (`app/crawler/fetcher.py`;
+    ADR-0006, ADR-0013), which provides:
     - the target allowlist and URL policy;
     - DNS resolution with IP validation, and the connection pinned to the validated IP;
-    - no automatic redirects;
+    - no automatic redirects (the fetcher validates and follows them itself);
     - timeouts plus an overall deadline;
     - a cap on decoded body size;
-    - robots.txt compliance and a per-host rate limit.
+    - robots.txt compliance and a per-host rate limit (Phase 4; not implemented yet).
 
     The API's crawl-scope check (`app/crawler/scope.py`, ADR-0012) is syntactic. It is not an SSRF
-    defense on its own, and approved targets are empty by default.
+    defense on its own, and approved targets are empty by default. Never send a request to a crawl
+    target with another HTTP client, and never let the HTTP stack resolve host names: only
+    `PinnedNetworkBackend` opens connections.
 11. **Clocks.** Leases use the PostgreSQL clock, and rate limits use the Redis clock. A worker's local
     clock is never used for correctness.
 
@@ -126,9 +129,10 @@ explanations for the project owner in Chinese.
   - `scheduler` and `workers` may use `services`, `queue`, `crawler`, and `indexing`, but never `api`.
   - `crawler` has no database imports, and `queue` has no domain logic. `services` and
     `core.config` may use the pure functions of `crawler` (URL normalization, scope).
-- **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and
-  `httpx.AsyncClient`. Don't block the event loop with long CPU work; offload it when measurements show a
-  need.
+- **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
+  fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
+  when measurements show a need. HTML parsing is such work: call `parse_html` with
+  `asyncio.to_thread` from async code.
 - **Transactions.**
   - Use `async with session.begin()` in the service layer.
   - Rely on READ COMMITTED, row locks, and compare-and-set updates.
@@ -158,12 +162,13 @@ explanations for the project owner in Chinese.
 | Directory | What runs there |
 |---|---|
 | `backend/tests/unit` | no network, database, or Redis |
-| `backend/tests/integration` | real PostgreSQL and Redis (marker `integration`) |
+| `backend/tests/integration` | real PostgreSQL and Redis, or local HTTP/TLS servers on 127.0.0.1 (marker `integration`) |
 | `backend/tests/fault` | failure injection and recovery (marker `fault`) |
 
 - A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
   `pytest --require-services` turns those skips into failures (use it whenever the services are up,
   and in CI). Select suites with `-m integration` or `-m "not integration"`.
+- Tests never contact the public internet: fetcher tests use their own servers on 127.0.0.1.
 - Integration tests never touch the development database. They create, migrate (with Alembic)
   and drop a disposable `<db>_test` database, and use Redis database 15.
 - pytest treats warnings as errors. Starlette's `TestClient` uses `httpx2`; with plain `httpx` it
@@ -206,7 +211,8 @@ explanations for the project owner in Chinese.
 
 ```
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
-  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phase 2C: URLs, scope);
+  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-3: URLs,
+                  scope, safe fetcher, HTML parser);
                   queue/ scheduler/ indexing/ workers/ (later)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)

@@ -13,7 +13,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 2A | Docker environment (WSL 2) | **Done** (2026-11-06) |
 | 2B | PostgreSQL, Redis, and database infrastructure | **Done** (2026-11-06) |
 | 2C | Crawl job API, URL normalization, and transactional job creation | **Done** (2026-11-06) |
-| 3 | Safe HTTP fetching and HTML parsing | Not started |
+| 3 | Safe HTTP fetching and HTML parsing | **Done** (2026-11-06) |
 | 4 | BFS crawling and persistence | Not started |
 | 5 | Distributed scheduling and workers | Not started |
 | 6 | Fault tolerance and recovery | Not started |
@@ -38,20 +38,20 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 2C
+## Repository state after Phase 3
 
 Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3). |
 | `backend/alembic/` | Migrations `0001` (the six-table schema) and `0002` (fencing tokens issued only by claims). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 520 tests: 417 unit, 103 integration (real PostgreSQL and Redis). |
-| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
+| `backend/tests/` | 848 tests: 679 unit, 169 integration (real PostgreSQL and Redis, and local HTTP/TLS servers on 127.0.0.1). |
+| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0012, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0013, API conventions, development guide. |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -375,50 +375,137 @@ publication or workers.
 **Not done, by design:** crawling, fetching, BFS, Redis publication, workers, indexing, the
 frontend and benchmarks.
 
-### Phase 3: Safe HTTP fetching and HTML parsing
+### Phase 3: Safe HTTP fetching and HTML parsing (done)
 
 **Goal.** Fetch approved URLs safely, and extract what the crawler needs from HTML, before any
-distributed machinery exists.
+distributed machinery exists. No BFS, persistence, Redis, workers or retries.
 
-**Scope**
+**Delivered** (all in `backend/app/crawler/`; design in ADR-0013)
 
-- An HTTPX client with `trust_env=False`, no automatic redirects, and HTTP/1.1.
-- DNS resolution and the destination policy, with each connection pinned to the validated IP.
-  TLS SNI and certificate checks still use the hostname. Every request first re-checks the
-  Phase 2C crawl scope (`app/crawler/scope.py`).
-- Request limits:
-  - per-operation timeouts plus a task deadline;
-  - a streamed limit on decoded body size;
-  - a content-type allowlist.
-- robots.txt handling (RFC 9309) with a compliant parser, cached in Redis.
-- Per-host rate limiting with a GCRA Lua script based on Redis time.
-- HTML extraction with BeautifulSoup:
-  - title, headings, and text;
-  - links with their positions, resolved against the document (RFC 3986 section 5, `<base href>`)
-    and normalized with the Phase 2C normalizer;
-  - meta robots.
-- A local fixture site for tests (loopback is allowed only in development and test), plus the
-  first demo-site content with its own robots.txt.
-- Findings carried over from Phase 1:
-  - choose between `httpx` and its successor `httpx2`; Starlette 1.x's TestClient already uses
-    `httpx2`;
-  - set the HTTP client's logger to WARNING, because at INFO it logs full request URLs, including
-    query strings.
+- **Safe fetcher** (`fetcher.py`, `results.py`, `errors.py`, `content.py`):
+  - `httpcore2` (the transport layer of `httpx2`) used directly: HTTP/1.1, no proxy support, no
+    environment configuration, no connection reuse.
+  - Each request hop:
+    1. checks the crawl scope;
+    2. resolves the host once;
+    3. checks *every* address;
+    4. connects only to a validated address through `PinnedNetworkBackend`. SNI, certificate
+       verification and the `Host` header use the host name.
+  - Redirects:
+    - followed by the fetcher, never by the HTTP stack;
+    - every target validated again;
+    - loops and the hop limit enforced;
+    - `max_redirects=0` returns the redirect instead of following it.
+  - Limits:
+    - a connect timeout (DNS, TCP and TLS) and a read timeout;
+    - an overall deadline;
+    - a wire limit and a decoded-size limit, with decompression in 64 KiB slices;
+    - HTML media types and gzip or deflate only;
+    - oversized bodies rejected, never truncated.
+  - Results and failures:
+    - typed `FetchResult` and `Redirect`;
+    - one `FetchError` with a `FailureKind` (fits `crawl_urls.outcome`) and a `retryable` flag
+      (architecture section 10.5).
+  - TLS 1.2 or newer, verified by the operating system's verifier (`truststore`).
+- **Destination policy** (`destinations.py`):
+  - address classes, with mapped and NAT64 IPv4 forms unwrapped and explicit cloud metadata
+    endpoints;
+  - private addresses only for internal origins; loopback likewise, and only outside production;
+  - fail closed on any disallowed answer.
+- **Resolver** (`resolver.py`): `getaddrinfo` in the thread pool, separating "does not exist"
+  from temporary failures.
+- **Link resolution:** `urls.join_url` and `resolve_reference`, implementing RFC 3986
+  section 5.2 strictly and tested against all of the RFC's examples.
+- **Charset detection** (`encoding.py`):
+  - precedence: BOM, then HTTP, then `<meta>`, then UTF-8 or windows-1252;
+  - only labels from the WHATWG table are accepted;
+  - decoding never fails, and replacement characters are reported.
+- **HTML parser** (`html_parser.py`):
+  - BeautifulSoup with `html.parser`;
+  - metadata: title, description, canonical URL, language, and meta robots (reported, not
+    enforced);
+  - headings and visible text;
+  - links: resolved against `<base href>`, normalized, deduplicated with positions, anchor text
+    and `nofollow`;
+  - statistics and caps.
+- **Manual-check command:** `python -m app.crawler.cli <url>` (development.md, "Safe fetcher and
+  HTML parser").
+- **Configuration:** `SITESCOPE_FETCH_*` and `SITESCOPE_PARSE_*`. Internal origins are validated
+  at startup, and production refuses local ones.
+- **Logging:** the `httpx2` and `httpcore2` loggers are capped at WARNING (a Phase 1 finding:
+  they log full URLs).
+- **Dependencies:**
+  - `httpcore2` and `truststore`: already installed with `httpx2`, now declared;
+  - `beautifulsoup4` (new, with `soupsieve`);
+  - development only: `trustme` (new, with `cryptography`).
 
-**Tests**
+**Verification** (2026-11-06; Windows 10, Python 3.13.7, services in WSL)
 
-- SSRF table tests:
-  - IPv4 and IPv6 address classes;
-  - mapped and embedded forms;
-  - decimal, octal, and hex host forms;
-  - redirects to private addresses;
-  - DNS rebinding through a scripted resolver.
-- Size limits and slow-response limits.
-- robots.txt semantics, the rate limiter, the parser, and link resolution.
-- Fetching and parsing the fixture site over real HTTP, with exact expected results.
+- `pytest --require-services`: 848 passed (679 unit, 169 integration). Phase 3 added 328 tests (262
+  unit, 66 integration).
+  - Integration: the real fetcher against HTTP and TLS servers on 127.0.0.1 (no services or
+    internet needed). They cover:
+    - pinned connections (every connect target recorded), the `Host` header and SNI;
+    - DNS rebinding: one lookup per hop; a changed answer refused, even between redirect hops;
+    - unsafe answers refused before connecting: private, loopback, link-local, metadata,
+      IPv4-mapped, NAT64, and mixed answers;
+    - redirect chains, loops, limits, out-of-scope and unusable targets;
+    - TLS: wrong host name, untrusted authority, stalled handshake;
+    - status classification, content types and codings, size limits, a 50 MB gzip bomb;
+    - truncated, malformed, silent, slow-drip and refused responses;
+    - the system resolver, and environment proxies ignored.
+  - Unit:
+    - URL resolution (RFC 3986 section 5.4), address classification, the allow matrix;
+    - bounded decoding in any chunking, and charset sniffing;
+    - the parser on static fixtures (malformed, Unicode, large and deeply nested documents);
+    - settings validation.
+- `ruff check` and `ruff format --check`: clean. `mypy` strict (73 files): no issues.
+- Manual checks with `python -m app.crawler.cli`:
+  - **local fixture server**: by IP literal; and through `localhost` and the real resolver, with
+    fallback from the refused `::1` to `127.0.0.1`. Refused once the internal origin was removed.
+  - **public site**: `https://example.com/` over real DNS and TLS, 200 with a gzip body. An
+    unapproved host (`www.example.com`) was refused.
+- The Phase 2C API tests still pass (`tests/integration/test_crawl_jobs.py`).
 
-**Done when.** All safety tests pass and the fixture site is fetched and parsed exactly as
-expected.
+**Findings and design adjustments**
+
+- **`httpx2` client:** it has no public hook for the network backend. Pinning through it would
+  mean replacing a private attribute, and a rename could silently disable pinning, so the
+  fetcher uses `httpcore2` directly (ADR-0013).
+- **TLS on Windows:** OpenSSL with `ssl.load_default_certs()` could not verify
+  `https://example.com/` on this machine ("unable to get local issuer certificate"), because
+  Windows installs most roots only when its own verifier needs them. The fetcher therefore uses
+  `truststore`, the OS verifier, which `httpcore2` already depends on.
+- **Python `ipaddress`:** `is_global` is true for multicast, the NAT64 form of loopback, the
+  IPv4-compatible `::127.0.0.1` and site-local `fec0::/10`. The classifier tests each class
+  explicitly. (`::1` counts as reserved, as found in Phase 2C.)
+- **httpcore2 exception chains:**
+  - The pool re-raises connect errors `from None`, so TLS causes are found through
+    `__context__`.
+  - h11's message for a cut-short body separates retryable `truncated` failures from
+    `malformed_response`.
+  - Tests pin both behaviors.
+- **Parser bug found by a fixture:** `</head>` is optional in HTML, and `html.parser` then nests
+  the body inside `<head>`. Removing `<head>` before extracting text deleted the whole body. The
+  parser now removes only titles, scripts, styles, templates and `hidden` elements, and has a
+  regression test.
+- **Deflate detection:** choosing between zlib and raw DEFLATE depended on how the body was
+  chunked; a test that fed one byte at a time found it. It now inspects the 2-byte zlib header.
+- **Smaller issues:**
+  - BeautifulSoup warns about short bodies that look like URLs or file names, and pytest treats
+    warnings as errors. A trailing newline avoids it, thread-safely.
+  - `urllib.parse.urljoin` strips tabs and line breaks silently, so link resolution has its own
+    RFC 3986 implementation.
+- **Parsing cost:** BeautifulSoup builds the whole tree, so CPU time and memory grow with the
+  input. Input is capped at the body limit, and the Phase 5 worker must parse in a thread
+  (`asyncio.to_thread`, as the CLI does).
+- **Moved to Phase 4.** The owner's Phase 3 scope covered secure fetching and parsing only, so
+  these move to Phase 4, where the crawl loop that needs them is built:
+  - robots.txt (an RFC 9309 parser and a Redis cache);
+  - the per-host rate limiter (GCRA in Redis);
+  - the first demo-site content.
+
+  The fetcher already provides what robots.txt needs: a validated fetch that follows redirects.
 
 ### Phase 4: BFS crawling and persistence
 
@@ -435,12 +522,21 @@ correctness rules, in one process, before the work is distributed.
   - level advancement and job completion (ADR-0004), with the exact page budget;
   - lifecycle records in `crawl_events`.
 - A single-process crawl driver, without Redis, that runs these use cases against the Phase 3
-  fetcher. It is used for development and tests.
+  fetcher and parser. It is used for development and tests.
+- Politeness, moved from Phase 3:
+  - robots.txt (RFC 9309) with a compliant parser, fetched through the safe fetcher and cached in
+    Redis;
+  - a per-host rate limit (GCRA in a Redis Lua script, based on Redis time);
+  - meta robots and `X-Robots-Tag` acted on (the parser and fetcher already report them).
+- Redirect handling: choose between the fetcher's "follow" mode and the same-level admission of
+  architecture section 8.5 ("return" mode).
+- The first demo-site content, with its own robots.txt.
 
 **Tests**
 
 - Crawls of synthetic graphs with cycles, diamonds, and shortcuts to deep nodes: exact URL sets
   and depths, the budget prefix, redirects.
+- robots.txt semantics and the rate limiter.
 - The correctness invariants of architecture section 11.
 
 **Done when.** Single-process crawls of the fixture graphs match the expected results exactly.

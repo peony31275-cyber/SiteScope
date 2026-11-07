@@ -8,8 +8,10 @@
 > - Phase 2C: the crawl job API (`/api/v1/crawls`), URL normalization (section 8.1), the crawl
 >   scope (section 8.2) and transactional job creation. Migration `0002` tightens the
 >   database-enforced fencing (ADR-0011).
+> - Phase 3: the safe fetcher (DNS validation, pinned connections, validated redirects, bounded
+>   bodies; sections 12.3 and 12.4) and the HTML parser (`backend/app/crawler/`, ADR-0013).
 >
-> Crawling, scheduling, workers and search are not implemented yet.
+> BFS crawling, robots.txt, rate limiting, scheduling, workers and search are not implemented yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -452,8 +454,9 @@ Terminal outcomes:
 ### 8.1 URL normalization (implemented in Phase 2C)
 
 `normalize_url()` in `backend/app/crawler/urls.py` is a pure function: no network, DNS or database
-access. The API applies it to seed URLs. The crawler (Phase 3) will apply it to every discovered
-link, after resolving the link against its document (RFC 3986 section 5, honoring `<base href>`).
+access. The API applies it to seed URLs. The HTML parser and the safe fetcher apply it, through
+`join_url`, to every link and redirect target after resolving it against its document (RFC 3986
+section 5, honoring `<base href>`; tested against the RFC's own examples).
 It runs before any scope check, deduplication, or storage.
 
 **Rule.** Two inputs normalize to the same URL only when the URI standards define them as
@@ -517,9 +520,10 @@ Two levels decide whether a URL may be crawled ([ADR-0012](adr/0012-approved-cra
 2. **The job's scope:** the host is in the job's `allowed_hosts`, which holds exactly the seed's
    host. Other hosts are outside the job, including other approved subdomains.
 
-The API checks the seed against both levels when it creates a job. The crawler (Phase 3) will
-check every URL again before fetching it, so narrowing the deployment's approvals also applies to
-existing jobs. Out-of-scope links are recorded (`is_internal = false`) but never fetched.
+The API checks the seed against both levels when it creates a job. The safe fetcher checks the
+deployment level again before every request, redirect targets included, so narrowing the
+deployment's approvals also applies to existing jobs. The job level is applied by the crawl logic
+(Phase 4). Out-of-scope links are recorded (`is_internal = false`) but never fetched.
 
 These checks are syntactic, with no DNS lookups. They are **not** a complete SSRF defense: an
 approved name can resolve to any address, and DNS answers can change. Before every request, the
@@ -560,7 +564,18 @@ depths does not depend on the number of workers or on timing. The tests check th
 
 ### 8.5 Redirects
 
-- HTTPX never follows redirects automatically. A 3xx response is recorded on the URL as `fetched`, with
+The HTTP stack never follows redirects. The safe fetcher (Phase 3) supports two modes:
+
+- **Follow** (the default): up to `SITESCOPE_FETCH_MAX_REDIRECTS` hops (5). Every target is
+  normalized and goes through the crawl scope, DNS resolution, address validation and pinning
+  again. A loop or a longer chain is a failure. The result records each hop.
+- **Return** (`max_redirects=0`): the 3xx response is the result, with its normalized
+  `redirect_location`. Nothing connects to the target.
+
+The crawl logic (Phase 4) chooses between the following plan, which needs the "return" mode, and
+following inline:
+
+- A 3xx response is recorded on the URL as `fetched`, with
   `outcome = redirect` and the `redirect_target`.
 - The worker's result transaction admits the target, at the **same depth**, while holding the job row
   lock, provided that:
@@ -571,8 +586,8 @@ depths does not depend on the number of workers or on timing. The tests check th
   A redirect is not a link hop, and the target finishes within the current level.
 - The target then goes through the whole pipeline (scope, robots.txt, DNS and IP validation, rate limit),
   so a redirect cannot bypass any check.
-- The robots.txt fetcher is the one place that follows redirects inline. It follows up to five hops and
-  validates each one.
+- robots.txt (Phase 4) follows redirects inline, up to five hops, with the fetcher's "follow"
+  mode.
 
 ### 8.6 Cancellation
 
@@ -742,8 +757,9 @@ Initial defaults are starting points to validate in tests, not measured values:
 
 ### 10.5 Retries and backoff
 
-- **Retryable:** timeouts, connection errors, temporary DNS failures, and HTTP 429, 500, 502, 503, and
-  504. Every other error is terminal.
+- **Retryable:** timeouts, connection errors, temporary DNS failures, truncated responses, and HTTP
+  429, 500, 502, 503, and 504. Every other error is terminal. The safe fetcher reports each failure
+  as a `FailureKind` with a `retryable` flag (`backend/app/crawler/errors.py`).
 - **Delay:** `uniform(0, min(cap, base * 2^(attempt - 1)))`, i.e. full jitter. `Retry-After` is honored up
   to the cap.
 - **Durability:** a retry sets the URL back to `pending` with a future `next_attempt_at`. A crash never
@@ -815,45 +831,58 @@ what dependency pinning and auditing catch.
 - The allowlist check is syntactic. Address validation and pinning (section 12.3) are what stop
   SSRF.
 
-### 12.3 SSRF and DNS rebinding
+Implemented in Phase 3 by the safe fetcher (`backend/app/crawler/fetcher.py`,
+`destinations.py`, `resolver.py`; [ADR-0013](adr/0013-safe-fetcher-pinned-connections.md)):
 
 1. **URL policy.** Only `http` and `https`; no userinfo; only allowed ports (80 and 443 by default); a
-   length limit; hosts normalized with IDNA.
-2. **Resolve and validate.** The worker resolves the host itself and rejects the request if **any**
-   resolved address is in a blocked class (see the table below). IPv4-mapped, IPv4-compatible, 6to4, and
-   NAT64 IPv6 forms are unwrapped, and the embedded IPv4 address is checked as well.
-3. **Pin the connection.**
-   - The TCP connection goes to the validated IP.
+   length limit; hosts normalized with IDNA (section 8.1). The crawl scope (section 8.2) is checked
+   before any DNS lookup.
+2. **Resolve and validate.** The fetcher resolves the host once per request hop and rejects the
+   request if **any** resolved address is in a blocked class (see the table below). IPv4-mapped and
+   NAT64 IPv6 forms are unwrapped and classified as their IPv4 address. IPv4-compatible, 6to4 and
+   Teredo forms are reserved, so they are blocked.
+3. **Pin the connection.** `PinnedNetworkBackend` replaces name resolution in the HTTP stack
+   (`httpcore2`):
+   - The TCP connection goes to a validated IP, in DNS order, falling back to the next validated
+     address.
+   - Any other host, port or socket type is refused.
    - The hostname is used only for the `Host` header, TLS SNI, and certificate verification.
    - There is no second DNS lookup for an attacker to answer differently, so the rebinding gap does not
-     exist.
-   - Every connection, retry, redirect target, and robots.txt fetch is resolved and validated again.
-4. **HTTPX settings.** `trust_env=False`, so proxy and netrc settings from the environment are ignored,
-   and `follow_redirects=False`.
+     exist. Tests prove it with a scripted resolver, a recording backend, and host names that the
+     operating system cannot resolve.
+   - Every redirect target is resolved and validated again.
+4. **No ambient configuration.** The fetcher uses `httpcore2` directly: no proxy support, no
+   environment configuration (`HTTP_PROXY`, `.netrc`), no automatic redirects, no connection reuse.
+   TLS 1.2 or newer, verified by the operating system's verifier (`truststore`).
 5. **Network isolation.** In the public deployment, crawler workers sit on a network that can reach only
-   approved targets.
+   approved targets (Phase 11).
 
 | Destination class | production | development / test |
 |---|---|---|
 | Global unicast | allowed if the origin is allowlisted | same |
 | Private (RFC 1918, IPv6 ULA) | only for origins configured as internal targets (e.g. the demo-site container) | same |
 | Loopback | never | only for origins configured as internal targets (local fixture servers) |
-| Link-local (including the `169.254.169.254` cloud metadata endpoint), shared/CGNAT, multicast, reserved, unspecified | never | never |
+| Link-local, cloud metadata endpoints (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`, `192.0.0.192`), shared/CGNAT, multicast, reserved, unspecified | never | never |
 
-Internal targets are exact origins (scheme, host, and port) and are logged at startup. In production,
-configuration cannot relax the loopback and link-local rules.
+Internal targets are exact origins (scheme, host, and port), configured with
+`SITESCOPE_FETCH_INTERNAL_ORIGINS`. In production, configuration cannot relax the loopback and
+link-local rules: the process refuses to start with a `localhost`, `.localhost` or IP-literal
+internal origin, and loopback is never allowed. The address classes are tested explicitly, because
+Python's `is_global` also counts multicast, NAT64 and IPv4-compatible forms of loopback, and
+site-local addresses, as global.
 
 ### 12.4 Resource bounds
 
-All values are configurable. The defaults are starting points, not measurements.
+All values are configurable. The defaults are starting points, not measurements. The first five
+rows are implemented by the safe fetcher and the parser (Phase 3).
 
 | Bound | Mechanism | Initial default |
 |---|---|---|
-| Time | per-operation connect/read/write/pool timeouts, plus the overall task deadline (stops slow-drip responses) | 10 s per operation, 60 s per task |
-| Size | streamed read, aborted once **decoded** bytes exceed the limit (stops decompression bombs) | 2 MiB |
-| Content type | parse only `text/html` and `application/xhtml+xml` | n/a |
-| Redirects | never followed inline; hop limit per chain | 5 |
-| URLs and links | maximum URL length; maximum links recorded per page | 2048 characters; 1000 links |
+| Time | connect timeout (also bounds DNS and the TLS handshake), read/write timeout, and an overall deadline for the whole fetch, redirects included (stops slow-drip responses) | 10 s, 10 s, 60 s |
+| Size | streamed read with a wire limit and a **decoded** limit; decompression in 64 KiB slices, so a bomb never inflates beyond the limit; an oversized body is rejected, never truncated | 2 MiB decoded (at most 10 MiB) |
+| Content type and coding | only `text/html` and `application/xhtml+xml`; only `gzip` and `deflate` are advertised and decoded | n/a |
+| Redirects | followed by the fetcher, never by the HTTP stack; each hop validated; loops detected | 5 |
+| URLs and links | maximum URL length; links kept per page; text kept per page | 2048 bytes; 1000 links; 1,000,000 characters |
 | Crawl size | per-job `max_depth` and `max_pages`, under server-side caps | set per deployment |
 | Concurrency | per-worker semaphore, per-job in-flight window, cap on running jobs | set per deployment |
 | Politeness | per-host rate limit shared by all workers (GCRA in a Redis Lua script, using Redis server time); robots.txt `Crawl-delay` as a lower bound, capped | 1 request/s per host |
@@ -870,10 +899,12 @@ All values are configurable. The defaults are starting points, not measurements.
     is a deliberately conservative choice.
   - Redirects: followed for up to five hops.
 - Python's `urllib.robotparser` applies the first matching rule and does not support path wildcards, so
-  it is not RFC 9309-compliant. Phase 3 will choose a compliant parser: either a small, well-tested
+  it is not RFC 9309-compliant. Phase 4 will choose a compliant parser: either a small, well-tested
   library or our own implementation with tests.
 - Page-level `<meta name="robots">` and `X-Robots-Tag` are honored. `noindex` keeps the page out of
-  search, and `nofollow` stops its links from being admitted.
+  search, and `nofollow` stops its links from being admitted. Since Phase 3, the parser reports the
+  meta directives (`ParsedPage.robots`) and the fetcher keeps the `X-Robots-Tag` header; the crawl
+  logic (Phase 4) acts on them.
 
 ### 12.6 Untrusted content in the dashboard
 
@@ -949,6 +980,7 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 | Jobs | `job.created`, `job.level_advanced`, `job.completed` |
 | Tasks | `task.dispatched`, `task.claimed`, `task.committed`, `task.fenced`, `task.retry_scheduled`, `task.dead_lettered` |
 | Recovery | `lease.taken_over`, `reconcile.republished` |
+| Fetching (Phase 3) | `fetch.destination_blocked` (WARNING: host and address classes, never the URL or the addresses), `fetch.completed` (DEBUG) |
 | Indexing | `outbox.published`, `index.upserted` |
 
 **Health**
@@ -1032,8 +1064,9 @@ SITESCOPE/
 |   |   |-- db/                  # SQLAlchemy models, engine and session factory
 |   |   |-- queue/               # Redis Streams adapter, versioned message schemas
 |   |   |-- scheduler/           # activator, dispatcher, level advancer, relay, reconciler, leader lock
-|   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, safe fetcher,
-|   |   |                        #   robots.txt, rate limiter, HTML parser (no database imports)
+|   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, resolver,
+|   |   |                        #   safe fetcher, content limits, encodings, HTML parser (Phase 3);
+|   |   |                        #   robots.txt, rate limiter (Phase 4); no database imports
 |   |   |-- indexing/            # search document building
 |   |   `-- workers/             # crawler and indexer entrypoints, shared consumer runtime
 |   `-- tests/
@@ -1073,10 +1106,11 @@ SITESCOPE/
 | PostgreSQL driver | asyncpg 0.32 | mature async driver; verified in Phase 2B on Windows with the default Proactor event loop (psycopg's async mode would need the selector loop) |
 | Queue | Redis 8.10.3 Streams (`redis:8.10.3-alpine3.23`; 7.0+ required) | consumer groups, pending entries list, `XAUTOCLAIM`. Redis 8 is tri-licensed (AGPLv3 / RSALv2 / SSPLv1); Valkey is a BSD-licensed alternative if that matters later |
 | Redis client | redis-py 8.1 (`redis.asyncio`) | the official client; its automatic retries are disabled so failures surface immediately (callers retry deliberately) |
-| HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport; Phase 3 chooses between `httpx` and its successor `httpx2`, which Starlette 1.x's TestClient already uses |
+| HTTP | `httpcore2` 2.16, the transport layer of `httpx2` (HTTP/1.1) | async streaming and granular timeouts, and a public network-backend hook for IP pinning, which the `httpx2` client lacks (ADR-0013); `httpx2` stays the TestClient's dependency |
+| TLS verification | `truststore` 0.10 (already required by `httpcore2`) | the operating system's verifier, as browsers use; OpenSSL alone failed to verify public sites on the Windows development machine |
 | URL hosts | `idna` 3.20 (already installed with AnyIO and httpx2) | IDNA 2008 / UTS #46; the standard library's codec implements IDNA 2003, which merges distinct host names |
-| HTML parsing | BeautifulSoup 4 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it |
-| robots.txt | chosen in Phase 3 | must be RFC 9309-compliant (§12.5) |
+| HTML parsing | BeautifulSoup 4.15 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it. It builds the whole tree, so input is capped at the body limit and parsing should run off the event loop |
+| robots.txt | chosen in Phase 4 | must be RFC 9309-compliant (§12.5) |
 | Logging | stdlib `logging` + a JSON formatter | no extra dependency |
 | Tests | pytest with warnings treated as errors; Starlette's TestClient (needs `httpx2`); AnyIO's bundled pytest plugin for async tests; the HTTP client's mock transport for crawler tests | no extra plugin dependency: AnyIO is already installed with Starlette |
 | Quality | ruff (lint and format), mypy | |
@@ -1092,6 +1126,7 @@ SITESCOPE/
 | Concurrency | 1 to 8 workers crawl synthetic site graphs through an in-memory fetcher test double; checks the §11 invariants and that 1-worker and N-worker results match | PostgreSQL, Redis |
 | Fault injection | deterministic crash points (before claim, after claim, before commit, after commit but before ack); a worker stalled past its lease; `FLUSHALL` mid-crawl; a dispatcher crash between `XADD` and commit; poison messages; killing a real worker process | PostgreSQL, Redis |
 | Security | SSRF table tests (IPv4 and IPv6 address classes, mapped forms, alternative host encodings, redirects to private addresses, rebinding through a scripted resolver); size and time limits; robots.txt semantics | nothing, or a loopback fixture |
+| Fetching (Phase 3) | the safe fetcher against real HTTP and TLS servers on 127.0.0.1: pinned connections (recorded), SNI and `Host` header, rebinding, redirects, TLS failures (a throwaway CA from `trustme`), limits, decompression bombs, malformed, truncated and slow responses | local loopback servers only |
 | End-to-end | crawl a local fixture site over real HTTP, then check search results and link reports | full stack |
 | Frontend | components and the API client; type check; production build | Node.js |
 
@@ -1129,6 +1164,10 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
   Horizontal scaling helps across hosts and jobs.
 - URLs disallowed by robots.txt consume page budget.
 - HTML only, no JavaScript rendering, and English-only text search.
+- HTTP/1.1 only. A response without a `Content-Type` is not sniffed: it is refused as
+  unsupported. Only the first member of a multi-member gzip body is read.
+- Text hidden only by CSS counts as visible text: the parser does not render pages.
+- Charsets are limited to the WHATWG label table; any other declared charset is ignored.
 - Basic relevance ranking (no BM25).
 - No incremental re-crawl; storage is duplicated across jobs.
 - Until Phase 6 adds `Idempotency-Key`, a client that retries job creation after a lost response
@@ -1150,3 +1189,4 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 | [0010](adr/0010-database-enforced-fencing.md) | Fencing is enforced by the database, not only by worker code |
 | [0011](adr/0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims |
 | [0012](adr/0012-approved-crawl-targets.md) | Approved crawl targets are host patterns, plus allowed schemes and ports |
+| [0013](adr/0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop |

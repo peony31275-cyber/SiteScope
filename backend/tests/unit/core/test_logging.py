@@ -127,3 +127,11 @@ def test_configured_logging_writes_json_to_stdout(capsys: pytest.CaptureFixture[
 
     line = capsys.readouterr().out.strip().splitlines()[-1]
     assert json.loads(line)["event"] == "unit.stdout"
+
+
+def test_http_client_loggers_never_log_request_urls() -> None:
+    """httpx2 logs full URLs at INFO and httpcore2 at DEBUG; query strings may hold tokens."""
+    configure_logging("DEBUG", service="api")
+
+    for name in ("httpx2", "httpcore2"):
+        assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING

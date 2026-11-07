@@ -25,6 +25,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
+from app.crawler.destinations import parse_internal_origin
 from app.crawler.scope import parse_host_pattern
 
 Environment = Literal["development", "test", "production"]
@@ -94,15 +95,44 @@ class Settings(BaseSettings):
     crawl_max_depth_limit: int = Field(default=5, ge=0, le=50)
     crawl_max_pages_limit: int = Field(default=1000, ge=1, le=100_000)
 
+    # --- Safe fetcher (app/crawler/fetcher.py) ---------------------------------------------------
+    # Seconds allowed for DNS resolution, the TCP connection and the TLS handshake.
+    fetch_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # Seconds allowed for each read or write of a request and its response.
+    fetch_read_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    # Seconds allowed for a whole fetch, redirects included (stops slow-drip responses).
+    fetch_deadline_seconds: float = Field(default=60.0, gt=0, le=600)
+    # The largest response body, after removing gzip or deflate. Larger bodies are rejected.
+    fetch_max_body_bytes: int = Field(default=2 * 1024 * 1024, ge=1024, le=10 * 1024 * 1024)
+    # Redirects followed per fetch; every target is validated again.
+    fetch_max_redirects: int = Field(default=5, ge=0, le=20)
+    # Exact origins (scheme://host[:port]) that may resolve to private addresses, such as the
+    # self-hosted demo site; outside production, also to loopback addresses (local fixture
+    # servers). Empty by default. Policy: app/crawler/destinations.py.
+    fetch_internal_origins: Annotated[tuple[str, ...], NoDecode] = ()
+
+    # --- HTML parsing (app/crawler/html_parser.py) -----------------------------------------------
+    # Distinct links kept per page, and characters of visible text kept per page.
+    parse_max_links: int = Field(default=1000, ge=1, le=100_000)
+    parse_max_text_chars: int = Field(default=1_000_000, ge=1000, le=1_000_000)
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
 
-    @field_validator("crawl_allowed_hosts", "crawl_allowed_ports", mode="before")
+    @field_validator(
+        "crawl_allowed_hosts", "crawl_allowed_ports", "fetch_internal_origins", mode="before"
+    )
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
         return _split_list(value)
+
+    @field_validator("fetch_internal_origins")
+    @classmethod
+    def _normalize_internal_origins(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        # Invalid entries raise ValueError, which fails startup.
+        return tuple(dict.fromkeys(str(parse_internal_origin(entry)) for entry in value))
 
     @field_validator("crawl_allowed_schemes", mode="before")
     @classmethod
@@ -130,6 +160,16 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "production does not allow development-only crawl targets"
                     " (localhost, .localhost names, IP addresses): " + ", ".join(local)
+                )
+            local_origins = [
+                entry
+                for entry in self.fetch_internal_origins
+                if parse_host_pattern(parse_internal_origin(entry).host).development_only
+            ]
+            if local_origins:
+                raise ValueError(
+                    "production does not allow development-only internal origins"
+                    " (localhost, .localhost names, IP addresses): " + ", ".join(local_origins)
                 )
         return self
 
