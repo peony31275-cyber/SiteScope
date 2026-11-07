@@ -88,6 +88,8 @@ explanations for the project owner in Chinese.
      changes only in a claim, by exactly one (triggers).
    - Workers must still send their own token. `SET result_epoch = lease_epoch`, copied from the
      column, passes every database rule and defeats fencing.
+   - The result transaction starts with the fenced update (`services/crawl_state.py`,
+     ADR-0014): zero rows means the lease was lost, so roll back and write nothing.
 5. **Level-synchronous BFS** (ADR-0004).
    - Only URLs at a job's `current_level` are dispatched.
    - Workers only record links. Only the scheduler admits the next level, under the job row lock.
@@ -108,7 +110,11 @@ explanations for the project owner in Chinese.
     - no automatic redirects (the fetcher validates and follows them itself);
     - timeouts plus an overall deadline;
     - a cap on decoded body size;
-    - robots.txt compliance and a per-host rate limit (Phase 4; not implemented yet).
+    - a per-host politeness gate on every hop of a crawl (`app/crawler/politeness.py`, Redis;
+      ADR-0015). Only the one-URL diagnostic `app.crawler.cli` fetches without it.
+
+    Every crawled URL is also checked against robots.txt first (`app/crawler/robots.py`, RFC
+    9309), and robots.txt itself is fetched through the safe fetcher.
 
     The API's crawl-scope check (`app/crawler/scope.py`, ADR-0012) is syntactic. It is not an SSRF
     defense on its own, and approved targets are empty by default. Never send a request to a crawl
@@ -127,8 +133,9 @@ explanations for the project owner in Chinese.
   - `api` handles HTTP only. `services` holds the use cases and owns transactions. `db` holds models and
     sessions.
   - `scheduler` and `workers` may use `services`, `queue`, `crawler`, and `indexing`, but never `api`.
-  - `crawler` has no database imports, and `queue` has no domain logic. `services` and
-    `core.config` may use the pure functions of `crawler` (URL normalization, scope).
+  - `crawler` has no database imports (it uses Redis only for politeness and the robots.txt
+    cache), and `queue` has no domain logic. `services` and `core.config` may use the pure
+    functions of `crawler` (URL normalization, scope).
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
   fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
   when measurements show a need. HTML parsing is such work: call `parse_html` with
@@ -201,6 +208,7 @@ explanations for the project owner in Chinese.
   | Apply migrations | `.\.venv\Scripts\python.exe -m alembic upgrade head` |
   | Run the API | `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload` |
   | Tests | `.\.venv\Scripts\python.exe -m pytest --require-services` |
+  | Run one crawl job in-process | `.\.venv\Scripts\python.exe -m app.workers.local_crawler <job-id>` |
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
   | Type check | `.\.venv\Scripts\python.exe -m mypy` |
@@ -211,9 +219,9 @@ explanations for the project owner in Chinese.
 
 ```
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
-  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-3: URLs,
-                  scope, safe fetcher, HTML parser);
-                  queue/ scheduler/ indexing/ workers/ (later)
+  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-4: URLs,
+                  scope, safe fetcher, HTML parser, robots.txt, politeness); workers/ (Phase 4:
+                  crawl task, single-process driver); queue/ scheduler/ indexing/ (later)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (later)

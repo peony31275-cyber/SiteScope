@@ -2,7 +2,8 @@
 
 - Status: Accepted. Extended by [ADR-0012](0012-approved-crawl-targets.md) (the format and
   matching rules of the allowlist) and [ADR-0013](0013-safe-fetcher-pinned-connections.md) (how
-  the safe fetcher implements these defenses).
+  the safe fetcher implements these defenses), and by
+  [ADR-0015](0015-robots-txt-and-per-host-politeness.md) (robots.txt and per-host politeness).
 - Date: 2026-11-06
 
 ## Context

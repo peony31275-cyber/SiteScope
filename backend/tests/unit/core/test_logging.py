@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.core.logging import JsonFormatter, configure_logging, request_id_var
+from app.core.logging import JsonFormatter, configure_logging, request_id_var, task_context_var
 
 
 @pytest.fixture
@@ -135,3 +135,15 @@ def test_http_client_loggers_never_log_request_urls() -> None:
 
     for name in ("httpx2", "httpcore2"):
         assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING
+
+
+def test_includes_task_context_and_lets_extras_win() -> None:
+    token = task_context_var.set({"job_id": "j-1", "url_id": "u-1", "lease_epoch": 3})
+    try:
+        payload = format_record(make_record(url_id="explicit"))
+    finally:
+        task_context_var.reset(token)
+
+    assert (payload["job_id"], payload["lease_epoch"]) == ("j-1", 3)
+    assert payload["url_id"] == "explicit"
+    assert "job_id" not in format_record(make_record())

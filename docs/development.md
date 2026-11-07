@@ -7,6 +7,8 @@ These are the development commands for the Windows 10 development machine:
 - The database and Compose commands were run in Phase 2B.
 - The crawl job commands were run in Phase 2C.
 - The safe fetcher commands were run in Phase 3.
+- The crawl commands were run in Phase 4, against a separate database (see
+  [Crawling](#crawling-phase-4)).
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
@@ -423,8 +425,8 @@ variables for one PowerShell session (as in [Crawl jobs](#crawl-jobs)).
 ## Safe fetcher and HTML parser
 
 `app/crawler/fetcher.py` fetches approved URLs over connections pinned to validated addresses.
-`app/crawler/html_parser.py` extracts the title, text, links and metadata. Nothing in the API
-calls them yet: the crawl logic arrives in Phase 4. The design is in
+`app/crawler/html_parser.py` extracts the title, text, links and metadata. The crawl driver
+([Crawling](#crawling-phase-4)) uses both. The design is in
 [architecture.md](architecture.md) (sections 8 and 12) and
 [ADR-0013](adr/0013-safe-fetcher-pinned-connections.md).
 
@@ -477,6 +479,87 @@ The exit status is 0 for a successful fetch and 1 for a failure. Failures report
 `failure` kind (for example `blocked_destination`, `tls_error`, `too_large`) and whether a retry
 could succeed.
 
+`app.crawler.cli` is a diagnostic for one URL: it neither reads robots.txt nor waits for a
+politeness slot. Crawls go through the crawl driver below, which does both.
+
+## Crawling (Phase 4)
+
+`app/workers/local_crawler.py` runs one crawl job to completion in a single process: level by
+level, with claims, fenced results, robots.txt and per-host politeness. It is a development and
+test tool; the distributed scheduler and workers arrive in Phase 5. It needs PostgreSQL and Redis.
+The design is in [architecture.md](architecture.md) (sections 8, 9 and 12.4-12.5),
+[ADR-0014](adr/0014-crawl-state-transactions-and-redirects.md) and
+[ADR-0015](adr/0015-robots-txt-and-per-host-politeness.md).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_CRAWLER_NAME` | `SiteScopeBot` | sent as `SiteScopeBot/<version>` in User-Agent; matched against robots.txt and `<meta name="...">` |
+| `SITESCOPE_CRAWL_CONCURRENCY` | `4` | URLs the driver processes at once |
+| `SITESCOPE_CRAWL_LEASE_SECONDS` | `90` | lease of a claimed URL (database clock); at least the fetch deadline + 10 |
+| `SITESCOPE_CRAWL_MAX_ATTEMPTS` | `3` | claims of one URL before it fails as `max_attempts_exceeded` |
+| `SITESCOPE_POLITENESS_INTERVAL_SECONDS` | `1` | minimum time between request starts to one host, across processes |
+| `SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST` | `1` | requests in flight to one host |
+| `SITESCOPE_POLITENESS_MAX_WAIT_SECONDS` | `30` | the longest wait for a slot before `rate_limited` |
+| `SITESCOPE_ROBOTS_CACHE_SECONDS` / `_RETRY_SECONDS` | `86400` / `300` | robots.txt cache time; cache time of an unreachable robots.txt |
+| `SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS` | `10` | cap on a robots.txt `Crawl-delay` |
+| `SITESCOPE_REDIS_KEY_PREFIX` | `sitescope` | prefix of every Redis key |
+
+**Crawl the demo site.** The commands below use a separate database, `sitescope_manual`, so
+that the development database and its jobs are untouched; drop the variable to use the
+development database. In one window, serve the demo site (from the repository root):
+
+```powershell
+Set-Location C:\Users\24419\Desktop\SITESCOPE
+backend\.venv\Scripts\python.exe -m http.server 8080 --bind 127.0.0.1 --directory demo-site
+```
+
+In a second window, from `backend\`, prepare the database and approve the demo site:
+
+```powershell
+wsl docker compose exec postgres createdb -U sitescope sitescope_manual
+$env:SITESCOPE_POSTGRES_DB = "sitescope_manual"
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "127.0.0.1"
+$env:SITESCOPE_CRAWL_ALLOWED_PORTS = "8080"
+$env:SITESCOPE_FETCH_INTERNAL_ORIGINS = "http://127.0.0.1:8080"
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+Start the API in that window (`.\.venv\Scripts\python.exe -m uvicorn app.main:app`), and
+create a job from a third window:
+
+```powershell
+$body = @{ seed_url = "http://127.0.0.1:8080/"; max_depth = 3; max_pages = 50 } | ConvertTo-Json
+$job = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/crawls -ContentType "application/json" -Body $body
+```
+
+Then run the job, in a window with the same environment variables as the API:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.workers.local_crawler $job.id
+```
+
+It logs one JSON line per URL and prints a summary; the exit status is 0 if the job completed,
+1 if it failed, and 2 if the job does not exist. With the default politeness settings (one
+request per second) the demo site, 14 requests including robots.txt, took about 16 s in the
+Phase 4 check. `GET /api/v1/crawls/{id}` shows the
+same progress from PostgreSQL. Expected result: 14 URLs; 12 stored pages; `/private/notes.html`
+skipped by robots.txt; `/missing.html` a 404; `/docs/legacy.html` never reached.
+
+The driver runs exactly the job it is given, and activates it if it is still `queued`: do not
+pass the ID of a job you do not mean to crawl. If it stops (Ctrl+C, or a PostgreSQL or Redis
+error), run it again: URLs it had claimed are taken over once their leases expire (90 s by
+default), and nothing is crawled twice except the URLs that were in flight.
+
+Remove the separate database afterwards with
+`wsl docker compose exec postgres dropdb -U sitescope --force sitescope_manual`.
+
+**Redis keys.** Politeness state is under `sitescope:rate:{<host>}:*` and robots.txt results under
+`sitescope:robots:<crawler name>:<origin>`; every key expires. To look at them:
+
+```powershell
+wsl docker compose exec redis redis-cli -a "<password from backend/.env>" --no-auth-warning --scan --pattern "sitescope:*"
+```
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to
@@ -484,7 +567,7 @@ keep. Run the commands from `backend\`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head      # apply all pending migrations
-.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0002 (head)"
+.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0003 (head)"
 .\.venv\Scripts\python.exe -m alembic history           # the migration chain
 .\.venv\Scripts\python.exe -m alembic upgrade head --sql    # print the SQL without connecting
 ```
@@ -494,7 +577,7 @@ To change the schema:
 1. **Update the models.** Change `app/db/models.py`.
 2. **Generate a draft.** It needs a database at head:
    ```powershell
-   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0003
+   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0004
    ```
 3. **Review and complete the draft.**
    - Autogenerate handles tables, columns, indexes, foreign keys and unique constraints.
@@ -544,12 +627,18 @@ PostgreSQL and Redis containers. They never touch the development data:
   (`sitescope_test`), migrate it with Alembic (not `create_all`), and drop it at the end. Every
   test truncates the tables afterwards.
 - **Migration tests.** These use a second disposable database, `sitescope_test_migrations`.
-- **Redis.** Redis tests use logical database 15 and namespaced keys.
+- **Redis.** Redis tests use logical database 15 and namespaced keys. Phase 4 tests give each
+  test its own key prefix (`test-<random>`) and delete its keys afterwards.
 - **Fetcher tests** (`tests/integration/test_fetcher.py`) start their own HTTP and TLS
   servers on 127.0.0.1, with a throwaway certificate authority from `trustme`. They need
   neither the containers nor the internet, and run even when the services are down.
 - **Crawl job tests** set their own approved hosts and limits, so they do not depend on the
   crawl settings in `backend\.env`.
+- **Crawl tests** (Phase 4): `test_crawl_state.py` runs the claim, result and level-advancement
+  transactions, several of them concurrently; `test_politeness_redis.py` and
+  `test_robots_policy.py` use real Redis; `test_local_crawler.py` crawls fixture sites and the
+  demo site served on 127.0.0.1 (one test uses the standard library's static file server and
+  the driver's command line). None of them contacts the internet.
 
 To run them, make sure:
 

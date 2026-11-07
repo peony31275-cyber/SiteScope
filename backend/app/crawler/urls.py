@@ -199,6 +199,25 @@ def resolve_reference(base: str, reference: str) -> str:
     return resolved if query is None else f"{resolved}?{query}"
 
 
+def request_target(url: NormalizedUrl) -> str:
+    """The path and query of a normalized URL: the HTTP request target, e.g. ``/a/b?q=1``."""
+    default = DEFAULT_PORTS[url.scheme]
+    authority = url.host if url.port == default else f"{url.host}:{url.port}"
+    return url.url[len(f"{url.scheme}://{authority}") :]
+
+
+def normalize_target_text(text: str) -> str:
+    """Give a path-and-query text the percent-encoding that ``normalize_url`` produces.
+
+    Encoded unreserved characters are decoded, other percent-encodings get uppercase hex
+    digits, and characters a URL cannot contain literally are percent-encoded as UTF-8. Unlike
+    ``normalize_url`` this never fails: a ``%`` that does not start a valid percent-encoding is
+    encoded as ``%25``. robots.txt path patterns are compared with normalized URLs in this form
+    (RFC 9309, section 2.2.2).
+    """
+    return _normalize_percent_encoding(text, _QUERY_CHARS, strict=False)
+
+
 def scheme_of(reference: str) -> str | None:
     """The lowercase scheme of a URI reference, or None if the reference is relative."""
     match = _URI_REFERENCE.fullmatch(reference.strip(_STRIPPED))
@@ -320,8 +339,14 @@ def _is_ipv4(name: str) -> bool:
     return True
 
 
-def _normalize_percent_encoding(component: str, allowed: frozenset[str]) -> str:
-    """Decode encoded unreserved characters, uppercase the others, encode disallowed ones."""
+def _normalize_percent_encoding(
+    component: str, allowed: frozenset[str], *, strict: bool = True
+) -> str:
+    """Decode encoded unreserved characters, uppercase the others, encode disallowed ones.
+
+    A ``%`` that does not start a percent-encoding raises ``InvalidUrlError`` when ``strict``,
+    and is encoded as ``%25`` otherwise.
+    """
     parts: list[str] = []
     index, length = 0, len(component)
     while index < length:
@@ -329,9 +354,13 @@ def _normalize_percent_encoding(component: str, allowed: frozenset[str]) -> str:
         if char == "%":
             digits = component[index + 1 : index + 3]
             if len(digits) != 2 or not _HEX_DIGITS.issuperset(digits):
-                raise InvalidUrlError(
-                    "URL contains a '%' that does not start a percent-encoding such as %20"
-                )
+                if strict:
+                    raise InvalidUrlError(
+                        "URL contains a '%' that does not start a percent-encoding such as %20"
+                    )
+                parts.append("%25")
+                index += 1
+                continue
             decoded = chr(int(digits, 16))
             parts.append(decoded if decoded in _UNRESERVED else "%" + digits.upper())
             index += 3

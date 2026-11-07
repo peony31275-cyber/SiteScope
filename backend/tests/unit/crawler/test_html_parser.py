@@ -257,3 +257,14 @@ def test_parse_limits_from_settings() -> None:
     limits = ParseLimits.from_settings(settings)
 
     assert (limits.max_input_bytes, limits.max_links, limits.max_text_chars) == (4096, 7, 2000)
+
+
+def test_meta_robots_for_the_crawler_by_name() -> None:
+    html = (
+        '<meta name="robots" content="noarchive">'
+        '<meta name="SiteScopeBot" content="NoIndex">'
+        '<meta name="otherbot" content="nofollow">'
+    )
+    assert parse(html).robots == frozenset({"noarchive"})
+    named = parse_html(html.encode(), url=DOCUMENT, crawler_name="sitescopebot")
+    assert named.robots == frozenset({"noarchive", "noindex"})

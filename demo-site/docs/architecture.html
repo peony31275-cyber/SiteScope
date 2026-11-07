@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Architecture of a polite crawler</title>
+  <meta name="description" content="Level-synchronous breadth-first search, leases and fencing.">
+</head>
+<body>
+  <h1>Architecture of a polite crawler</h1>
+  <h2>Breadth-first, one level at a time</h2>
+  <p>The crawler finishes every page of one depth before it admits the next depth, so each page
+  gets its shortest distance from the seed, whatever the number of workers.</p>
+  <h2>Leases and fencing tokens</h2>
+  <p>A worker claims a URL with a lease. If the lease expires, another worker can take the URL
+  over with a new fencing token, and the late result of the first worker is rejected.</p>
+  <h2>Politeness</h2>
+  <p>Requests to one host are spaced out, and robots.txt is obeyed. See the
+  <a href="/docs/glossary.html">glossary</a> and the blog post on
+  <a href="/blog/crawling-politely.html">crawling politely</a>.</p>
+</body>
+</html>

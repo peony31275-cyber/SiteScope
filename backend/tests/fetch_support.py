@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import ipaddress
 import ssl
+import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import TracebackType
@@ -18,7 +19,7 @@ from typing import Any, Self
 import httpcore2
 
 from app.crawler.destinations import DestinationPolicy, IPAddress, Origin
-from app.crawler.fetcher import FetchConfig, SafeFetcher
+from app.crawler.fetcher import FetchConfig, RequestGate, SafeFetcher
 from app.crawler.resolver import ResolutionError
 from app.crawler.scope import CrawlTargetPolicy
 
@@ -120,6 +121,7 @@ class ReceivedRequest:
     headers: dict[str, str]  # lowercase names
     peer: str  # the client's IP address
     sni: str | None  # the TLS server name the client sent, if TLS
+    received_at: float = 0.0  # time.monotonic() when the request head arrived
 
 
 class LocalHttpServer:
@@ -201,6 +203,7 @@ class LocalHttpServer:
                 headers=headers,
                 peer=writer.get_extra_info("peername")[0],
                 sni=self._sni.get(id(ssl_object)) if ssl_object is not None else None,
+                received_at=time.monotonic(),
             )
         )
         reply = self.routes.get(target.split("?")[0], Reply(status=404, reason="Not Found"))
@@ -234,11 +237,13 @@ def make_fetcher(
     schemes: Sequence[str] = ("http", "https"),
     backend: httpcore2.AsyncNetworkBackend | None = None,
     tls_context: ssl.SSLContext | None = None,
+    gate: RequestGate | None = None,
     **config: Any,
 ) -> SafeFetcher:
     """A fetcher for local test servers: approved ``hosts`` on ``port``, short timeouts.
 
     Hosts in ``internal`` are internal origins (for both schemes) and may resolve to loopback.
+    ``gate`` admits each request hop (politeness), as in production.
     """
     settings: dict[str, Any] = {"connect_timeout": 2.0, "read_timeout": 2.0, "deadline": 10.0}
     settings.update(config)
@@ -254,4 +259,5 @@ def make_fetcher(
         resolver=resolver,
         network_backend=backend,
         tls_context=tls_context,
+        gate=gate,
     )

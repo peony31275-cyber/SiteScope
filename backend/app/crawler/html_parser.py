@@ -3,7 +3,9 @@
 ``parse_html`` turns the bytes of an HTML document into a ``ParsedPage``:
 
 * metadata: the title, the meta description, the canonical URL, the document language, and the
-  meta robots directives (reported, not enforced: obeying them is the crawler's decision);
+  meta robots directives of ``<meta name="robots">`` and, if a ``crawler_name`` is given, of
+  ``<meta name="<crawler_name>">`` (reported, not enforced: obeying them is the crawler's
+  decision, ``app.crawler.directives``);
 * the headings (h1-h6) and the visible text. Titles, scripts, styles, templates and elements
   with the ``hidden`` attribute are excluded, and whitespace is collapsed. The ``<head>`` element
   itself is not removed: its end tag is optional in HTML, and Python's parser then nests the
@@ -99,7 +101,8 @@ class ParsedPage:
     links: tuple[ExtractedLink, ...]
     canonical_url: str | None
     language: str | None
-    robots: frozenset[str]  # lowercase meta robots directives, e.g. {"noindex", "nofollow"}
+    # Lowercase meta robots directives that apply to this crawler, e.g. {"noindex", "nofollow"}.
+    robots: frozenset[str]
     encoding: str
     encoding_source: EncodingSource
     encoding_errors: bool  # some bytes were invalid in the encoding
@@ -121,11 +124,14 @@ def parse_html(
     url: str,
     declared_charset: str | None = None,
     limits: ParseLimits | None = None,
+    crawler_name: str | None = None,
 ) -> ParsedPage:
     """Parse an HTML document fetched from ``url`` (its final URL, after redirects).
 
     ``declared_charset`` is the charset parameter of the response's Content-Type, if any.
-    Raises ``InvalidUrlError`` only if ``url`` itself is not a valid http(s) URL.
+    ``crawler_name`` also reads ``<meta name="<crawler_name>">`` robots directives (matched
+    case-insensitively). Raises ``InvalidUrlError`` only if ``url`` itself is not a valid
+    http(s) URL.
     """
     limits = limits if limits is not None else ParseLimits()
     document_url = normalize_url(url).url
@@ -149,7 +155,8 @@ def parse_html(
     description = _meta_content(soup, "description", limits.max_description_chars)
     canonical_url = _canonical_url(soup, base_url)
     language = _language(soup)
-    robots = _robots(soup)
+    robot_names = {"robots"} if crawler_name is None else {"robots", crawler_name.lower()}
+    robots = _robots(soup, robot_names)
 
     # Removing elements changes the tree, so the visible text is extracted last.
     _remove(soup.find_all(NON_VISIBLE_TAGS))
@@ -254,10 +261,10 @@ def _language(soup: BeautifulSoup) -> str | None:
     return _collapse(language or "")[:35] or None  # BCP 47 tags are short
 
 
-def _robots(soup: BeautifulSoup) -> frozenset[str]:
+def _robots(soup: BeautifulSoup, names: set[str]) -> frozenset[str]:
     directives: set[str] = set()
     for meta in _tags(soup.find_all("meta")):
-        if (_attribute(meta, "name") or "").strip().lower() == "robots":
+        if (_attribute(meta, "name") or "").strip().lower() in names:
             content = _attribute(meta, "content") or ""
             directives.update(part.strip().lower() for part in content.split(",") if part.strip())
     return frozenset(directives)

@@ -385,3 +385,83 @@ def test_production_accepts_named_internal_origins(monkeypatch: pytest.MonkeyPat
     )
 
     assert settings.fetch_internal_origins == ("http://demo-site:8080",)
+
+
+# --- Crawling and politeness (Phase 4) ---------------------------------------------------------
+
+
+def test_crawl_and_politeness_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.crawler_name == "SiteScopeBot"
+    assert (settings.crawl_concurrency, settings.crawl_max_attempts) == (4, 3)
+    assert settings.crawl_lease_seconds == 90
+    assert (settings.politeness_interval_seconds, settings.politeness_max_wait_seconds) == (1, 30)
+    assert settings.politeness_max_concurrent_per_host == 1
+    assert (settings.robots_cache_seconds, settings.robots_retry_seconds) == (86_400, 300)
+    assert settings.robots_max_crawl_delay_seconds == 10
+    assert settings.redis_key_prefix == "sitescope"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_CRAWLER_NAME", "SiteScope Bot"),  # RFC 9309 product token characters only
+        ("SITESCOPE_CRAWLER_NAME", "SiteScopeBot/1.0"),
+        ("SITESCOPE_CRAWLER_NAME", ""),
+        ("SITESCOPE_CRAWL_CONCURRENCY", "0"),
+        ("SITESCOPE_CRAWL_MAX_ATTEMPTS", "0"),
+        ("SITESCOPE_POLITENESS_INTERVAL_SECONDS", "-1"),
+        ("SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST", "0"),
+        ("SITESCOPE_POLITENESS_MAX_WAIT_SECONDS", "0"),
+        ("SITESCOPE_ROBOTS_CACHE_SECONDS", "86401"),  # RFC 9309: at most 24 hours
+        ("SITESCOPE_ROBOTS_CACHE_SECONDS", "59"),
+        ("SITESCOPE_ROBOTS_RETRY_SECONDS", "9"),
+        ("SITESCOPE_REDIS_KEY_PREFIX", "Upper"),
+        ("SITESCOPE_REDIS_KEY_PREFIX", "a:b"),
+    ],
+)
+def test_rejects_invalid_crawl_and_politeness_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (
+            {"SITESCOPE_FETCH_DEADLINE_SECONDS": "60", "SITESCOPE_CRAWL_LEASE_SECONDS": "69"},
+            "SITESCOPE_CRAWL_LEASE_SECONDS must be at least",
+        ),
+        (
+            {"SITESCOPE_POLITENESS_INTERVAL_SECONDS": "31"},
+            "SITESCOPE_POLITENESS_INTERVAL_SECONDS must not exceed",
+        ),
+        (
+            {"SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS": "31"},
+            "SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS must not exceed",
+        ),
+    ],
+)
+def test_rejects_inconsistent_crawl_timing(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, str], message: str
+) -> None:
+    """The task deadline ends before the lease (ADR-0003); waits fit the politeness limit."""
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(_env_file=None)
+
+
+def test_accepts_a_lease_exactly_ten_seconds_longer_than_the_fetch_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITESCOPE_FETCH_DEADLINE_SECONDS", "30")
+    monkeypatch.setenv("SITESCOPE_CRAWL_LEASE_SECONDS", "40")
+
+    assert Settings(_env_file=None).crawl_lease_seconds == 40

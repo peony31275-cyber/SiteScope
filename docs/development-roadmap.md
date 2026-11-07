@@ -14,7 +14,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 2B | PostgreSQL, Redis, and database infrastructure | **Done** (2026-11-06) |
 | 2C | Crawl job API, URL normalization, and transactional job creation | **Done** (2026-11-06) |
 | 3 | Safe HTTP fetching and HTML parsing | **Done** (2026-11-06) |
-| 4 | BFS crawling and persistence | Not started |
+| 4 | BFS crawling, persistence and politeness | **Done** (2026-11-06) |
 | 5 | Distributed scheduling and workers | Not started |
 | 6 | Fault tolerance and recovery | Not started |
 | 7 | Asynchronous search indexing | Not started |
@@ -38,20 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 3
+## Repository state after Phase 4
 
 Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3). |
-| `backend/alembic/` | Migrations `0001` (the six-table schema) and `0002` (fencing tokens issued only by claims). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4). |
+| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims) and `0003` (robots directive flags). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 848 tests: 679 unit, 169 integration (real PostgreSQL and Redis, and local HTTP/TLS servers on 127.0.0.1). |
+| `backend/tests/` | 1204 tests: 933 unit, 271 integration (real PostgreSQL and Redis, and local HTTP/TLS servers on 127.0.0.1). |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0013, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0015, API conventions, development guide. |
+| `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -507,39 +508,131 @@ distributed machinery exists. No BFS, persistence, Redis, workers or retries.
 
   The fetcher already provides what robots.txt needs: a validated fetch that follows redirects.
 
-### Phase 4: BFS crawling and persistence
+### Phase 4: BFS crawling, persistence and politeness (done)
 
 **Goal.** Crawl a site breadth-first and persist pages and links with the architecture's
-correctness rules, in one process, before the work is distributed.
+correctness rules, in one process, before the work is distributed; obey robots.txt and limit the
+request rate per host across processes.
 
-**Scope**
+**Delivered** (design in ADR-0014 and ADR-0015)
 
-- Service-layer use cases that the Phase 5 workers and scheduler will share:
-  - claim (compare-and-set plus `lease_epoch`) and the fenced result commit: page, links,
-    `search_documents` row, URL outcome. Start from the statements in
-    `tests/integration/test_leases.py`, within the ADR-0011 rules;
-  - same-level redirect admission under the job row lock;
-  - level advancement and job completion (ADR-0004), with the exact page budget;
-  - lifecycle records in `crawl_events`.
-- A single-process crawl driver, without Redis, that runs these use cases against the Phase 3
-  fetcher and parser. It is used for development and tests.
-- Politeness, moved from Phase 3:
-  - robots.txt (RFC 9309) with a compliant parser, fetched through the safe fetcher and cached in
-    Redis;
-  - a per-host rate limit (GCRA in a Redis Lua script, based on Redis time);
-  - meta robots and `X-Robots-Tag` acted on (the parser and fetcher already report them).
-- Redirect handling: choose between the fetcher's "follow" mode and the same-level admission of
-  architecture section 8.5 ("return" mode).
-- The first demo-site content, with its own robots.txt.
+- **Crawl state** (`backend/app/services/crawl_state.py`): the use cases that the Phase 5
+  scheduler and workers will share, each one short transaction:
+  - `activate_job` (T2) and `dispatch_urls` (T3: `FOR UPDATE SKIP LOCKED`, current level only,
+    no stream yet);
+  - `claim_url` (T4): compare-and-set with a new fencing token and an attempt limit; a takeover
+    of an expired lease is recorded as `url.recovered`;
+  - `record_result` (T5): the fenced update comes first, bound to the worker's own token; then
+    the page, its links, its `search_documents` row (not for `noindex`) and same-level redirect
+    admission under the job row lock. Zero rows from the fenced update: roll back, `FENCED`;
+  - `advance_job` (T6): the next level in BFS order (source URL, link position), up to the
+    remaining budget, or `completed` / `failed`;
+  - `recover_exhausted_url`: a recovery claim (new token) records `max_attempts_exceeded`;
+  - lifecycle events in `crawl_events`.
+- **Crawl task** (`backend/app/workers/crawl_task.py`): scope, robots.txt, one request with
+  redirects returned (`max_redirects=0`), parsing in a thread, page directives, links with their
+  job-scope flag, and a terminal outcome for every result.
+- **Single-process driver** (`backend/app/workers/local_crawler.py`) and its command,
+  `python -m app.workers.local_crawler <job-id>`: bounded concurrency, a task deadline 10 s
+  inside the lease, and pickup of `queued` URLs and expired leases left by a stopped run.
+- **robots.txt** (`backend/app/crawler/robots.py`): an RFC 9309 parser and matcher of our own
+  (no regular expressions), fetched through the safe fetcher with the new `ROBOTS_TXT` content
+  policy; status mapping; a Redis cache (24 h, 300 s when unreachable), memory and single flight.
+- **Politeness** (`backend/app/crawler/politeness.py`): a request gate on every fetch hop; one
+  Redis Lua script grants slots first come, first served, with spacing between request starts
+  and a cap on requests in flight; crawl delays; `rate_limited` after the maximum wait.
+- **Page directives** (`backend/app/crawler/directives.py`): meta robots (also
+  `<meta name="<crawler name>">`) and `X-Robots-Tag` per header, with user-agent scoping;
+  `noindex`, `nofollow`, `none`.
+- **Fetcher:** `ContentPolicy` (`HTML_PAGE`, unchanged and the default; `ROBOTS_TXT`),
+  `FetchResult.truncated` and `robots_tags`, the `RequestGate` hook, the retryable
+  `FailureKind.RATE_LIMITED`, and the User-Agent from `SITESCOPE_CRAWLER_NAME`.
+- **Schema:** migration `0003` adds `pages.robots_noindex`, `pages.robots_nofollow` and
+  `page_links.nofollow` (constant defaults, no table rewrite). The development database was
+  upgraded; its three queued jobs were left untouched (checked before and after).
+- **Settings:** `SITESCOPE_CRAWLER_NAME`, `SITESCOPE_CRAWL_CONCURRENCY`,
+  `SITESCOPE_CRAWL_LEASE_SECONDS`, `SITESCOPE_CRAWL_MAX_ATTEMPTS`, `SITESCOPE_POLITENESS_*`,
+  `SITESCOPE_ROBOTS_*` and `SITESCOPE_REDIS_KEY_PREFIX`, with startup checks of the timing
+  order (lease at least the fetch deadline + 10 s; interval and crawl-delay cap within the
+  maximum wait).
+- **Logging:** a task context variable adds `job_id`, `url_id`, `worker_id` and `lease_epoch` to
+  every log line of a task, the fetcher's included.
+- **Demo site** (`demo-site/`): 14 static HTML pages and a robots.txt, crawled exactly by a test.
+- **Dependencies:** none added.
 
-**Tests**
+**Verification** (2026-11-06; Windows 10, Python 3.13.7, PostgreSQL 18.6 and Redis 8.10.3 in WSL)
 
-- Crawls of synthetic graphs with cycles, diamonds, and shortcuts to deep nodes: exact URL sets
-  and depths, the budget prefix, redirects.
-- robots.txt semantics and the rate limiter.
-- The correctness invariants of architecture section 11.
+- `pytest --require-services`: 1204 passed (933 unit, 271 integration), in three consecutive
+  full runs after the last change. Phase 4 added 356 tests (254 unit, 102 integration).
+  Among them:
+  - crawl state on PostgreSQL (38): claims and takeovers; fencing, including a forged token, a
+    stale worker after a takeover, and a capture of the SQL showing that both the fencing
+    condition and `result_epoch` are bound to the worker's token; rollback of a failing result;
+    redirect admission; budget and deduplication with eight concurrent transactions; level
+    advancement in BFS order, concurrently too; recovery of exhausted leases;
+  - local crawls (14): fixture graphs with cycles, a diamond and a shortcut, robots rules, a
+    redirect, directives and failures, the budget prefix with 1 and 4 tasks, 1 vs 6 tasks,
+    redirect chains and loops, a crashed worker's lease taken over (and its late result
+    fenced), politeness spacing measured at the server, the demo site, and the command line
+    against the standard library's static file server. The section 11 invariants are checked
+    after every crawl;
+  - robots.txt: the RFC 9309 examples and rules (unit), and the policy against local servers
+    and Redis (status codes, redirects, truncation, blocked addresses, single flight, caching);
+  - politeness: the gate in fake and virtual time (27 unit tests), and the Lua scripts on
+    Redis (13), fairness and clock steps included.
+- `ruff check` and `ruff format --check`: clean. `mypy` strict (91 files): no issues.
+- The Phase 2C and Phase 3 suites still pass, the fetcher's security tests included (66).
+- Manual checks, on a separate database (`sitescope_manual`, dropped afterwards) and Redis
+  database 15 with its own key prefix:
+  - a demo-site job created through the API and run with the command line, with the default
+    politeness settings: exit status 0, 14 URLs (12 stored pages, a 404, one URL skipped by
+    robots.txt), 14 GET requests at the demo server (13 pages and robots.txt once, never the
+    disallowed or nofollow-only pages), 16.6 s, run again after the review fixes;
+  - the API reports the same progress from PostgreSQL;
+  - read-only API checks against the development database after its upgrade to `0003`.
 
-**Done when.** Single-process crawls of the fixture graphs match the expected results exactly.
+**Review findings and fixes.** An independent review (a separate agent, without my
+conclusions) and my own review found:
+
+- **Politeness starvation (medium).** Slots were reserved for future starts, so a task that had
+  just released one re-reserved before the waiters woke up. Measured on Redis with the defaults:
+  four tasks got 71, 1, 1 and 1 grants in 70 s, and the waiters failed as `rate_limited`, which
+  loses URLs. Replaced by a first-come-first-served queue (ADR-0015). A copy of the old
+  algorithm reproduces the measurement in virtual time; the regression tests pass on the new
+  one (virtual time and real Redis).
+- **Deadlock in same-level redirect admission.** Admitting a target that another task was
+  recording waited for that task's transaction while holding the job lock. Fixed with a plain
+  check before the insert (ADR-0014); a test reproduces the wait, and fails without the fix.
+- **Truncated robots.txt.** The cut last line was parsed and could change meaning (`Allow: /`).
+  It is now dropped; a test cuts a line exactly at 500 KiB.
+- **`advance_job` and a reused session** read a stale ORM copy of the job; it now reads plain
+  columns under the lock.
+- **Clock steps (found by an intermittent full-suite failure).** The WSL 2 VM clock, shared by
+  PostgreSQL and Redis, stepped back about one second during a test run: a finished job violated
+  `ck_crawl_jobs_timestamps_ordered` (`finished_at` before `created_at`), and a politeness waiter
+  was told to wait for the step as well as the interval. Job timestamps are now clamped to
+  `created_at`, and the politeness script records a last start in the future as "now" and keeps
+  the queue's arrival order. Tests simulate both steps; a first version of the politeness fix
+  waited one interval forever, and its test caught that.
+- **`X-Robots-Tag` with an `unavailable_after` date:** its commas turned off the following
+  directives; a prefix is now a user agent only if it is a product token.
+- **Smaller fixes:** the slot or queue place is released even if the caller is cancelled
+  mid-acquisition; the crawl delay is written before robots.txt is cached, and a host keeps the
+  largest delay of its origins; rule sets above 1,000 rules are matched in a worker thread
+  (measured: about 20 ms per check for a hostile 500 KiB file); a truncating body reader no longer
+  rejects the chunk that crosses both limits (found by a test); the driver no longer counts
+  recoveries as started tasks; the command line reports an unknown job with exit status 2.
+
+**Known limitations (until later phases)**
+
+- Retryable failures (timeouts, connection errors, HTTP 429 and 5xx, `rate_limited`) are
+  terminal; Phase 6 adds durable retries.
+- An unreachable robots.txt disallows its origin for 300 s, and again after each failed retry.
+- A task may need two slow fetches (robots.txt, then the page) and end as `deadline_exceeded`.
+- Politeness is per host name, not per IP address.
+- The driver stops on a PostgreSQL or Redis error; the next run continues once the stopped run's
+  leases expire.
+- Separate processes may each fetch an expired robots.txt once.
 
 ### Phase 5: Distributed scheduling and workers
 
@@ -574,6 +667,17 @@ Streams, and workers claim and process it.
 - Repeated runs, to shake out races.
 
 **Done when.** All invariant tests pass across repeated runs.
+
+**Notes from Phase 4**
+
+- Reuse `services.crawl_state` as is: `dispatch_urls` gains the `XADD` and `stream_entry_id`
+  inside its transaction; workers call `claim_url`, `crawl_task.crawl_url` and `record_result`,
+  and must not `XACK` a `FENCED` result (architecture section 10.3).
+- The scheduler calls `advance_job` per running job; it is safe to call concurrently.
+- Build the fetcher, gate and robots policy with `build_fetcher(settings, gate=build_gate(...))`
+  and `build_robots_policy(...)`, one set per process. Consumer names: `worker_name()`.
+- The fixture graphs and expected results in `tests/integration/test_local_crawler.py` are the
+  reference for the 1-worker vs N-worker tests across processes.
 
 ### Phase 6: Fault tolerance and recovery
 

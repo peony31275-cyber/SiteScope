@@ -7,9 +7,13 @@ import pytest
 
 from app.crawler.content import (
     DECODE_SLICE,
+    HTML_PAGE,
+    ROBOTS_TXT,
+    ROBOTS_TXT_MAX_BYTES,
     BodyReader,
     BodyTooLargeError,
     ContentDecodingError,
+    max_wire_bytes,
     parse_content_coding,
     parse_media_type,
 )
@@ -137,3 +141,73 @@ def test_corrupt_or_incomplete_coded_data_is_an_error(
 ) -> None:
     with pytest.raises(ContentDecodingError, match=message):
         read(coding, data)
+
+
+# --- Content policies (Phase 4) -----------------------------------------------------------------
+
+
+def test_the_html_policy_is_the_phase_3_rule_set() -> None:
+    assert HTML_PAGE.media_types == frozenset({"text/html", "application/xhtml+xml"})
+    assert (HTML_PAGE.max_bytes, HTML_PAGE.truncate) == (None, False)
+
+
+def test_the_robots_policy_truncates_at_500_kib() -> None:
+    assert ROBOTS_TXT_MAX_BYTES == 500 * 1024  # RFC 9309, section 2.5: at least 500 KiB
+    assert (ROBOTS_TXT.media_types, ROBOTS_TXT.max_bytes) == (None, ROBOTS_TXT_MAX_BYTES)
+    assert ROBOTS_TXT.truncate is True
+
+
+@pytest.mark.parametrize("chunk", [1, 7, 1000, 10_000])
+def test_a_truncating_reader_keeps_exactly_the_limit(chunk: int) -> None:
+    body = bytes(range(256)) * 40  # 10 240 bytes
+    reader = BodyReader(None, max_bytes=5000, max_wire_bytes=6000, truncate=True)
+    for start in range(0, len(body), chunk):
+        reader.feed(body[start : start + chunk])
+        if reader.truncated:
+            break
+    assert reader.truncated
+    assert reader.finish() == body[:5000]
+    reader.feed(b"more")  # ignored once truncated
+    assert reader.finish() == body[:5000]
+
+
+def test_a_truncating_reader_accepts_compressed_data_that_stops_early() -> None:
+    body = b"Disallow: /x\n" * 100_000
+    coded = gzip.compress(body)
+    reader = BodyReader("gzip", max_bytes=1000, max_wire_bytes=10_000_000, truncate=True)
+    reader.feed(coded[: len(coded) // 2])
+    assert reader.truncated
+    assert reader.finish() == body[:1000]  # no "incomplete gzip data" error
+
+
+def test_a_body_within_the_limit_is_not_truncated() -> None:
+    reader = BodyReader(None, max_bytes=100, max_wire_bytes=200, truncate=True)
+    reader.feed(b"x" * 100)
+    assert not reader.truncated
+    assert reader.finish() == b"x" * 100
+
+
+@pytest.mark.parametrize("coding", [None, "gzip"])
+def test_the_chunk_that_reaches_the_limit_is_truncated_not_rejected(coding: str | None) -> None:
+    # Regression: a 64 KiB network chunk can cross the decoded limit and the wire limit at
+    # once (identity coding, or incompressible gzip). It must be truncated, not rejected.
+    body = bytes(range(256)) * 400  # 102 400 bytes, incompressible enough
+    coded = gzip.compress(body) if coding else body
+    reader = BodyReader(
+        coding, max_bytes=50_000, max_wire_bytes=max_wire_bytes(50_000), truncate=True
+    )
+    reader.feed(coded[:49_000])
+    reader.feed(coded[49_000:113_000])  # crosses both limits
+    assert reader.truncated
+    assert reader.finish() == body[:50_000]
+
+
+def test_the_wire_limit_still_applies_when_truncating() -> None:
+    # Received bytes are limited separately from decoded bytes, truncation or not.
+    reader = BodyReader(None, max_bytes=10_000, max_wire_bytes=10, truncate=True)
+    with pytest.raises(BodyTooLargeError):
+        reader.feed(b"x" * 11)
+
+
+def test_max_wire_bytes() -> None:
+    assert max_wire_bytes(64_000) == 64_000 + 1000 + 4096

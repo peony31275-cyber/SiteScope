@@ -18,7 +18,7 @@ from tests.integration import helpers
 
 pytestmark = pytest.mark.anyio
 
-REVISIONS = ["0001", "0002"]  # oldest first
+REVISIONS = ["0001", "0002", "0003"]  # oldest first
 HEAD = REVISIONS[-1]
 
 
@@ -146,6 +146,37 @@ async def test_0002_downgrades_to_0001_and_back(empty_database: Settings) -> Non
     await helpers.upgrade(empty_database, "head")
     assert "crawl_urls_lease_epoch_per_claim" in await user_triggers(empty_database)
     assert await query(empty_database, "SELECT version_num FROM alembic_version") == [HEAD]
+
+
+async def test_0003_adds_the_robots_columns_with_defaults_for_existing_rows(
+    empty_database: Settings,
+) -> None:
+    """Rows written before 0003 get robots_noindex/robots_nofollow/nofollow = false."""
+    await helpers.upgrade(empty_database, "0002")
+    engine = create_async_engine(empty_database.database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "WITH j AS (INSERT INTO crawl_jobs"
+                    " (seed_url, allowed_hosts, max_depth, max_pages, admitted_count)"
+                    " VALUES ('https://example.test/', '{example.test}', 1, 10, 1)"
+                    " RETURNING id), u AS (INSERT INTO crawl_urls (job_id, normalized_url, depth,"
+                    " state, result_epoch, finished_at) SELECT id, 'https://example.test/', 0,"
+                    " 'skipped', 0, now() FROM j RETURNING id, job_id, normalized_url)"
+                    " INSERT INTO pages (job_id, crawl_url_id, normalized_url, http_status,"
+                    " content_hash, byte_size, fetched_at) SELECT job_id, id, normalized_url, 200,"
+                    " decode(repeat('00', 32), 'hex'), 0, now() FROM u"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+    await helpers.upgrade(empty_database, "head")
+
+    flags = await query(empty_database, "SELECT robots_noindex OR robots_nofollow FROM pages")
+    assert flags == [False]
+    assert await schema_differences(empty_database) == []
 
 
 async def test_an_interrupted_migration_leaves_no_partial_schema(empty_database: Settings) -> None:

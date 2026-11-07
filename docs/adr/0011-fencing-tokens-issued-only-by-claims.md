@@ -1,6 +1,7 @@
 # ADR-0011: Fencing tokens are issued only by claims
 
-- Status: Accepted
+- Status: Accepted. Extended by [ADR-0014](0014-crawl-state-transactions-and-redirects.md)
+  (the fenced update comes first; recovery claims).
 - Date: 2026-11-06
 - Extends: [ADR-0010](0010-database-enforced-fencing.md)
 

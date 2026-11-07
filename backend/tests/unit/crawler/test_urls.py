@@ -12,7 +12,9 @@ from app.crawler.urls import (
     ip_address_of,
     join_url,
     normalize_host,
+    normalize_target_text,
     normalize_url,
+    request_target,
     resolve_reference,
     scheme_of,
 )
@@ -377,3 +379,42 @@ def test_join_url_needs_an_absolute_base() -> None:
 )
 def test_scheme_of(reference: str, scheme: str | None) -> None:
     assert scheme_of(reference) == scheme
+
+
+# --- Request targets and robots.txt pattern text (Phase 4) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "target"),
+    [
+        ("https://example.com", "/"),
+        ("https://example.com/a/b?q=1", "/a/b?q=1"),
+        ("http://example.com:8080/x?", "/x?"),
+        ("https://[2001:db8::1]:8443/p", "/p"),
+        ("https://example.com:443/default-port", "/default-port"),
+    ],
+)
+def test_request_target(url: str, target: str) -> None:
+    assert request_target(normalize_url(url)) == target
+
+
+@pytest.mark.parametrize(
+    ("text", "normalized"),
+    [
+        ("/a/b?q=1&r=2", "/a/b?q=1&r=2"),
+        ("/café", "/caf%C3%A9"),
+        ("/%7e%41%2f", "/~A%2F"),  # unreserved decoded, reserved kept with uppercase digits
+        ("/a b", "/a%20b"),
+        ("/50%", "/50%25"),  # lenient: a stray "%" is encoded
+        ("/%zz", "/%25zz"),
+        ("/*$", "/*$"),  # sub-delimiters stay literal
+    ],
+)
+def test_normalize_target_text(text: str, normalized: str) -> None:
+    assert normalize_target_text(text) == normalized
+
+
+def test_target_text_matches_the_path_and_query_of_normalized_urls() -> None:
+    for raw in ("https://example.com/café?q=a b", "https://example.com/%7euser/%2F"):
+        url = normalize_url(raw)
+        assert normalize_target_text(request_target(url)) == request_target(url)

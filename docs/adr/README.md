@@ -16,17 +16,19 @@ Conventions:
 |---|---|---|
 | [0001](0001-postgresql-source-of-truth.md) | PostgreSQL is the source of truth; Redis Streams only delivers work | Accepted |
 | [0002](0002-transactional-outbox.md) | Transactional outbox for publishing to Redis | Accepted; index part superseded by 0008 |
-| [0003](0003-at-least-once-leases-fencing.md) | At-least-once processing with leases, fencing tokens, and idempotent effects | Accepted; extended by 0010 |
-| [0004](0004-level-synchronous-bfs.md) | Level-synchronous BFS with scheduler-side admission | Accepted; dedup key amended by 0009 |
+| [0003](0003-at-least-once-leases-fencing.md) | At-least-once processing with leases, fencing tokens, and idempotent effects | Accepted; extended by 0010 and 0014 |
+| [0004](0004-level-synchronous-bfs.md) | Level-synchronous BFS with scheduler-side admission | Accepted; dedup key amended by 0009; extended by 0014 |
 | [0005](0005-postgresql-full-text-search.md) | PostgreSQL full-text search instead of a dedicated search engine | Accepted |
-| [0006](0006-target-allowlist-ssrf-defenses.md) | Target allowlist and layered SSRF defenses | Accepted; extended by 0012 (allowlist) and 0013 (fetcher) |
+| [0006](0006-target-allowlist-ssrf-defenses.md) | Target allowlist and layered SSRF defenses | Accepted; extended by 0012 (allowlist), 0013 (fetcher) and 0015 (robots.txt, politeness) |
 | [0007](0007-modular-monolith-process-roles.md) | Modular monolith with separate process roles | Accepted |
 | [0008](0008-search-documents-as-index-outbox.md) | `search_documents` is both the index store and the indexing outbox | Accepted |
 | [0009](0009-dedup-on-normalized-url.md) | Deduplicate URLs on the normalized URL itself | Accepted |
 | [0010](0010-database-enforced-fencing.md) | Fencing is enforced by the database, not only by worker code | Accepted; extended by 0011 |
-| [0011](0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims | Accepted |
+| [0011](0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims | Accepted; extended by 0014 |
 | [0012](0012-approved-crawl-targets.md) | Approved crawl targets are host patterns, plus allowed schemes and ports | Accepted |
-| [0013](0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop | Accepted |
+| [0013](0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop | Accepted; extended by 0015 |
+| [0014](0014-crawl-state-transactions-and-redirects.md) | Crawl state transactions, same-level redirects, and page directives | Accepted |
+| [0015](0015-robots-txt-and-per-host-politeness.md) | robots.txt (RFC 9309) and per-host politeness through Redis | Accepted |
 
 ## Template
 

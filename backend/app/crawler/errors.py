@@ -5,7 +5,8 @@ directly in ``crawl_urls.outcome``. ``FetchError.retryable`` tells the worker wh
 same URL again later may succeed:
 
 * retryable: DNS failures that may be temporary, connection failures, timeouts, truncated
-  responses, and HTTP 429, 500, 502, 503 and 504;
+  responses, no politeness slot within the maximum wait (``rate_limited``; nothing was sent),
+  and HTTP 429, 500, 502, 503 and 504;
 * permanent: everything else (policy refusals, TLS errors, redirect problems, other HTTP errors,
   unsupported or oversized content, malformed responses).
 
@@ -37,6 +38,8 @@ class FailureKind(StrEnum):
     TOO_LARGE = "too_large"
     TRUNCATED = "truncated"  # the connection closed before the declared body was complete
     MALFORMED_RESPONSE = "malformed_response"
+    # The per-host politeness gate gave no request slot within its maximum wait (Phase 4).
+    RATE_LIMITED = "rate_limited"
 
 
 RETRYABLE_KINDS = frozenset(
@@ -47,9 +50,18 @@ RETRYABLE_KINDS = frozenset(
         FailureKind.READ_TIMEOUT,
         FailureKind.DEADLINE_EXCEEDED,
         FailureKind.TRUNCATED,
+        FailureKind.RATE_LIMITED,
     }
 )
 RETRYABLE_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+
+class RateLimitedError(Exception):
+    """A request gate gave no slot within its maximum wait; nothing was sent.
+
+    Raised by ``politeness.PolitenessGate``; the fetcher reports it as
+    ``FailureKind.RATE_LIMITED``. The message names the host and the wait, never a URL.
+    """
 
 
 class FetchError(Exception):

@@ -1,7 +1,8 @@
 # ADR-0003: At-least-once processing with leases, fencing tokens, and idempotent effects
 
 - Status: Accepted. Extended by [ADR-0010](0010-database-enforced-fencing.md) (the database
-  enforces fencing).
+  enforces fencing) and [ADR-0014](0014-crawl-state-transactions-and-redirects.md) (the
+  result transaction and the recovery of exhausted leases).
 - Date: 2026-11-06
 
 ## Context

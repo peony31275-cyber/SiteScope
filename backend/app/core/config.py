@@ -36,6 +36,10 @@ Port = Annotated[int, Field(ge=1, le=65535)]
 # This file is <backend>/app/core/config.py, so parents[2] is the backend directory.
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+# A crawl task stops this many seconds before its lease expires (ADR-0003: task_deadline <
+# lease_duration).
+LEASE_MARGIN_SECONDS = 10.0
+
 # Values copied unchanged from backend/.env.example; they must never reach production.
 _PLACEHOLDER_SECRET_PREFIX = "change-me"  # noqa: S105 - a marker for template values, not a secret
 
@@ -116,6 +120,40 @@ class Settings(BaseSettings):
     parse_max_links: int = Field(default=1000, ge=1, le=100_000)
     parse_max_text_chars: int = Field(default=1_000_000, ge=1000, le=1_000_000)
 
+    # --- Crawling (Phase 4) ---------------------------------------------------------------------
+    # The crawler's name (RFC 9309 "product token"): sent as "<name>/<version>" in User-Agent,
+    # and matched case-insensitively against robots.txt user-agent lines and meta robots names.
+    crawler_name: str = Field(default="SiteScopeBot", pattern=r"^[A-Za-z_-]{1,40}$")
+    # URLs the single-process crawl driver (app/workers/local_crawler.py) processes at once.
+    crawl_concurrency: int = Field(default=4, ge=1, le=64)
+    # How long a claimed URL stays leased (by the PostgreSQL clock). A task is cut off
+    # LEASE_MARGIN_SECONDS before its lease ends, so it never runs on an expired lease
+    # (task_deadline < lease_duration, ADR-0003).
+    crawl_lease_seconds: float = Field(default=90.0, gt=0, le=3600)
+    # Claims of one URL before it fails with max_attempts_exceeded; bounds crash loops.
+    crawl_max_attempts: int = Field(default=3, ge=1, le=10)
+
+    # --- Politeness (app/crawler/politeness.py, app/crawler/robots.py) ---------------------------
+    # Minimum seconds between the starts of two requests to one host, shared by every crawler
+    # process through Redis. 0 disables the spacing (tests and local benchmarks only).
+    politeness_interval_seconds: float = Field(default=1.0, ge=0, le=3600)
+    # Requests in flight to one host at the same time, across all crawler processes.
+    politeness_max_concurrent_per_host: int = Field(default=1, ge=1, le=16)
+    # The longest a request waits for its slot; after that it fails as rate_limited.
+    politeness_max_wait_seconds: float = Field(default=30.0, gt=0, le=600)
+    # How long a robots.txt result is cached in Redis (RFC 9309: at most 24 hours), and how long
+    # an unreachable robots.txt (5xx, 429, network error: complete disallow) is cached before
+    # the next attempt.
+    robots_cache_seconds: int = Field(default=86_400, ge=60, le=86_400)
+    robots_retry_seconds: int = Field(default=300, ge=10, le=86_400)
+    # robots.txt Crawl-delay raises the host's interval up to this cap. It must not exceed
+    # SITESCOPE_POLITENESS_MAX_WAIT_SECONDS, or every request would wait past its limit.
+    robots_max_crawl_delay_seconds: float = Field(default=10.0, ge=0, le=600)
+
+    # --- Redis keys ------------------------------------------------------------------------------
+    # Prefix of every Redis key SiteScope writes (tests use their own prefix to stay isolated).
+    redis_key_prefix: str = Field(default="sitescope", pattern=r"^[a-z0-9_-]{1,40}$")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: object) -> object:
@@ -147,6 +185,28 @@ class Settings(BaseSettings):
     def _normalize_allowed_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         # Invalid entries raise HostPatternError, a ValueError, which fails startup.
         return tuple(dict.fromkeys(str(parse_host_pattern(entry)) for entry in value))
+
+    @model_validator(mode="after")
+    def _check_crawl_timing(self) -> Self:
+        # A task (robots.txt check, politeness wait, fetch, parse) is cut off LEASE_MARGIN
+        # seconds before its lease ends; a page fetch must fit in what remains.
+        if self.crawl_lease_seconds < self.fetch_deadline_seconds + LEASE_MARGIN_SECONDS:
+            raise ValueError(
+                "SITESCOPE_CRAWL_LEASE_SECONDS must be at least SITESCOPE_FETCH_DEADLINE_SECONDS"
+                f" + {LEASE_MARGIN_SECONDS:g}"
+            )
+        # A request that finds its host idle may still have to wait one interval.
+        if self.politeness_interval_seconds > self.politeness_max_wait_seconds:
+            raise ValueError(
+                "SITESCOPE_POLITENESS_INTERVAL_SECONDS must not exceed"
+                " SITESCOPE_POLITENESS_MAX_WAIT_SECONDS"
+            )
+        if self.robots_max_crawl_delay_seconds > self.politeness_max_wait_seconds:
+            raise ValueError(
+                "SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS must not exceed"
+                " SITESCOPE_POLITENESS_MAX_WAIT_SECONDS"
+            )
+        return self
 
     @model_validator(mode="after")
     def _reject_development_targets_in_production(self) -> Self:

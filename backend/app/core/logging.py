@@ -1,7 +1,9 @@
 """Structured logging: one JSON object per line on stdout, for every SiteScope process.
 
 Request-scoped context lives in context variables, so a log call made anywhere while a request
-is being handled carries that request's ``request_id`` automatically.
+is being handled carries that request's ``request_id`` automatically. Crawl tasks set
+``task_context_var`` the same way (``job_id``, ``url_id``, ``worker_id``, ``lease_epoch``):
+asyncio gives each task its own copy of the context, and ``asyncio.to_thread`` passes it on.
 
 Conventions for callers:
 
@@ -14,12 +16,18 @@ Conventions for callers:
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 # The ID of the HTTP request being handled in the current context, if any.
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
+# Fields of the crawl task being processed in the current context, if any. Fields passed
+# explicitly through ``extra`` take precedence.
+task_context_var: ContextVar[Mapping[str, str | int] | None] = ContextVar(
+    "task_context", default=None
+)
 
 _HANDLER_NAME = "sitescope-json"
 # Third-party loggers limited to WARNING by configure_logging (they log full URLs).
@@ -58,6 +66,8 @@ class JsonFormatter(logging.Formatter):
         for key, value in vars(record).items():
             if key in _STANDARD_RECORD_ATTRIBUTES or key in _DROPPED_ATTRIBUTES:
                 continue
+            payload.setdefault(key, value)
+        for key, value in (task_context_var.get() or {}).items():
             payload.setdefault(key, value)
 
         if record.exc_info and record.exc_info[0] is not None:

@@ -1,6 +1,7 @@
 # ADR-0013: The safe fetcher pins connections through httpcore2 and validates every hop
 
-- Status: Accepted
+- Status: Accepted. Extended by [ADR-0015](0015-robots-txt-and-per-host-politeness.md)
+  (content policies and the per-hop request gate).
 - Date: 2026-11-06
 - Extends: [ADR-0006](0006-target-allowlist-ssrf-defenses.md) (implements its layered defenses)
 

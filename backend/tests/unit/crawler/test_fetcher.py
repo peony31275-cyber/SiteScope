@@ -182,6 +182,7 @@ def test_retryable_failures() -> None:
         FailureKind.READ_TIMEOUT,
         FailureKind.DEADLINE_EXCEEDED,
         FailureKind.TRUNCATED,
+        FailureKind.RATE_LIMITED,  # Phase 4: no politeness slot in time; nothing was sent
     }
     for kind in FailureKind:
         if kind is not FailureKind.HTTP_ERROR:

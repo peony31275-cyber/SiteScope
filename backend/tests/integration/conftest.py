@@ -12,6 +12,7 @@ Isolation rules:
 """
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import NoReturn
 
@@ -93,6 +94,18 @@ async def redis_client(
         yield client
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+async def redis_prefix(redis_client: Redis) -> AsyncIterator[str]:
+    """A Redis key prefix of this test alone (in DB 15); its keys are deleted afterwards."""
+    prefix = f"test-{uuid.uuid4().hex[:12]}"
+    try:
+        yield prefix
+    finally:
+        keys = [key async for key in redis_client.scan_iter(match=f"{prefix}:*", count=500)]
+        if keys:
+            await redis_client.delete(*keys)
 
 
 @pytest.fixture

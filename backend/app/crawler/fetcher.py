@@ -17,6 +17,16 @@ The HTTP stack never follows redirects. The fetcher follows them itself, up to
 ``max_redirects`` hops, and every target goes through steps 1-6 again: a valid first URL never
 authorizes an unsafe redirect.
 
+**Politeness (Phase 4).** An optional ``RequestGate`` (``politeness.PolitenessGate`` in the
+crawler) admits every request hop, redirect hops included: after the scope check and before DNS
+resolution, the hop waits for a slot of its host, and holds it until the response is read. No
+slot within the gate's maximum wait fails the fetch with ``rate_limited``, before anything is
+sent.
+
+**Content policies (Phase 4).** A fetch accepts the bodies its ``ContentPolicy`` allows: HTML
+pages by default, exactly as in Phase 3. ``content.ROBOTS_TXT`` accepts any media type and keeps
+the first 500 KiB of a larger file (RFC 9309, section 2.5).
+
 Networking is explicit. The fetcher uses httpcore2, the transport layer of httpx2, directly: it
 supports no proxies, reads no environment configuration (``HTTP_PROXY``, ``.netrc``, ...), and
 uses a TLS context built in code (``create_tls_context``). Connections are never reused between
@@ -24,13 +34,15 @@ requests.
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 import ssl
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, NoReturn
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
 
 import httpcore2
 import truststore
@@ -38,10 +50,12 @@ import truststore
 from app import __version__
 from app.crawler.content import (
     ACCEPT_ENCODING,
-    HTML_MEDIA_TYPES,
+    HTML_PAGE,
     BodyReader,
     BodyTooLargeError,
     ContentDecodingError,
+    ContentPolicy,
+    max_wire_bytes,
     parse_content_coding,
     parse_media_type,
 )
@@ -51,21 +65,39 @@ from app.crawler.destinations import (
     IPAddress,
     classify_address,
 )
-from app.crawler.errors import FailureKind, FetchError
+from app.crawler.errors import FailureKind, FetchError, RateLimitedError
 from app.crawler.resolver import ResolutionError, Resolver, SystemResolver
 from app.crawler.results import FetchResult, Redirect
 from app.crawler.scope import CrawlTargetPolicy, TargetNotAllowedError
-from app.crawler.urls import InvalidUrlError, NormalizedUrl, ip_address_of, join_url, normalize_url
+from app.crawler.urls import (
+    InvalidUrlError,
+    NormalizedUrl,
+    ip_address_of,
+    join_url,
+    normalize_url,
+    request_target,
+)
 
 if TYPE_CHECKING:
     from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT: Final = f"SiteScopeBot/{__version__}"
-ACCEPT: Final = "text/html,application/xhtml+xml;q=0.9"
+# The crawler's name (RFC 9309 calls it the product token): sent in User-Agent, and matched
+# against robots.txt user-agent lines. Deployments set it with SITESCOPE_CRAWLER_NAME.
+DEFAULT_CRAWLER_NAME: Final = "SiteScopeBot"
+
+
+def user_agent(name: str) -> str:
+    """The User-Agent header for a crawler name: ``<name>/<SiteScope version>``."""
+    return f"{name}/{__version__}"
+
+
+USER_AGENT: Final = user_agent(DEFAULT_CRAWLER_NAME)
+ACCEPT: Final = HTML_PAGE.accept
 REDIRECT_STATUSES: Final = frozenset({301, 302, 303, 307, 308})
 # Response headers kept in a FetchResult (lowercase names); each value is cut to MAX_HEADER_VALUE.
+# X-Robots-Tag is kept separately, one entry per header (FetchResult.robots_tags).
 KEPT_HEADERS: Final = (
     "content-type",
     "content-length",
@@ -74,9 +106,9 @@ KEPT_HEADERS: Final = (
     "last-modified",
     "etag",
     "cache-control",
-    "x-robots-tag",
 )
 MAX_HEADER_VALUE: Final = 1024
+MAX_ROBOTS_TAGS: Final = 16  # X-Robots-Tag headers kept per response
 # h11's message when the connection closes before the declared body is complete.
 _TRUNCATED_BODY: Final = "peer closed connection without sending complete message body"
 # httpcore2's message when the connection closes before any response.
@@ -98,7 +130,18 @@ class FetchConfig:
     @property
     def max_wire_bytes(self) -> int:
         """Limit on received body bytes: coded data is never much larger than its content."""
-        return self.max_body_bytes + self.max_body_bytes // 64 + 4096
+        return max_wire_bytes(self.max_body_bytes)
+
+
+class RequestGate(Protocol):
+    """Admits request hops, e.g. by host (``politeness.PolitenessGate``).
+
+    ``slot(url)`` is an async context manager. Entering it waits until a request to the URL may
+    start, or raises ``RateLimitedError``; the slot is held until the block exits, i.e. until
+    the response has been read or the request has failed.
+    """
+
+    def slot(self, url: NormalizedUrl) -> AbstractAsyncContextManager[None]: ...
 
 
 class UnvalidatedDestinationError(httpcore2.ConnectError):
@@ -206,6 +249,7 @@ class SafeFetcher:
         resolver: Resolver | None = None,
         tls_context: ssl.SSLContext | None = None,
         network_backend: httpcore2.AsyncNetworkBackend | None = None,
+        gate: RequestGate | None = None,
     ) -> None:
         self._config = config
         self._targets = targets
@@ -214,12 +258,22 @@ class SafeFetcher:
         self._tls_context = tls_context if tls_context is not None else create_tls_context()
         # The backend that opens TCP connections to validated addresses (tests record them).
         self._network_backend = network_backend
+        # Admits each request hop (per-host politeness); None admits every hop at once.
+        self._gate = gate
 
-    async def fetch(self, url: str, *, max_redirects: int | None = None) -> FetchResult:
-        """Fetch an HTML document, following up to ``max_redirects`` validated redirects.
+    async def fetch(
+        self,
+        url: str,
+        *,
+        max_redirects: int | None = None,
+        content: ContentPolicy = HTML_PAGE,
+    ) -> FetchResult:
+        """Fetch a document, following up to ``max_redirects`` validated redirects.
 
-        ``max_redirects=0`` returns a redirect response instead of following it. Raises
-        ``FetchError`` for every failure; ``FetchError.retryable`` classifies it.
+        ``max_redirects=0`` returns a redirect response instead of following it. ``content``
+        says which bodies are accepted: HTML pages by default. The deadline covers the whole
+        fetch, including waits for politeness slots. Raises ``FetchError`` for every failure;
+        ``FetchError.retryable`` classifies it.
         """
         limit = self._config.max_redirects if max_redirects is None else max_redirects
         if limit < 0:
@@ -235,7 +289,9 @@ class SafeFetcher:
         try:
             async with asyncio.timeout(self._config.deadline):
                 while True:
-                    response = await self._request(target, tuple(redirects), requested, started)
+                    response = await self._request(
+                        target, tuple(redirects), requested, started, content
+                    )
                     if isinstance(response, FetchResult):
                         return response
                     location = response.location
@@ -274,16 +330,38 @@ class SafeFetcher:
         redirects: tuple[Redirect, ...],
         requested: str,
         started: float,
+        content: ContentPolicy,
     ) -> FetchResult | _RedirectResponse:
-        """One request hop: validate, resolve, connect to a validated address, read."""
+        """One request hop: check the scope, wait for a slot, then send it (``_send``)."""
+        try:
+            self._targets.check(target)
+        except TargetNotAllowedError as exc:
+            raise FetchError(
+                FailureKind.TARGET_NOT_ALLOWED, str(exc), url=target.url, redirects=redirects
+            ) from None
+        if self._gate is None:
+            return await self._send(target, redirects, requested, started, content)
+        try:
+            async with self._gate.slot(target):
+                return await self._send(target, redirects, requested, started, content)
+        except RateLimitedError as exc:
+            raise FetchError(
+                FailureKind.RATE_LIMITED, str(exc), url=target.url, redirects=redirects
+            ) from None
+
+    async def _send(
+        self,
+        target: NormalizedUrl,
+        redirects: tuple[Redirect, ...],
+        requested: str,
+        started: float,
+        content: ContentPolicy,
+    ) -> FetchResult | _RedirectResponse:
+        """Resolve, validate every address, connect to a validated address, read."""
 
         def fail(kind: FailureKind, message: str, status: int | None = None) -> NoReturn:
             raise FetchError(kind, message, url=target.url, http_status=status, redirects=redirects)
 
-        try:
-            self._targets.check(target)
-        except TargetNotAllowedError as exc:
-            fail(FailureKind.TARGET_NOT_ALLOWED, str(exc))
         addresses = await self._resolve(target, fail)
         try:
             self._destinations.check(target, addresses)
@@ -313,12 +391,12 @@ class SafeFetcher:
             scheme=target.scheme.encode("ascii"),
             host=connect_host.encode("ascii"),
             port=target.port,
-            target=_request_target(target).encode("ascii"),
+            target=request_target(target).encode("ascii"),
         )
         headers = [
             (b"Host", _authority(target).encode("ascii")),
             (b"User-Agent", config.user_agent.encode("ascii")),
-            (b"Accept", ACCEPT.encode("ascii")),
+            (b"Accept", content.accept.encode("ascii")),
             (b"Accept-Encoding", ACCEPT_ENCODING.encode("ascii")),
             (b"Connection", b"close"),
         ]
@@ -339,7 +417,7 @@ class SafeFetcher:
             ):
                 remote = str(backend.connected_address)
                 return await self._read_response(
-                    target, response, remote, redirects, requested, started, fail
+                    target, response, remote, redirects, requested, started, content, fail
                 )
         except UnvalidatedDestinationError as exc:
             fail(FailureKind.BLOCKED_DESTINATION, str(exc))
@@ -387,6 +465,7 @@ class SafeFetcher:
         redirects: tuple[Redirect, ...],
         requested: str,
         started: float,
+        content: ContentPolicy,
         fail: Callable[..., NoReturn],
     ) -> FetchResult | _RedirectResponse:
         status = response.status
@@ -404,7 +483,7 @@ class SafeFetcher:
             fail(FailureKind.HTTP_ERROR, f"HTTP {status} from {target.host}", status)
 
         media_type, parameters = parse_media_type(headers.get("content-type"))
-        if media_type not in HTML_MEDIA_TYPES:
+        if content.media_types is not None and media_type not in content.media_types:
             fail(
                 FailureKind.UNSUPPORTED_CONTENT_TYPE,
                 f"unsupported content type: {(media_type or 'none')[:64]}",
@@ -414,8 +493,12 @@ class SafeFetcher:
             coding = parse_content_coding(headers.get("content-encoding"))
         except ContentDecodingError as exc:
             fail(FailureKind.UNSUPPORTED_CONTENT_ENCODING, str(exc), status)
+        max_body = (
+            content.max_bytes if content.max_bytes is not None else self._config.max_body_bytes
+        )
+        wire_limit = max_wire_bytes(max_body)
         declared_length = _content_length(headers.get("content-length"))
-        if declared_length is not None and declared_length > self._config.max_wire_bytes:
+        if not content.truncate and declared_length is not None and declared_length > wire_limit:
             fail(
                 FailureKind.TOO_LARGE,
                 f"the declared body of {declared_length} bytes exceeds the limit",
@@ -423,13 +506,15 @@ class SafeFetcher:
             )
 
         reader = BodyReader(
-            coding,
-            max_bytes=self._config.max_body_bytes,
-            max_wire_bytes=self._config.max_wire_bytes,
+            coding, max_bytes=max_body, max_wire_bytes=wire_limit, truncate=content.truncate
         )
         try:
-            async for chunk in response.aiter_stream():
-                reader.feed(chunk)
+            # Reading may stop early (truncation); aclosing closes the stream deterministically.
+            async with contextlib.aclosing(response.aiter_stream()) as chunks:
+                async for chunk in chunks:
+                    reader.feed(chunk)
+                    if reader.truncated:
+                        break
             body = reader.finish()
         except BodyTooLargeError as exc:
             fail(FailureKind.TOO_LARGE, str(exc), status)
@@ -443,7 +528,9 @@ class SafeFetcher:
                 "event": "fetch.completed",
                 "host": target.host,
                 "status_code": status,
+                "content": content.name,
                 "body_bytes": len(body),
+                "truncated": reader.truncated,
                 "redirects": len(redirects),
                 "elapsed_ms": round(elapsed * 1000, 1),
             },
@@ -461,6 +548,8 @@ class SafeFetcher:
             remote_address=remote,
             wire_bytes=reader.wire_bytes,
             elapsed_seconds=elapsed,
+            robots_tags=_robots_tags(response.headers),
+            truncated=reader.truncated,
         )
 
     def _unfollowed_redirect(
@@ -482,8 +571,14 @@ class SafeFetcher:
         )
 
 
-def build_fetcher(settings: "Settings", *, resolver: Resolver | None = None) -> SafeFetcher:
-    """A fetcher configured from the application settings (used by the worker, Phase 5)."""
+def build_fetcher(
+    settings: "Settings", *, resolver: Resolver | None = None, gate: RequestGate | None = None
+) -> SafeFetcher:
+    """A fetcher configured from the application settings.
+
+    Crawling passes the per-host politeness ``gate`` (``politeness.build_gate``). Without one,
+    requests are not rate-limited, which only the diagnostic ``app.crawler.cli`` does.
+    """
     return SafeFetcher(
         config=FetchConfig(
             connect_timeout=settings.fetch_connect_timeout_seconds,
@@ -491,6 +586,7 @@ def build_fetcher(settings: "Settings", *, resolver: Resolver | None = None) -> 
             deadline=settings.fetch_deadline_seconds,
             max_body_bytes=settings.fetch_max_body_bytes,
             max_redirects=settings.fetch_max_redirects,
+            user_agent=user_agent(settings.crawler_name),
         ),
         targets=CrawlTargetPolicy.from_config(
             hosts=settings.crawl_allowed_hosts,
@@ -502,6 +598,7 @@ def build_fetcher(settings: "Settings", *, resolver: Resolver | None = None) -> 
             allow_loopback=settings.environment != "production",
         ),
         resolver=resolver,
+        gate=gate,
     )
 
 
@@ -514,12 +611,6 @@ def _authority(url: NormalizedUrl) -> str:
     """The Host header: the normalized host, with the port unless it is the default."""
     default = 443 if url.scheme == "https" else 80
     return url.host if url.port == default else f"{url.host}:{url.port}"
-
-
-def _request_target(url: NormalizedUrl) -> str:
-    """The path and query of a normalized URL (the HTTP request target)."""
-    prefix = f"{url.scheme}://{_authority(url)}"
-    return url.url[len(prefix) :]
 
 
 def _header(headers: Sequence[tuple[bytes, bytes]], name: bytes) -> str | None:
@@ -542,6 +633,16 @@ def _kept_headers(headers: Sequence[tuple[bytes, bytes]]) -> dict[str, str]:
             text = value.decode("latin-1")
             kept[name] = f"{kept[name]}, {text}" if name in kept else text
     return {name: value[:MAX_HEADER_VALUE] for name, value in kept.items()}
+
+
+def _robots_tags(headers: Sequence[tuple[bytes, bytes]]) -> tuple[str, ...]:
+    """Each X-Robots-Tag header value, separately and in order (a bounded number of them)."""
+    values = [
+        value.decode("latin-1")[:MAX_HEADER_VALUE]
+        for key, value in headers
+        if key.lower() == b"x-robots-tag"
+    ]
+    return tuple(values[:MAX_ROBOTS_TAGS])
 
 
 def _content_length(value: str | None) -> int | None:

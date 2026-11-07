@@ -10,8 +10,13 @@
 >   database-enforced fencing (ADR-0011).
 > - Phase 3: the safe fetcher (DNS validation, pinned connections, validated redirects, bounded
 >   bodies; sections 12.3 and 12.4) and the HTML parser (`backend/app/crawler/`, ADR-0013).
+> - Phase 4: level-synchronous BFS with its state in PostgreSQL (claims, fenced results,
+>   same-level redirects, level advancement, exact budget; sections 8 and 9, ADR-0014), robots.txt
+>   (RFC 9309) and per-host politeness shared through Redis (sections 12.4 and 12.5, ADR-0015),
+>   page directives (`noindex`, `nofollow`; migration `0003`), and a single-process crawl driver.
 >
-> BFS crawling, robots.txt, rate limiting, scheduling, workers and search are not implemented yet.
+> Distributed scheduling (Redis Streams), the crawler workers, retries, cancellation and search
+> are not implemented yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -113,6 +118,7 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 | API | `api`: `uvicorn app.main:app` | input validation, job commands, read models, search queries | stateless, N replicas |
 | Scheduler | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, index relay, reconciliation, stream maintenance | one active leader; standbys are safe |
 | Crawler worker | `crawler-worker`: `python -m app.workers.crawler` | consume the crawl stream, claim URL leases, fetch safely, parse, commit results (fenced), ack, adopt abandoned messages | N processes, each with bounded concurrency |
+| Local crawl driver (Phase 4) | `python -m app.workers.local_crawler <job-id>` | runs one job in one process: dispatch without a stream, claims, crawl tasks, fenced results, level advancement | development and tests only |
 | Indexer worker | `indexer-worker`: `python -m app.workers.indexer` | consume the index stream, build a weighted `tsvector`, upsert idempotently, ack | 1..N |
 | PostgreSQL | service | durable state, constraints, row locks, full-text index | single instance |
 | Redis | service | streams and consumer groups, per-host rate-limit state, robots.txt cache | single instance, AOF on |
@@ -187,14 +193,17 @@ two overlapping schedulers produce at most duplicate messages.
 5. **Fetch.** Outside any transaction: check robots.txt, wait for a per-host rate-limit slot, resolve DNS
    and validate the IP, then send the HTTP request pinned to that IP. The body is streamed under size and
    time limits.
-6. **Commit.** One transaction does all of this:
-   - verifies the lease (fencing);
-   - stores the page;
-   - records every discovered link with its position and a scope flag;
-   - inserts the page's `search_documents` row as `pending` (the indexing outbox);
-   - marks the URL terminal, or, for a retryable failure, returns it to `pending` with a backoff.
+6. **Commit.** One transaction does all of this (T5 in section 9, implemented in Phase 4):
+   - the fenced update of the URL row comes first: it checks the lease and records the outcome.
+     If it matches no row, the transaction rolls back and nothing is written;
+   - stores the page, if the response was an HTML page;
+   - records every discovered link with its position, a scope flag and its `nofollow` flag;
+   - inserts the page's `search_documents` row as `pending` (the indexing outbox), unless the
+     page is `noindex`;
+   - for a redirect, admits its target at the same depth (section 8.5).
 
-   Then the worker sends `XACK`.
+   A retryable failure will return the URL to `pending` with a backoff (Phase 6; in Phase 4
+   every failure is terminal). Then the worker sends `XACK`.
 7. **Advance.** When none of the job's URLs is unfinished, the scheduler takes the job row lock. It
    admits the next level's URLs from links recorded by the current level, in deterministic order, up to
    the remaining page budget. If nothing can be admitted, it marks the job `completed`, or `failed` if
@@ -206,7 +215,8 @@ two overlapping schedulers produce at most duplicate messages.
 ## 5. Data model (implemented in Phase 2B)
 
 The schema is created by migration `0001` (`backend/alembic/versions/0001_initial_schema.py`).
-Migration `0002` adds a fencing trigger (Phase 2C, ADR-0011). The ORM models in `backend/app/db/models.py` mirror it, and an integration test compares the two
+Migration `0002` adds a fencing trigger (Phase 2C, ADR-0011), and `0003` adds the robots
+directive flags of pages and links (Phase 4, ADR-0014). The ORM models in `backend/app/db/models.py` mirror it, and an integration test compares the two
 (`alembic.autogenerate.compare_metadata` must report no differences). Six tables, nothing more.
 
 ```
@@ -270,7 +280,8 @@ the end of the primary-key index instead of at random positions.
 | `title`, `meta_description`, `headings`, `extracted_text` | extracted content |
 | `content_hash` | SHA-256 |
 | `content_version` | starts at 1 |
-| `byte_size`, `fetch_duration_ms`, `fetched_at` | fetch details |
+| `byte_size`, `fetch_duration_ms`, `fetched_at` | fetch details (`fetched_at` from the database clock) |
+| `robots_noindex`, `robots_nofollow` | page directives (meta robots, `X-Robots-Tag`; `0003`): a `noindex` page has no `search_documents` row; the links of a `nofollow` page are never admitted |
 | timestamps | `created_at`, `updated_at` |
 
 **`page_links`**
@@ -280,7 +291,8 @@ the end of the primary-key index instead of at random positions.
 | `job_id` | |
 | `anchor_text` | first occurrence, ≤ 500 characters |
 | `position` | order in the document |
-| `is_internal` | whether the target is in the job's scope |
+| `is_internal` | whether the target is in the job's scope (the seed's host) and an approved target |
+| `nofollow` | `rel="nofollow"` on this link: recorded, never admitted (`0003`) |
 
 The uniqueness policy is one row per (source page, target URL). Repeated links on the same page
 collapse to the first occurrence.
@@ -393,8 +405,12 @@ recoverable. The full list of windows is in section 10.4.
 | `sitescope:crawl` | stream; group `crawlers` | crawl tasks `{v, job_id, url_id}` |
 | `sitescope:index` | stream; group `indexers` | index tasks `{v, page_id}` |
 | `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters (malformed or unclaimable messages), kept for inspection |
-| `sitescope:rate:{host}` | string | per-host GCRA rate-limit state, shared by all workers |
-| `sitescope:robots:{origin}` | string with TTL | cached robots.txt (not authoritative) |
+| `sitescope:rate:{<host>}:last` | string with TTL | the start of the host's latest request, in microseconds of Redis time (Phase 4) |
+| `sitescope:rate:{<host>}:active` | sorted set with TTL | the host's politeness slots in use: slot token -> expiry (Phase 4) |
+| `sitescope:rate:{<host>}:queue` | sorted set with TTL | requests waiting for a slot, in arrival order: slot token -> first attempt (Phase 4) |
+| `sitescope:rate:{<host>}:seen` | sorted set with TTL | when each waiter last asked, to drop waiters of crashed processes (Phase 4) |
+| `sitescope:rate:{<host>}:delay` | string with TTL | the host's crawl delay: the largest robots.txt `Crawl-delay` of its origins (Phase 4) |
+| `sitescope:robots:<crawler name>:<origin>` | string with TTL | a cached robots.txt result, not authoritative: status, the crawler's rules, crawl delay (Phase 4) |
 
 - Messages are small and versioned (`v`). Consumers re-read state from PostgreSQL.
 - Consumer groups are created idempotently at startup with `XGROUP CREATE <stream> <group> 0 MKSTREAM`,
@@ -406,7 +422,9 @@ recoverable. The full list of windows is in section 10.4.
   reconciler re-publishes it.
 - Redis 7.0 or later is required. `XAUTOCLAIM` arrived in 6.2, and 7.0 added reporting of entries that
   were deleted from the stream.
-- The key prefix is configurable so test runs can be isolated.
+- The key prefix is configurable (`SITESCOPE_REDIS_KEY_PREFIX`), so test runs can be isolated:
+  each test uses its own prefix in Redis database 15. The `{<host>}` hash tag keeps one host's
+  rate keys in one Redis Cluster slot, as the Lua script requires.
 
 ## 7. Lifecycle state machines
 
@@ -425,6 +443,10 @@ recoverable. The full list of windows is in section 10.4.
 Terminal states (`completed`, `failed`, `cancelled`) are absorbing. After a job becomes terminal, its URLs,
 pages, and links never change. Indexing may still be catching up; its progress is reported separately.
 
+Phase 4 implements activation, level advancement and completion (`backend/app/services/
+crawl_state.py`); until the Phase 5 scheduler exists, the single-process driver calls them.
+Cancellation is Phase 6.
+
 ### 7.2 Crawl URL
 
 | From | To | Trigger (actor) | Guard |
@@ -435,7 +457,7 @@ pages, and links never change. Indexing may still be catching up; its progress i
 | `in_progress` | `in_progress` | takeover claim (worker) | lease expired by the database clock; `lease_epoch` is incremented |
 | `in_progress` | `fetched` / `skipped` / `failed` | result commit (worker) | fencing check passes; the database requires `result_epoch = lease_epoch` (ADR-0010) |
 | `in_progress` | `pending` | retryable failure (worker) | fencing check passes; `next_attempt_at = now() + backoff` |
-| `in_progress` | `failed` | attempts exhausted after crashes (worker or reconciler) | lease expired |
+| `in_progress` | `failed` | attempts exhausted after crashes (worker or reconciler) | lease expired by the database clock; a recovery claim issues a new token, which records `max_attempts_exceeded` (ADR-0014) |
 | `pending`, `queued` | `cancelled` | job cancel (API) | none |
 | `in_progress` | `cancelled` | reconciler | job is `cancelling` and the lease has expired |
 
@@ -444,9 +466,12 @@ Terminal outcomes:
 - `fetched`: an HTTP response was received and recorded, whatever its status code. The `outcome` column
   says more: `html_stored`, `non_html`, `too_large`, `redirect`, and so on.
 - `skipped`: no request was sent because of a policy decision (`robots_disallowed`,
-  `blocked_destination`, ...).
-- `failed`: no usable response after bounded retries (`timeout`, `connection_error`, `dns_error`,
-  `max_attempts_exceeded`, ...).
+  `robots_unreachable`, `target_not_allowed`, `blocked_destination`).
+- `failed`: no usable response after bounded retries (`read_timeout`, `connection_error`,
+  `dns_error`, `rate_limited`, `parse_error`, `max_attempts_exceeded`, ...). In Phase 4 a
+  retryable failure is terminal at once; Phase 6 adds the retries.
+
+The full mapping from fetch results to outcomes is in `backend/app/workers/crawl_task.py`.
 - `cancelled`: the job was cancelled before this URL was processed.
 
 ## 8. Crawl semantics
@@ -523,13 +548,15 @@ Two levels decide whether a URL may be crawled ([ADR-0012](adr/0012-approved-cra
 The API checks the seed against both levels when it creates a job. The safe fetcher checks the
 deployment level again before every request, redirect targets included, so narrowing the
 deployment's approvals also applies to existing jobs. The job level is applied by the crawl logic
-(Phase 4). Out-of-scope links are recorded (`is_internal = false`) but never fetched.
+(Phase 4): a link is internal, and can be admitted, only if its host is the seed's host and it is
+an approved target; the same rule decides whether a redirect target is admitted. Out-of-scope
+links are recorded (`is_internal = false`) but never fetched.
 
 These checks are syntactic, with no DNS lookups. They are **not** a complete SSRF defense: an
 approved name can resolve to any address, and DNS answers can change. Before every request, the
 safe fetcher (section 12.3) must validate the resolved address and pin the connection to it.
 
-### 8.3 BFS depth correctness
+### 8.3 BFS depth correctness (implemented in Phase 4)
 
 The seed has depth 0, and each link hop adds 1. Pages at `max_depth` are fetched, and their links are
 recorded but not admitted.
@@ -549,9 +576,10 @@ fetched pages.
 
 *Consequence.* With identical site content and no transient failures, the set of crawled URLs and their
 depths does not depend on the number of workers or on timing. The tests check this by comparing a
-1-worker crawl with an N-worker crawl.
+1-worker crawl with an N-worker crawl. Phase 4 compares 1 and 6 concurrent tasks of the
+single-process driver; Phase 5 repeats it across processes.
 
-### 8.4 Page budget (`max_pages`)
+### 8.4 Page budget (`max_pages`, implemented in Phase 4)
 
 - `max_pages` bounds the number of URLs admitted to a job, seed included. Each admitted URL produces at
   most one result, so a job stores at most `max_pages` pages.
@@ -561,6 +589,8 @@ depths does not depend on the number of workers or on timing. The tests check th
 - Level advancement admits candidates in a deterministic order: by source URL, then by link position. If
   the budget runs out partway through a level, the admitted set is a deterministic prefix of BFS order.
 - URLs that robots.txt disallows still consume budget: they are admitted first and then `skipped`.
+- Tests: 1 and 4 concurrent tasks admit the same prefix, and eight concurrent redirect
+  admissions competing for the last slot admit exactly one URL.
 
 ### 8.5 Redirects
 
@@ -572,22 +602,22 @@ The HTTP stack never follows redirects. The safe fetcher (Phase 3) supports two 
 - **Return** (`max_redirects=0`): the 3xx response is the result, with its normalized
   `redirect_location`. Nothing connects to the target.
 
-The crawl logic (Phase 4) chooses between the following plan, which needs the "return" mode, and
-following inline:
+Phase 4 crawls pages in the "return" mode ([ADR-0014](adr/0014-crawl-state-transactions-and-redirects.md)):
 
 - A 3xx response is recorded on the URL as `fetched`, with
   `outcome = redirect` and the `redirect_target`.
 - The worker's result transaction admits the target, at the **same depth**, while holding the job row
-  lock, provided that:
-  - the normalized target is in scope;
-  - the redirect chain is within the hop limit;
-  - budget remains.
+  lock (taken after the URL row), provided that:
+  - the normalized target is in the job's scope (the seed's host, and an approved target);
+  - the redirect chain is within the hop limit: the redirecting URL's `redirect_hops` is below
+    `SITESCOPE_FETCH_MAX_REDIRECTS`, and the target gets `redirect_hops + 1`;
+  - budget remains, and the job is still running.
 
   A redirect is not a link hop, and the target finishes within the current level.
 - The target then goes through the whole pipeline (scope, robots.txt, DNS and IP validation, rate limit),
   so a redirect cannot bypass any check.
-- robots.txt (Phase 4) follows redirects inline, up to five hops, with the fetcher's "follow"
-  mode.
+- robots.txt follows redirects inline, up to five hops, with the fetcher's "follow" mode
+  (section 12.5).
 
 ### 8.6 Cancellation
 
@@ -604,7 +634,7 @@ URL. After that:
   lease duration.
 - Cancel is idempotent. Cancelling a terminal job returns its current state.
 
-### 8.7 Terminal completion
+### 8.7 Terminal completion (implemented in Phase 4)
 
 A running job completes when no URL is `pending`, `queued`, or `in_progress` and no further level can be
 admitted, because the depth limit was reached, the budget ran out, or there are no new in-scope links.
@@ -618,11 +648,11 @@ can show "nothing in progress" while new work is about to appear.
 | | Transaction | Steps | Notes |
 |---|---|---|---|
 | T1 | Create job (Phase 2C) | insert job + seed URL | one transaction, no Redis. Planned for Phase 6: repeating an `Idempotency-Key` returns the existing job, and a different request body returns `409` |
-| T2 | Activate | compare-and-set `queued -> running` | |
-| T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task |
-| T4 | Claim | compare-and-set update (sketch below) | committed before any network I/O |
-| T5 | Result | fencing check → page → links → `search_documents` row (`pending`) → URL outcome with `result_epoch` (or retry) → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
-| T6 | Advance | lock job → verify no unfinished URLs → admit next level or set terminal | a single writer per job |
+| T2 | Activate | compare-and-set `queued -> running` | Phase 4 |
+| T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task. Phase 4 marks rows `queued` without `XADD` and hands the IDs to in-process tasks |
+| T4 | Claim | compare-and-set update (sketch below) | committed before any network I/O; a takeover is logged as a `url.recovered` event (Phase 4) |
+| T5 | Result | fenced update of the URL (outcome, `result_epoch = :token`) → page → links → `search_documents` row (`pending`, not for `noindex`) → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing (Phase 4, ADR-0014); zero rows from the fenced update: roll back, discard, do not `XACK`; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
+| T6 | Advance | lock job → verify no unfinished URLs → admit next level or set terminal | a single writer per job (Phase 4) |
 | T7 | Cancel | lock job → set status → cancel `pending` and `queued` URLs | |
 | T8 | Index relay | lock `pending` `search_documents` rows `FOR UPDATE SKIP LOCKED` → `XADD` → set `queued`, `dispatched_at`, `stream_entry_id` | same publish-then-mark pattern as T3 |
 | T9 | Index | write `search_vector`, `indexed_content_version`, `status = 'indexed'` → commit → `XACK` | idempotent |
@@ -647,23 +677,30 @@ WHERE  u.id = :url_id
 RETURNING u.lease_epoch, u.url, u.depth, j.allowed_hosts, j.max_depth;
 ```
 
-Fenced result commit (sketch):
+Fenced result commit (as implemented in Phase 4, `record_result`; ADR-0014):
 
 ```sql
 BEGIN;
-SELECT 1 FROM crawl_urls
-WHERE  id = :url_id AND state = 'in_progress' AND lease_epoch = :epoch
-FOR UPDATE;   -- no row: fenced out -> ROLLBACK, discard the result, do NOT XACK
-INSERT INTO pages ...             ON CONFLICT (crawl_url_id) DO NOTHING;
-INSERT INTO page_links ...        ON CONFLICT (source_page_id, target_normalized_url) DO NOTHING;
-INSERT INTO search_documents ...  ON CONFLICT (page_id) DO NOTHING;  -- status 'pending'
 UPDATE crawl_urls
 SET    state = 'fetched', http_status = :status, outcome = :outcome,
-       result_epoch = :epoch,  -- CHECK result_epoch = lease_epoch (ADR-0010)
+       result_epoch = :token,  -- the worker's own token; CHECK result_epoch = lease_epoch
        finished_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
-WHERE  id = :url_id;
+WHERE  id = :url_id AND state = 'in_progress' AND lease_epoch = :token
+RETURNING normalized_url, depth, redirect_hops;
+-- no row: fenced out -> ROLLBACK, discard the result, do NOT XACK
+INSERT INTO pages ... RETURNING id;   -- a second page would break an invariant: it rolls back
+INSERT INTO page_links ...;
+INSERT INTO search_documents ...;     -- status 'pending'; not for a noindex page
+-- a redirect in scope: SELECT ... FROM crawl_jobs WHERE id = :job FOR UPDATE, then
+-- INSERT INTO crawl_urls ... ON CONFLICT (job_id, normalized_url) DO NOTHING, admitted_count + 1
 COMMIT;       -- then XACK
 ```
+
+The fenced update comes first, so a lost lease writes nothing at all. `result_epoch` is always
+bound to the token the claim returned; `SET result_epoch = lease_epoch` would satisfy every
+database rule and defeat fencing (ADR-0011). A URL whose lease expired after its last allowed
+attempt is failed by a *recovery claim* (a new token, no attempt counted) followed by the same
+fenced update.
 
 Rules:
 
@@ -676,6 +713,11 @@ Rules:
   touch only rows that no worker holds: `pending` and `queued` URLs, and newly inserted rows. There is no
   cycle, so there is no deadlock. Any new transaction must also lock a URL row before its job row, or
   show that it touches disjoint rows.
+- **Implicit waits.** A unique check waits for any transaction that is updating a row with the same
+  key, so `INSERT ... ON CONFLICT` can wait like a lock. While a transaction holds the job row lock,
+  it must not insert a key that may exist: redirect admission checks for a known target with a plain
+  `SELECT` first, and level advancement inserts only targets that `NOT EXISTS` found absent
+  (ADR-0014).
 - **Contention.** The dispatcher and the relay select rows with `SKIP LOCKED`, so concurrent instances
   never block each other and never pick the same rows.
 - **Uniqueness.** Unique constraints keep racing duplicate inserts safe even when application-level
@@ -714,11 +756,15 @@ A worker gives up before its lease ends. A message therefore becomes reclaimable
 worker has finished, failed, or stalled abnormally. If a stalled worker later resumes, the fencing check
 rejects its commit. The process refuses to start with settings that violate this ordering.
 
+Implemented in Phase 4: `SITESCOPE_CRAWL_LEASE_SECONDS` (90) must be at least the fetch deadline
+plus 10 s, and each task runs under a deadline that ends 10 s before its lease. `reclaim_min_idle`
+and `reconcile_after` arrive with the streams and the reconciler (Phases 5 and 6).
+
 Initial defaults are starting points to validate in tests, not measured values:
 
 | Setting | Default |
 |---|---|
-| task deadline | 60 s |
+| task deadline | 80 s: the lease minus 10 s (the fetch alone: 60 s) |
 | lease duration | 90 s |
 | reclaim min-idle | 120 s |
 | reconcile after | 10 min |
@@ -766,6 +812,9 @@ Initial defaults are starting points to validate in tests, not measured values:
   loses a retry, and a waiting retry never occupies a worker slot.
 - **Infrastructure calls:** PostgreSQL and Redis calls get a few short in-process retries. After that, the
   message stays pending and is recovered as in F3 and F4.
+- **Phase 4:** no retries yet. A retryable failure ends its URL as `failed` with the failure kind as
+  its outcome, and the single-process driver stops on a PostgreSQL or Redis error (its leases
+  expire, and the next run takes them over).
 
 ### 10.6 Redis and PostgreSQL consistency limitations
 
@@ -798,10 +847,14 @@ The integration, concurrency, and fault tests (Phases 4 to 6) check these after 
    fixture site with 1 worker gives the same result as crawling it with N workers.
 4. Each URL has at most one committed result, and each `html_stored` URL has exactly one `pages` row.
 5. A terminal job has no unfinished URLs, and its data never changes afterward.
-6. Every stored page has exactly one `search_documents` row, and every `pending` one is eventually
-   published and indexed.
+6. Every stored page without `noindex` has exactly one `search_documents` row, a `noindex` page has
+   none (ADR-0014), and every `pending` one is eventually published and indexed.
 7. No request is ever sent to a blocked destination. Tests assert this with a recording resolver and a
    recording transport.
+
+Phase 4 checks invariants 1, 2, 4, 5 and 6, the parent-depth rule behind 3, and 7 (every
+connection recorded) after every end-to-end crawl, and compares the exact expected depths
+(`backend/tests/integration/test_local_crawler.py`).
 
 ## 12. Security model
 
@@ -874,37 +927,56 @@ site-local addresses, as global.
 ### 12.4 Resource bounds
 
 All values are configurable. The defaults are starting points, not measurements. The first five
-rows are implemented by the safe fetcher and the parser (Phase 3).
+rows are implemented by the safe fetcher and the parser (Phase 3), the politeness row by Phase 4.
 
 | Bound | Mechanism | Initial default |
 |---|---|---|
 | Time | connect timeout (also bounds DNS and the TLS handshake), read/write timeout, and an overall deadline for the whole fetch, redirects included (stops slow-drip responses) | 10 s, 10 s, 60 s |
 | Size | streamed read with a wire limit and a **decoded** limit; decompression in 64 KiB slices, so a bomb never inflates beyond the limit; an oversized body is rejected, never truncated | 2 MiB decoded (at most 10 MiB) |
-| Content type and coding | only `text/html` and `application/xhtml+xml`; only `gzip` and `deflate` are advertised and decoded | n/a |
+| Content type and coding | pages: only `text/html` and `application/xhtml+xml`; robots.txt: any media type, first 500 KiB kept (Phase 4); only `gzip` and `deflate` are advertised and decoded | n/a |
 | Redirects | followed by the fetcher, never by the HTTP stack; each hop validated; loops detected | 5 |
 | URLs and links | maximum URL length; links kept per page; text kept per page | 2048 bytes; 1000 links; 1,000,000 characters |
 | Crawl size | per-job `max_depth` and `max_pages`, under server-side caps | set per deployment |
 | Concurrency | per-worker semaphore, per-job in-flight window, cap on running jobs | set per deployment |
-| Politeness | per-host rate limit shared by all workers (GCRA in a Redis Lua script, using Redis server time); robots.txt `Crawl-delay` as a lower bound, capped | 1 request/s per host |
+| Politeness | per host, shared by all workers: a first-come-first-served queue, spacing between request starts, and a cap on requests in flight, in one Redis Lua script using Redis server time; robots.txt `Crawl-delay` raises the interval, capped; a request without a slot within the maximum wait fails as `rate_limited` before anything is sent (ADR-0015) | 1 request/s and 1 in flight per host; 30 s maximum wait; crawl delay capped at 10 s |
 
-### 12.5 robots.txt (RFC 9309)
+### 12.5 robots.txt (RFC 9309; implemented in Phase 4)
 
-- robots.txt is fetched once per origin through the same safe fetcher, cached in Redis for at most
-  24 hours, and parsed up to 500 KiB.
-- The rule group is selected by user-agent token. `Allow` and `Disallow` use longest-match precedence and
-  support the `*` and `$` wildcards.
+`backend/app/crawler/robots.py`, [ADR-0015](adr/0015-robots-txt-and-per-host-politeness.md):
+
+- robots.txt is fetched through the same safe fetcher (scope check, DNS validation, pinning,
+  politeness) with the `ROBOTS_TXT` content policy: any media type, the first 500 KiB parsed and
+  the rest ignored. The last line of a truncated file is dropped, because the cut may have
+  changed its meaning. Redirects are followed for up to five hops, each validated again.
+- Results are cached in Redis per origin and crawler name, for at most 24 hours. A process also
+  keeps them in memory (60 s at most, never past the Redis entry's expiry), and concurrent checks
+  of one origin share one fetch.
+- Groups follow the RFC grammar: consecutive `user-agent` lines form one group until its first
+  rule, and other records (`sitemap`, `crawl-delay`, unknown keys) never end a group. The
+  crawler's name (`SITESCOPE_CRAWLER_NAME`) is matched case-insensitively against each value's
+  product token; matching groups are combined; without one, the `*` groups apply.
+- `Allow` and `Disallow` match the path and query, case-sensitively, after both sides get the same
+  percent-encoding. The longest pattern wins and `Allow` wins ties; `*` and a final `$` are
+  wildcards; `/robots.txt` is always allowed. Matching uses no regular expressions; rule sets
+  above 1,000 rules are matched in a worker thread (a hostile 500 KiB file measured about 20 ms
+  per check).
 - Status handling:
-  - 4xx (other than 429): no restrictions.
-  - 5xx, 429, or a network error: complete disallow for now, with a later retry. Treating 429 like a 5xx
-    is a deliberately conservative choice.
-  - Redirects: followed for up to five hops.
+  - 2xx: the rules are parsed.
+  - 4xx (other than 429), more than five redirects, or a redirect loop: no restrictions.
+  - 5xx, 429, network, TLS, protocol or size failures, a redirect to an unapproved target, or a
+    blocked address: complete disallow, cached for `SITESCOPE_ROBOTS_RETRY_SECONDS` (300 s), then
+    fetched again. Treating 429 like a 5xx is a deliberately conservative choice.
+  - No politeness slot in time (`rate_limited`): not cached; that URL fails.
+- A disallowed URL is `skipped` (`robots_disallowed`); every URL of an origin whose robots.txt is
+  unreachable is `skipped` (`robots_unreachable`). Both still consume budget.
 - Python's `urllib.robotparser` applies the first matching rule and does not support path wildcards, so
-  it is not RFC 9309-compliant. Phase 4 will choose a compliant parser: either a small, well-tested
-  library or our own implementation with tests.
-- Page-level `<meta name="robots">` and `X-Robots-Tag` are honored. `noindex` keeps the page out of
-  search, and `nofollow` stops its links from being admitted. Since Phase 3, the parser reports the
-  meta directives (`ParsedPage.robots`) and the fetcher keeps the `X-Robots-Tag` header; the crawl
-  logic (Phase 4) acts on them.
+  it is not RFC 9309-compliant. SiteScope uses its own small parser, tested against the RFC's
+  examples.
+- Page-level directives: `<meta name="robots">`, `<meta name="<crawler name>">` and
+  `X-Robots-Tag` headers (a `name:` prefix scopes a header's directives to that crawler).
+  `noindex` keeps the page out of search (no `search_documents` row), `nofollow` stops its links
+  from being admitted, and `none` means both. `rel="nofollow"` stops one link. Links are recorded
+  in every case (ADR-0014).
 
 ### 12.6 Untrusted content in the dashboard
 
@@ -981,7 +1053,13 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 | Tasks | `task.dispatched`, `task.claimed`, `task.committed`, `task.fenced`, `task.retry_scheduled`, `task.dead_lettered` |
 | Recovery | `lease.taken_over`, `reconcile.republished` |
 | Fetching (Phase 3) | `fetch.destination_blocked` (WARNING: host and address classes, never the URL or the addresses), `fetch.completed` (DEBUG) |
+| Crawl (Phase 4) | `crawl.run_started`, `crawl.run_finished`, `job.started`, `job.level_advanced`, `job.completed`, `job.failed`, `task.completed`, `task.fenced`, `task.parse_failed`, `lease.taken_over`, `url.failed`, `robots.fetched`, `robots.fetch_failed`, `politeness.rate_limited`, `politeness.release_failed` |
 | Indexing | `outbox.published`, `index.upserted` |
+
+Since Phase 4, a crawl task's log lines carry `job_id`, `url_id`, `worker_id` and `lease_epoch`
+from a context variable (`task_context_var`), including lines logged by the fetcher. The job
+lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) and recovery
+(`url.recovered`, `url.failed`) are also written to `crawl_events`.
 
 **Health**
 
@@ -1010,7 +1088,10 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
   - concurrency
   - timing
   - retries
-  - politeness: rate limit, and the user agent `SiteScopeBot/<version>`
+  - crawling (Phase 4): concurrency of the local driver, lease duration, attempts
+  - politeness (Phase 4): interval, requests in flight per host, maximum wait, robots.txt cache
+    and retry times, crawl-delay cap, and the crawler name for the user agent `<name>/<version>`
+    (default `SiteScopeBot`)
   - API: token, CORS
 - `backend/.env.example` lists every variable with a safe placeholder.
 - A local `backend/.env` is optional and git-ignored. It may contain only known `SITESCOPE_`
@@ -1066,15 +1147,17 @@ SITESCOPE/
 |   |   |-- scheduler/           # activator, dispatcher, level advancer, relay, reconciler, leader lock
 |   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, resolver,
 |   |   |                        #   safe fetcher, content limits, encodings, HTML parser (Phase 3);
-|   |   |                        #   robots.txt, rate limiter (Phase 4); no database imports
+|   |   |                        #   robots.txt, politeness gate, page directives (Phase 4);
+|   |   |                        #   no database imports (Redis for politeness and robots.txt)
 |   |   |-- indexing/            # search document building
-|   |   `-- workers/             # crawler and indexer entrypoints, shared consumer runtime
+|   |   `-- workers/             # crawl task, single-process driver (Phase 4); crawler and
+|   |                            #   indexer entrypoints, shared consumer runtime (Phases 5, 7)
 |   `-- tests/
 |       |-- unit/
 |       |-- integration/
 |       `-- fault/
 |-- frontend/                    # Phase 9 (currently empty)
-|-- demo-site/                   # Phases 3 and 11: static site + robots.txt, the approved demo target
+|-- demo-site/                   # Phase 4: static site + robots.txt; Phase 11: its container
 |-- benchmarks/                  # Phase 10: scripts, raw results, environment notes
 `-- docs/
     |-- architecture.md
@@ -1094,6 +1177,8 @@ SITESCOPE/
   - `core.config` validates the approved hosts with `crawler.scope` at startup.
   - `scheduler` and `workers` depend on `services`, `queue`, `crawler`, and `indexing`.
   - `crawler` and `queue` have no domain or database dependencies, which keeps them unit-testable.
+    The crawler's politeness gate and robots.txt cache use Redis through small interfaces, so
+    their logic is tested with test doubles too.
 
 ## 17. Technology choices
 
@@ -1110,7 +1195,7 @@ SITESCOPE/
 | TLS verification | `truststore` 0.10 (already required by `httpcore2`) | the operating system's verifier, as browsers use; OpenSSL alone failed to verify public sites on the Windows development machine |
 | URL hosts | `idna` 3.20 (already installed with AnyIO and httpx2) | IDNA 2008 / UTS #46; the standard library's codec implements IDNA 2003, which merges distinct host names |
 | HTML parsing | BeautifulSoup 4.15 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it. It builds the whole tree, so input is capped at the body limit and parsing should run off the event loop |
-| robots.txt | chosen in Phase 4 | must be RFC 9309-compliant (§12.5) |
+| robots.txt | own parser and matcher (`app/crawler/robots.py`, Phase 4) | RFC 9309-compliant (§12.5), tested against the RFC's examples; `urllib.robotparser` is not compliant, and a small module avoids a native dependency (ADR-0015) |
 | Logging | stdlib `logging` + a JSON formatter | no extra dependency |
 | Tests | pytest with warnings treated as errors; Starlette's TestClient (needs `httpx2`); AnyIO's bundled pytest plugin for async tests; the HTTP client's mock transport for crawler tests | no extra plugin dependency: AnyIO is already installed with Starlette |
 | Quality | ruff (lint and format), mypy | |
@@ -1127,6 +1212,9 @@ SITESCOPE/
 | Fault injection | deterministic crash points (before claim, after claim, before commit, after commit but before ack); a worker stalled past its lease; `FLUSHALL` mid-crawl; a dispatcher crash between `XADD` and commit; poison messages; killing a real worker process | PostgreSQL, Redis |
 | Security | SSRF table tests (IPv4 and IPv6 address classes, mapped forms, alternative host encodings, redirects to private addresses, rebinding through a scripted resolver); size and time limits; robots.txt semantics | nothing, or a loopback fixture |
 | Fetching (Phase 3) | the safe fetcher against real HTTP and TLS servers on 127.0.0.1: pinned connections (recorded), SNI and `Host` header, rebinding, redirects, TLS failures (a throwaway CA from `trustme`), limits, decompression bombs, malformed, truncated and slow responses | local loopback servers only |
+| Crawl state (Phase 4) | claims, takeovers, fenced results and rollback, redirect admission, level advancement, recovery; budget and deduplication under concurrent transactions; the SQL sent binds the worker's token | PostgreSQL |
+| Politeness and robots.txt (Phase 4) | the gate on a fake clock with an in-memory store (no real waiting); the Lua script on real Redis, with exact spacing read from Redis; robots.txt parsing, matching and status mapping; the policy against local servers | nothing; Redis; local servers |
+| Local crawls (Phase 4) | the single-process driver over fixture graphs and the demo site on 127.0.0.1: exact URL sets and depths, budget prefix, directives, failures, redirects, robots.txt, crash recovery with a short lease, politeness spacing, 1 vs N concurrent tasks; invariants after every crawl | PostgreSQL, Redis, local servers |
 | End-to-end | crawl a local fixture site over real HTTP, then check search results and link reports | full stack |
 | Frontend | components and the API client; type check; production build | Node.js |
 
@@ -1146,7 +1234,12 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 - Messages can be duplicated, delayed, reordered, or lost in Redis.
 - Server clocks are NTP-synchronized. Even so, correctness relies only on the PostgreSQL clock (leases)
   and the Redis clock (idle times and rate limits). This matters on the development machine: the
-  Windows host and the WSL VM clocks were observed about 160 ms apart.
+  Windows host and the WSL VM clocks were observed about 160 ms apart, and in Phase 4 the WSL VM
+  clock (the clock of PostgreSQL and Redis) stepped back about one second during a test run.
+  Clocks can step: job timestamps are therefore clamped to `created_at` (ADR-0014), and the
+  politeness script turns a backward step into at most one interval of extra wait (ADR-0015).
+  Leases are safe either way: a backward step lengthens them, and a forward step shortens them,
+  which can cause an early takeover, but fencing still rejects the old holder's result.
 - The scale is small: up to about 10^5 URLs per deployment and between a few and a few tens of worker
   processes.
 
@@ -1163,6 +1256,20 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 - For a single host, throughput is bounded by that host's rate limit, not by the number of workers.
   Horizontal scaling helps across hosts and jobs.
 - URLs disallowed by robots.txt consume page budget.
+- Until Phase 6, a retryable failure (timeout, connection error, HTTP 429 or 5xx, no politeness
+  slot in time) ends its URL as `failed`.
+- An unreachable robots.txt disallows its origin for the retry time (300 s), and again after each
+  failed retry. A job whose seed is affected fails.
+- `noindex` pages are stored (without a search document); only search leaves them out.
+- Separate processes may each fetch an expired robots.txt once (those fetches still pass the
+  politeness gate).
+- Politeness is per host name: two names served by one machine are limited separately. A host's
+  crawl delay is the largest `Crawl-delay` of its origins' robots.txt; a lower one takes effect
+  only when the stored value expires (at most 24 hours).
+- A task may need two fetches, robots.txt and then the page. If both are slow, the task deadline
+  (lease minus 10 s) can end it first, as `deadline_exceeded`, which Phase 6 will retry.
+- The single-process driver stops on a PostgreSQL or Redis error. The next run continues once the
+  stopped run's leases expire.
 - HTML only, no JavaScript rendering, and English-only text search.
 - HTTP/1.1 only. A response without a `Content-Type` is not sniffed: it is refused as
   unsupported. Only the first member of a multi-member gzip body is read.
@@ -1190,3 +1297,5 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 | [0011](adr/0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims |
 | [0012](adr/0012-approved-crawl-targets.md) | Approved crawl targets are host patterns, plus allowed schemes and ports |
 | [0013](adr/0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop |
+| [0014](adr/0014-crawl-state-transactions-and-redirects.md) | Crawl state transactions, same-level redirects, and page directives |
+| [0015](adr/0015-robots-txt-and-per-host-politeness.md) | robots.txt (RFC 9309) and per-host politeness through Redis |

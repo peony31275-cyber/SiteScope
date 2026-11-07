@@ -22,8 +22,10 @@ class FetchResult:
 
     Two shapes exist:
 
-    * a 2xx HTML document: ``body`` holds the complete body, with any content coding (gzip,
-      deflate) removed, and never more than the configured maximum;
+    * a 2xx document accepted by the fetch's content policy (HTML by default): ``body`` holds
+      the body, with any content coding (gzip, deflate) removed, and never more than the
+      configured maximum. It is complete, except under a truncating policy (robots.txt), where
+      ``truncated`` says that the body was cut at the limit;
     * a redirect, returned only when the caller asked not to follow it (``max_redirects=0``):
       ``redirect_location`` holds the normalized target and ``body`` is empty. The target has
       not been checked against the crawl scope or resolved, because nothing connected to it.
@@ -41,3 +43,7 @@ class FetchResult:
     remote_address: str  # the IP address the final response actually came from
     wire_bytes: int  # body bytes received, before content decoding
     elapsed_seconds: float  # the whole fetch: resolution, redirects and body
+    # Each X-Robots-Tag header of the final response, separately and in order: a user-agent
+    # prefix ("otherbot: noindex") applies only within its own header.
+    robots_tags: tuple[str, ...] = ()
+    truncated: bool = False  # the body was cut at a truncating policy's limit

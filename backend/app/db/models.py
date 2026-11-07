@@ -339,6 +339,10 @@ class Page(Base):
     byte_size: Mapped[int] = mapped_column(Integer)
     fetch_duration_ms: Mapped[int | None] = mapped_column(Integer)
     fetched_at: Mapped[datetime]
+    # Robots directives (meta robots, X-Robots-Tag; migration 0003, ADR-0014): a noindex page gets
+    # no search_documents row; the links of a nofollow page are recorded but never admitted.
+    robots_noindex: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    robots_nofollow: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), server_onupdate=FetchedValue()
@@ -390,8 +394,10 @@ class PageLink(Base):
     anchor_text: Mapped[str | None] = mapped_column(Text)
     # Order of the first occurrence within the source document (deterministic BFS admission).
     position: Mapped[int] = mapped_column(Integer)
-    # Whether the target is inside the job's crawl scope.
+    # Whether the target is inside the job's scope and an approved crawl target (when stored).
     is_internal: Mapped[bool] = mapped_column(Boolean)
+    # rel="nofollow" on this link: recorded, never admitted (migration 0003).
+    nofollow: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     __table_args__ = (

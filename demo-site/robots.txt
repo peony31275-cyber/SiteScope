@@ -1,0 +1,5 @@
+# robots.txt of the SiteScope demo site (RFC 9309).
+# Every crawler may visit the whole site except /private/, where only the press kit is public.
+User-agent: *
+Disallow: /private/
+Allow: /private/press-kit.html
