@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from app.core.config import Settings, get_settings
 
@@ -16,6 +17,9 @@ def test_defaults() -> None:
 def test_reads_prefixed_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SITESCOPE_ENVIRONMENT", "production")
     monkeypatch.setenv("SITESCOPE_LOG_LEVEL", "WARNING")
+    # Production requires real credentials (Phase 2B).
+    monkeypatch.setenv("SITESCOPE_POSTGRES_PASSWORD", "unit-test-postgres-secret")
+    monkeypatch.setenv("SITESCOPE_REDIS_PASSWORD", "unit-test-redis-secret")
 
     settings = Settings(_env_file=None)
 
@@ -94,3 +98,91 @@ def test_get_settings_returns_one_cached_instance() -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+# --- PostgreSQL and Redis settings (Phase 2B) ---------------------------------------------------
+
+
+def test_connection_defaults_target_local_containers() -> None:
+    settings = Settings(_env_file=None)
+
+    assert (settings.postgres_host, settings.postgres_port) == ("127.0.0.1", 5432)
+    assert (settings.redis_host, settings.redis_port, settings.redis_db) == ("127.0.0.1", 6379, 0)
+    assert settings.postgres_password is None
+    assert settings.missing_credentials() == [
+        "SITESCOPE_POSTGRES_PASSWORD",
+        "SITESCOPE_REDIS_PASSWORD",
+    ]
+
+
+def test_database_url_escapes_and_masks_the_password() -> None:
+    settings = Settings(
+        _env_file=None, postgres_password=SecretStr("p@ss:w/rd#1"), postgres_db="sitescope"
+    )
+
+    url = settings.database_url
+
+    assert url.drivername == "postgresql+asyncpg"
+    assert url.password == "p@ss:w/rd#1"
+    assert "p@ss" not in str(url)  # str() masks the password
+    rendered = url.render_as_string(hide_password=False)
+    assert "p%40ss%3Aw%2Frd%231@127.0.0.1:5432/sitescope" in rendered
+
+
+def test_secrets_are_masked_in_settings_repr() -> None:
+    settings = Settings(
+        _env_file=None,
+        postgres_password=SecretStr("pg-secret"),
+        redis_password=SecretStr("rd-secret"),
+    )
+
+    assert "pg-secret" not in repr(settings)
+    assert "rd-secret" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        {},
+        {"postgres_password": SecretStr("real-postgres-secret")},
+        {
+            "postgres_password": SecretStr("change-me-local-postgres-password"),
+            "redis_password": SecretStr("real-redis"),
+        },
+    ],
+    ids=["none", "redis-missing", "placeholder"],
+)
+def test_production_requires_real_credentials(credentials: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="production requires real values"):
+        Settings(_env_file=None, environment="production", **credentials)
+
+
+def test_production_accepts_real_credentials() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        postgres_password=SecretStr("real-postgres-secret"),
+        redis_password=SecretStr("real-redis-secret"),
+    )
+
+    assert settings.missing_credentials() == []
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_POSTGRES_PORT", "0"),
+        ("SITESCOPE_REDIS_PORT", "70000"),
+        ("SITESCOPE_REDIS_DB", "16"),
+        ("SITESCOPE_DB_POOL_SIZE", "0"),
+        ("SITESCOPE_READINESS_TIMEOUT_SECONDS", "0"),
+        ("SITESCOPE_POSTGRES_DB", "bad name; drop"),
+    ],
+)
+def test_rejects_out_of_range_connection_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

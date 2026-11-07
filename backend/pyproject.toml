@@ -9,9 +9,13 @@ requires-python = ">=3.13"
 dynamic = ["version"]
 # Lower bounds are the versions this phase was verified with.
 dependencies = [
-    "fastapi>=0.162",           # HTTP API framework
-    "uvicorn[standard]>=0.54",  # ASGI server
-    "pydantic-settings>=2.16",  # typed configuration from environment variables
+    "fastapi>=0.162",               # HTTP API framework
+    "uvicorn[standard]>=0.54",      # ASGI server
+    "pydantic-settings>=2.16",      # typed configuration from environment variables
+    "sqlalchemy[asyncio]>=2.1.8",   # ORM/Core with asyncio support (pulls in greenlet)
+    "asyncpg>=0.32",                # async PostgreSQL driver used by SQLAlchemy
+    "alembic>=1.20",                # schema migrations
+    "redis>=8.1",                   # official Redis client (redis.asyncio)
 ]
 
 [project.optional-dependencies]
@@ -53,10 +57,13 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]  # pytest relies on assert
+# pytest relies on assert (S101); tests use deliberately fake credentials (S105, S106).
+"tests/**" = ["S101", "S105", "S106"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
+# The local alembic/ migrations directory would otherwise make the alembic package look local.
+known-third-party = ["alembic"]
 
 # ---------------------------------------------------------------------------
 # mypy
@@ -64,7 +71,7 @@ known-first-party = ["app"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["app", "tests"]
+files = ["app", "tests", "alembic"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -81,3 +88,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 filterwarnings = ["error"]
+markers = [
+    "integration: needs the real PostgreSQL and Redis services from backend/compose.yaml",
+]

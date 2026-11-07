@@ -1,8 +1,12 @@
 # SiteScope Architecture
 
-> **Status: design baseline from Phase 0 (2026-11-06).** Phase 1 implemented only the API foundation:
-> configuration, structured logging, error handling, and the liveness endpoints. Everything else
-> described here is not implemented yet. [`development-roadmap.md`](development-roadmap.md) tracks what
+> **Status: design baseline from Phase 0 (2026-11-06).** Implemented so far:
+>
+> - Phase 1: the API foundation (configuration, structured logging, error handling, liveness).
+> - Phase 2B: the PostgreSQL schema (section 5), migrations, the PostgreSQL and Redis clients,
+>   and the readiness probe.
+>
+> Crawling, scheduling, workers and search are not implemented yet. [`development-roadmap.md`](development-roadmap.md) tracks what
 > has been built. Details will be refined
 > during implementation. Changing an invariant requires a new ADR in [`adr/`](adr/README.md).
 
@@ -12,7 +16,7 @@
 2. System overview
 3. Components and responsibilities
 4. End-to-end flow
-5. Data model (planned)
+5. Data model (implemented in Phase 2B)
 6. Redis layout
 7. Lifecycle state machines
 8. Crawl semantics
@@ -72,15 +76,15 @@
     v                                                                     |    of truth)
   crawler worker x N <-- claim URL lease (compare-and-set) -------------->+
     | safe fetch (HTTPX) -> parse (BeautifulSoup)                         |
-    + --- fenced commit: page + links + index_outbox + URL state -------->+
+    + --- fenced commit: page + links + search doc + URL outcome -------->+
                                                                           |
-  scheduler (outbox relay) <-- unpublished index_outbox rows -------------+
-    | XADD {page_id, content_hash}                                        |
+  scheduler (outbox relay) <-- pending search_documents rows -------------+
+    | XADD {page_id}, then mark rows `queued`                             |
     v                                                                     |
   Redis stream sitescope:index    (consumer group: indexers)              |
     |                                                                     |
     v                                                                     |
-  indexer worker --- upsert search_documents (tsvector + GIN) ----------->+
+  indexer worker --- write search_vector (GIN), mark row indexed -------->+
 ```
 
 The system has two planes:
@@ -101,7 +105,7 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 |---|---|---|---|
 | Dashboard | static SPA behind nginx | create and cancel jobs; show progress, pages, link reports, search | n/a |
 | API | `api`: `uvicorn app.main:app` | input validation, job commands, read models, search queries | stateless, N replicas |
-| Scheduler | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, index-outbox relay, reconciliation, stream maintenance | one active leader; standbys are safe |
+| Scheduler | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, index relay, reconciliation, stream maintenance | one active leader; standbys are safe |
 | Crawler worker | `crawler-worker`: `python -m app.workers.crawler` | consume the crawl stream, claim URL leases, fetch safely, parse, commit results (fenced), ack, adopt abandoned messages | N processes, each with bounded concurrency |
 | Indexer worker | `indexer-worker`: `python -m app.workers.indexer` | consume the index stream, build a weighted `tsvector`, upsert idempotently, ack | 1..N |
 | PostgreSQL | service | durable state, constraints, row locks, full-text index | single instance |
@@ -129,7 +133,8 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 - *Level advancer / finalizer*: when a running job has no unfinished URLs, admits the next BFS level from
   the recorded links, or completes the job. Moves `cancelling` jobs to `cancelled` once no URL is in
   progress.
-- *Outbox relay*: publishes unpublished `index_outbox` rows to the index stream.
+- *Index relay*: publishes `pending` `search_documents` rows to the index stream and marks
+  them `queued` (the indexing outbox, ADR-0008).
 - *Reconciler*: repairs divergence between PostgreSQL and Redis: lost or trimmed messages, abandoned
   leases, and exhausted attempts.
 - *Maintenance*: trims streams and removes idle consumers.
@@ -150,9 +155,11 @@ two overlapping schedulers produce at most duplicate messages.
 
 **Indexer worker**
 
-- Consumes `{page_id, content_hash}` events.
+- Consumes `{page_id}` events.
 - Builds a weighted `tsvector`: title A, headings B, body C.
-- Upserts `search_documents` keyed by `page_id`. Pages are write-once, so replayed events are no-ops.
+- Writes the page's `search_vector` and `indexed_content_version`, and marks it `indexed`.
+  Rebuilding a vector from the same content gives the same result, so replayed events are
+  harmless.
 
 ## 4. End-to-end flow
 
@@ -175,7 +182,7 @@ two overlapping schedulers produce at most duplicate messages.
    - verifies the lease (fencing);
    - stores the page;
    - records every discovered link with its position and a scope flag;
-   - inserts an `index_outbox` row;
+   - inserts the page's `search_documents` row as `pending` (the indexing outbox);
    - marks the URL terminal, or, for a retryable failure, returns it to `pending` with a backoff.
 
    Then the worker sends `XACK`.
@@ -183,85 +190,197 @@ two overlapping schedulers produce at most duplicate messages.
    admits the next level's URLs from links recorded by the current level, in deterministic order, up to
    the remaining page budget. If nothing can be admitted, it marks the job `completed`, or `failed` if
    the seed itself was never fetched.
-8. **Index.** The relay publishes `index_outbox` rows, and the indexer upserts `search_documents`.
+8. **Index.** The relay publishes `pending` `search_documents` rows; the indexer writes each
+   vector and marks the row `indexed`.
 9. **Query.** The API serves progress, pages, link reports, and search results from PostgreSQL.
 
-## 5. Data model (planned)
+## 5. Data model (implemented in Phase 2B)
 
-This is the intended shape. Phase 2 turns it into Alembic migrations (Phase 6 for the search table).
-Types are abbreviated.
+The schema is created by migration `0001` (`backend/alembic/versions/0001_initial_schema.py`). The
+ORM models in `backend/app/db/models.py` mirror it, and an integration test compares the two
+(`alembic.autogenerate.compare_metadata` must report no differences). Six tables, nothing more.
 
-**`crawl_jobs`**: one row per crawl request.
+```
+crawl_jobs --1:N--> crawl_urls --1:0..1--> pages --1:N--> page_links ..> target URL (text only)
+    |                  ^    |                  |
+    |                  +----+                  +--1:0..1--> search_documents
+    |            discovered_from_url_id
+    |               (BFS parent)
+    +--1:N--> crawl_events --N:0..1--> crawl_urls
+```
+
+| Table | Role | Primary key |
+|---|---|---|
+| `crawl_jobs` | one crawl request: configuration, lifecycle, BFS level, page budget | `id` UUIDv7 |
+| `crawl_urls` | the URL frontier and each URL's lifecycle; **the crawl-task outbox** (ADR-0002) | `id` UUIDv7 |
+| `pages` | content extracted from a fetched HTML document; at most one per crawl URL | `id` UUIDv7 |
+| `page_links` | the crawl graph: every http(s) link on a page; targets need not be crawled | `(source_page_id, target_normalized_url)` |
+| `search_documents` | per-page full-text index state; **the indexing outbox** (ADR-0008) | `page_id` |
+| `crawl_events` | append-only audit log of lifecycle events | `id` bigint identity |
+
+UUIDv7 keys are generated by PostgreSQL 18's `uuidv7()`. They are time-ordered, so new rows land at
+the end of the primary-key index instead of at random positions.
+
+### 5.1 Columns
+
+**`crawl_jobs`**
 
 | Column | Notes |
 |---|---|
-| `id uuid` PK | |
-| `seed_url text` | normalized |
-| `allowed_hosts text[]` | crawl scope; defaults to the seed host; must lie within the deployment allowlist |
-| `max_depth smallint`, `max_pages int` | validated against server-side caps |
-| `status text` | `queued`, `running`, `cancelling`, `completed`, `failed`, `cancelled` (CHECK) |
-| `current_level smallint` | BFS level currently being crawled |
-| `admitted_count int` | URLs admitted so far; `CHECK (admitted_count <= max_pages)` |
-| `idempotency_key text` UNIQUE NULL, `request_fingerprint bytea` | job-creation idempotency |
-| `failure_reason text` NULL | |
-| `created_at`, `started_at`, `finished_at`, `cancel_requested_at` | `timestamptz` |
+| `seed_url` | normalized URL |
+| `allowed_hosts text[]` | crawl scope; within the deployment allowlist |
+| `max_depth`, `max_pages` | crawl limits |
+| `status` | `queued`, `running`, `cancelling`, `completed`, `failed`, `cancelled` |
+| `current_level` | the BFS level being crawled |
+| `admitted_count` | page budget used |
+| `idempotency_key`, `request_fingerprint` | job-creation idempotency (SHA-256) |
+| `failure_reason` | set when the job fails |
+| timestamps | `created_at`, `updated_at`, `started_at`, `finished_at`, `cancel_requested_at`, `indexing_completed_at` |
 
-**`crawl_urls`**: the frontier and the lifecycle of each URL. This table also serves as the outbox for
-crawl tasks.
+**`crawl_urls`**
 
 | Column | Notes |
 |---|---|
-| `id bigint` identity PK | |
-| `job_id uuid` FK | |
-| `url text`, `url_hash bytea` | normalized URL and its SHA-256; `UNIQUE (job_id, url_hash)` |
-| `depth smallint` | BFS distance from the seed |
-| `discovered_from_url_id bigint` NULL | BFS parent (first discoverer) |
-| `redirect_hops smallint` | length of the redirect chain that led here |
-| `state text` | `pending`, `queued`, `in_progress`, `fetched`, `failed`, `skipped`, `cancelled` (CHECK) |
-| `attempt_count smallint`, `next_attempt_at timestamptz` | retry control |
-| `lease_epoch bigint`, `lease_owner text`, `lease_expires_at timestamptz` | lease; `lease_epoch` is the fencing token |
-| `stream_entry_id text`, `dispatched_at timestamptz` | last publication, used by the reconciler |
-| `http_status smallint`, `outcome text`, `last_error text` | e.g. `html_stored`, `non_html`, `redirect`, `robots_disallowed`, `timeout` |
-| `redirect_target text` NULL | normalized `Location` of a 3xx response |
-| `created_at`, `updated_at`, `finished_at` | |
+| `job_id`, `normalized_url` | `COLLATE "C"` |
+| `depth` | BFS distance from the seed |
+| `discovered_from_url_id` | BFS parent |
+| `redirect_hops` | |
+| `state` | `pending`, `queued`, `in_progress`, `fetched`, `failed`, `skipped`, `cancelled` |
+| `attempt_count`, `next_attempt_at` | retry control |
+| `lease_epoch` (fencing token), `lease_owner`, `lease_expires_at`, `result_epoch` | lease and fencing |
+| `dispatched_at`, `stream_entry_id` | task publication state |
+| `http_status`, `outcome`, `last_error`, `redirect_target` | outcome |
+| timestamps | `created_at`, `updated_at`, `finished_at` |
 
-Partial indexes:
+**`pages`**
 
-- dispatch: `(job_id, depth, id) WHERE state = 'pending'`
-- liveness: `(job_id) WHERE state IN ('pending', 'queued', 'in_progress')`
-- leases: `(lease_expires_at) WHERE state = 'in_progress'`
+| Column | Notes |
+|---|---|
+| `job_id`, `crawl_url_id`, `normalized_url` | the crawl URL reference |
+| `http_status`, `content_type` | |
+| `title`, `meta_description`, `headings`, `extracted_text` | extracted content |
+| `content_hash` | SHA-256 |
+| `content_version` | starts at 1 |
+| `byte_size`, `fetch_duration_ms`, `fetched_at` | fetch details |
+| timestamps | `created_at`, `updated_at` |
 
-**`pages`**: content of fetched HTML documents. Rows are write-once. Columns: `id`, `job_id`,
-`crawl_url_id` (UNIQUE FK), `http_status`, `content_type`, `title`, `headings`, `body_text` (truncated),
-`content_hash`, `byte_size`, `fetched_at`, `fetch_ms`.
+**`page_links`**
 
-**`page_links`**: every http(s) link found on a page, which together form the crawl graph.
+| Column | Notes |
+|---|---|
+| `job_id` | |
+| `anchor_text` | first occurrence, ≤ 500 characters |
+| `position` | order in the document |
+| `is_internal` | whether the target is in the job's scope |
 
-- Columns: `id`, `job_id`, `source_page_id` (FK), `target_url`, `target_url_hash`, `anchor_text`
-  (truncated), `position` (order within the document), and `is_internal` (whether the target is in the
-  job's scope).
-- `UNIQUE (source_page_id, target_url_hash)`.
-- A target's status is found by joining `crawl_urls` on `(job_id, url_hash)`.
+The uniqueness policy is one row per (source page, target URL). Repeated links on the same page
+collapse to the first occurrence.
 
-**`index_outbox`**: `id`, `page_id`, `content_hash`, `created_at`, `published_at` NULL,
-`publish_attempts`. Partial index `WHERE published_at IS NULL`.
+**`search_documents`**
 
-**`search_documents`** (Phase 6): `page_id` (PK, FK), `job_id`, `url`, `title`, `search_vector tsvector`,
-`indexed_content_hash`, `indexed_at`, with a GIN index on `search_vector`.
+| Column | Notes |
+|---|---|
+| `job_id` | |
+| `status` | `pending`, `queued`, `indexed`, `failed` |
+| `indexed_content_version` | the content version the vector reflects |
+| `search_vector tsvector` | GIN-indexed |
+| `attempt_count`, `last_error` | retry control |
+| `dispatched_at`, `stream_entry_id` | publication state |
+| `indexed_at` | |
 
-Design notes:
+The page's `content_version` versus `indexed_content_version` tells whether a page needs
+(re)indexing. Setting `status` back to `pending` re-queues it.
 
-- States are `text` with a `CHECK` constraint rather than PostgreSQL enums, because that is easier to
-  evolve in migrations.
-- Uniqueness is enforced on a URL hash: long URLs are common, and B-tree index entries have a size limit.
-- All data is per job (snapshot semantics). The same URL stored in several jobs is accepted duplication.
+**`crawl_events`**
+
+| Column | Notes |
+|---|---|
+| `job_id`, `crawl_url_id` | `crawl_url_id` is optional |
+| `event_type` | dotted lowercase, e.g. `job.created`, `url.retry_scheduled` |
+| `from_state`, `to_state` | |
+| `worker_id`, `lease_epoch` | |
+| `detail jsonb` | an object; never secrets or page bodies |
+| `occurred_at` | |
+
+### 5.2 Constraints the database enforces
+
+| Concern | Enforcement |
+|---|---|
+| **Job isolation** | Every reference between job-scoped tables is a composite foreign key that includes `job_id`, e.g. `pages (crawl_url_id, job_id, normalized_url) -> crawl_urls (id, job_id, normalized_url)`. A page, link, search document, event or BFS parent can never point into another job. |
+| **Deduplication** (ADR-0009) | `UNIQUE (job_id, normalized_url)` on `crawl_urls`, used with `INSERT ... ON CONFLICT DO NOTHING`. `UNIQUE (crawl_url_id)` on `pages`. The primary key of `page_links`. |
+| **URL format** | http(s), printable ASCII without spaces, at most 2048 bytes (so B-tree entries always fit). `COLLATE "C"` gives deterministic byte ordering. |
+| **Page budget** | `CHECK (admitted_count BETWEEN 0 AND max_pages)`; `CHECK (current_level BETWEEN 0 AND max_depth)`. |
+| **Lifecycle** | Valid `status` / `state` values. `finished_at` is set exactly when the state is terminal. `started_at` is set once started. `failed` jobs carry a `failure_reason`; cancelled jobs carry `cancel_requested_at`. Timestamps are ordered. |
+| **Leases and fencing** (ADR-0010) | A lease (`lease_owner`, `lease_expires_at`) exists exactly while the URL is `in_progress`. `result_epoch` must equal `lease_epoch`, a claim must clear it, and worker outcomes (`fetched`, `failed`, `skipped`) must carry it. A trigger keeps `lease_epoch` from decreasing. |
+| **Publication** | `queued` rows have `dispatched_at`; `stream_entry_id` has the Redis entry-ID format. |
+| **Search state** | `indexed` documents have a vector, an indexed version and an `indexed_at`. |
+| **Audit log** | `crawl_events` rejects `UPDATE` (trigger). `event_type` is dotted lowercase, and `detail` is a JSON object. |
+| **Bookkeeping** | A trigger maintains `updated_at`. Bounded text lengths (`last_error`, titles, extracted text). |
+| **Referential cleanup** | Deleting a job cascades to all of its URLs, pages, links, search documents and events. |
+
+The partial indexes serve the planned access paths:
+
+| Index | Serves |
+|---|---|
+| `ix_crawl_urls_dispatch (job_id, depth, next_attempt_at) WHERE state = 'pending'` | the dispatcher: pending URLs at the current BFS level |
+| `ix_crawl_urls_unfinished (job_id) WHERE state IN (pending, queued, in_progress)` | level advancement and job completion |
+| `ix_crawl_urls_lease_expiry`, `ix_crawl_urls_queued_since` | recovery: expired leases, stale publications |
+| `ix_search_documents_pending`, `ix_search_documents_queued_since` | the index relay and its recovery |
+| `ix_search_documents_search_vector` (GIN) | full-text search |
+| `ix_page_links_job_id_target (job_id, target_normalized_url)` | link analysis and BFS expansion |
+| `ix_crawl_events_job_id_id (job_id, id)` | a job's events in order |
+
+### 5.3 Why this schema supports the distributed worker architecture
+
+1. **Publication state lives with the work.** A URL's `state`, `dispatched_at` and `stream_entry_id`
+   are in the same row the scheduler publishes from. The scheduler can therefore publish only
+   committed rows, and the reconciler can tell which tasks Redis may have lost. Indexing uses the
+   same pattern through `search_documents`.
+2. **Claims are single-row compare-and-set updates** against the database clock. Duplicate
+   deliveries are harmless: a claim only succeeds for `queued` rows or expired leases.
+3. **Stale workers are fenced by the database.** A result recorded under an old `lease_epoch`
+   violates a CHECK, and the whole transaction (page, links, search document) rolls back.
+4. **Concurrency safety comes from constraints, not application locks.** Concurrent discovery of
+   one URL creates one row. Concurrent admissions cannot pass `max_pages`. Replays of page, link
+   or index writes hit unique keys and become no-ops.
+5. **BFS gating and completion are index lookups** (`current_level` plus the partial indexes
+   above).
+6. **Job isolation** survives application bugs, because it is a foreign-key property.
+
+All of this is covered by integration tests against PostgreSQL 18 (see
+[development.md](development.md#integration-tests)).
+
+### 5.4 Transaction assumptions
+
+- READ COMMITTED (the PostgreSQL default), one transaction per state transition, explicit
+  boundaries (`Database.transaction()`), no network I/O inside a transaction.
+- Correctness relies on constraints, row locks and conditional updates; SERIALIZABLE is not
+  used (section 9).
+- Timestamps that take part in comparisons come from PostgreSQL (`now()`, `clock_timestamp()`),
+  never from a client. During Phase 2B, the Windows host clock and the clock in the WSL VM were
+  observed about 160 ms apart, and a CHECK constraint caught a test that mixed the two.
+
+### 5.5 PostgreSQL and Redis are not one transaction
+
+Publishing a task means writing to Redis about a row in PostgreSQL. No transaction spans both
+systems. These are the publication-related failure windows, and the columns that make each one
+recoverable. The full list of windows is in section 10.4.
+
+| Window | Outcome | What the schema provides |
+|---|---|---|
+| Relay `XADD` succeeded, commit failed | row still `pending`, so it is published again | duplicate tolerated: the second claim finds the row no longer `queued` |
+| Commit succeeded, Redis later lost the entry (restart, trim) | row `queued`, no message | `dispatched_at` and `stream_entry_id` let the reconciler re-publish |
+| Worker committed, but its `XACK` was lost | message redelivered | URL is terminal, so the claim matches no row and the worker only acks |
+| Worker crashed while holding a lease | `in_progress` with an expired lease | `ix_crawl_urls_lease_expiry`; a takeover claim increments `lease_epoch` |
+| Stale worker commits after a takeover | rejected | the `result_epoch` CHECK rolls the transaction back |
+| Index message delivered twice | indexed twice | rebuilding a vector from the same content is idempotent; status and version guards |
 
 ## 6. Redis layout
 
 | Key | Type | Purpose |
 |---|---|---|
 | `sitescope:crawl` | stream; group `crawlers` | crawl tasks `{v, job_id, url_id}` |
-| `sitescope:index` | stream; group `indexers` | index events `{v, page_id, content_hash}` |
+| `sitescope:index` | stream; group `indexers` | index tasks `{v, page_id}` |
 | `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters (malformed or unclaimable messages), kept for inspection |
 | `sitescope:rate:{host}` | string | per-host GCRA rate-limit state, shared by all workers |
 | `sitescope:robots:{origin}` | string with TTL | cached robots.txt (not authoritative) |
@@ -303,7 +422,7 @@ pages, and links never change. Indexing may still be catching up; its progress i
 | `pending` | `queued` | dispatch (scheduler) | job `running`, depth = `current_level`, `next_attempt_at <= now()`, within the in-flight window |
 | `queued` | `in_progress` | claim (worker) | job `running`, `attempt_count < max_attempts` |
 | `in_progress` | `in_progress` | takeover claim (worker) | lease expired by the database clock; `lease_epoch` is incremented |
-| `in_progress` | `fetched` / `skipped` / `failed` | result commit (worker) | fencing check passes |
+| `in_progress` | `fetched` / `skipped` / `failed` | result commit (worker) | fencing check passes; the database requires `result_epoch = lease_epoch` (ADR-0010) |
 | `in_progress` | `pending` | retryable failure (worker) | fencing check passes; `next_attempt_at = now() + backoff` |
 | `in_progress` | `failed` | attempts exhausted after crashes (worker or reconciler) | lease expired |
 | `pending`, `queued` | `cancelled` | job cancel (API) | none |
@@ -435,11 +554,11 @@ can show "nothing in progress" while new work is about to appear.
 | T2 | Activate | compare-and-set `queued -> running` | |
 | T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task |
 | T4 | Claim | compare-and-set update (sketch below) | committed before any network I/O |
-| T5 | Result | fencing check → page → links → `index_outbox` → URL terminal or retry → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing |
+| T5 | Result | fencing check → page → links → `search_documents` row (`pending`) → URL outcome with `result_epoch` (or retry) → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
 | T6 | Advance | lock job → verify no unfinished URLs → admit next level or set terminal | a single writer per job |
 | T7 | Cancel | lock job → set status → cancel `pending` and `queued` URLs | |
-| T8 | Relay | lock unpublished rows `FOR UPDATE SKIP LOCKED` → `XADD` → set `published_at` | |
-| T9 | Index | upsert `search_documents`, guarded by content hash → commit → `XACK` | |
+| T8 | Index relay | lock `pending` `search_documents` rows `FOR UPDATE SKIP LOCKED` → `XADD` → set `queued`, `dispatched_at`, `stream_entry_id` | same publish-then-mark pattern as T3 |
+| T9 | Index | write `search_vector`, `indexed_content_version`, `status = 'indexed'` → commit → `XACK` | idempotent |
 | T10 | Reconcile | per-row compare-and-set: re-publish, fail, or cancel | |
 
 Claim (sketch):
@@ -450,7 +569,8 @@ SET    state            = 'in_progress',
        lease_epoch      = u.lease_epoch + 1,
        attempt_count    = u.attempt_count + 1,
        lease_owner      = :consumer,
-       lease_expires_at = clock_timestamp() + make_interval(secs => :lease_seconds)
+       lease_expires_at = clock_timestamp() + make_interval(secs => :lease_seconds),
+       result_epoch     = NULL  -- required: ck_crawl_urls_result_epoch_cleared_by_claim
 FROM   crawl_jobs AS j
 WHERE  u.id = :url_id
   AND  j.id = u.job_id AND j.status = 'running'
@@ -467,11 +587,12 @@ BEGIN;
 SELECT 1 FROM crawl_urls
 WHERE  id = :url_id AND state = 'in_progress' AND lease_epoch = :epoch
 FOR UPDATE;   -- no row: fenced out -> ROLLBACK, discard the result, do NOT XACK
-INSERT INTO pages ...       ON CONFLICT (crawl_url_id) DO NOTHING;
-INSERT INTO page_links ...  ON CONFLICT (source_page_id, target_url_hash) DO NOTHING;
-INSERT INTO index_outbox ...;
+INSERT INTO pages ...             ON CONFLICT (crawl_url_id) DO NOTHING;
+INSERT INTO page_links ...        ON CONFLICT (source_page_id, target_normalized_url) DO NOTHING;
+INSERT INTO search_documents ...  ON CONFLICT (page_id) DO NOTHING;  -- status 'pending'
 UPDATE crawl_urls
 SET    state = 'fetched', http_status = :status, outcome = :outcome,
+       result_epoch = :epoch,  -- CHECK result_epoch = lease_epoch (ADR-0010)
        finished_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
 WHERE  id = :url_id;
 COMMIT;       -- then XACK
@@ -505,10 +626,10 @@ Processing is at-least-once, and every effect is idempotent
 | Effect | Why repeating it is safe |
 |---|---|
 | Job creation | unique `Idempotency-Key` |
-| URL admission | `UNIQUE (job_id, url_hash)` + `ON CONFLICT DO NOTHING`; the budget changes in the same transaction |
-| Crawl result | fencing check, and the URL leaves `in_progress` in the same transaction, so each URL gets at most one result |
-| Page and link rows | write-once keys: `crawl_url_id` and `(source_page_id, target_url_hash)` |
-| Search document | upsert keyed by `page_id`, guarded by the content hash |
+| URL admission | `UNIQUE (job_id, normalized_url)` + `ON CONFLICT DO NOTHING`; the budget changes in the same transaction |
+| Crawl result | fencing check, and the URL leaves `in_progress` in the same transaction, so each URL gets at most one result; PostgreSQL rejects stale epochs (ADR-0010) |
+| Page and link rows | write-once keys: `crawl_url_id` and `(source_page_id, target_normalized_url)` |
+| Search document | one row per page (`page_id` key); rebuilding a vector from the same content is a no-op |
 | HTTP fetch | **can repeat** after a crash or a lease takeover; acceptable because these are rate-limited GET requests to approved targets |
 
 ### 10.2 Leases, deadlines, and recovery timing
@@ -562,7 +683,7 @@ Initial defaults are starting points to validate in tests, not measured values:
 | F7 | Redis loses or trims messages | URL `queued` or `in_progress` with no live stream entry | reconciler re-publishes | delay only |
 | F8 | Redis is unavailable | jobs are still accepted; nothing is dispatched | dispatcher, relay, and workers retry with backoff | delay only |
 | F9 | PostgreSQL is unavailable | no claims or commits; messages stay pending | resumes through `XAUTOCLAIM` and the reconciler | delay; PostgreSQL is the hard dependency |
-| F10 | Relay crashes after `XADD`, before marking the row published | outbox row still unpublished | published again | duplicate index event; the upsert is a no-op |
+| F10 | Index relay crashes after `XADD`, before commit | search document still `pending` | published again | duplicate index task; indexing again is a no-op |
 | F11 | Indexer crashes before or after commit | message pending | redelivery | idempotent upsert |
 | F12 | Scheduler crashes, or two schedulers overlap | none | restart; advisory-lock leader; `SKIP LOCKED` + compare-and-set | at most duplicate messages |
 | F13 | Poison message repeatedly crashes workers | delivery count grows | `attempt_count` bounds claims, ending in `failed`; unclaimable messages are dead-lettered after N deliveries | bounded work |
@@ -609,8 +730,8 @@ The integration, concurrency, and fault tests (Phases 3 to 5) check these after 
    fixture site with 1 worker gives the same result as crawling it with N workers.
 4. Each URL has at most one committed result, and each `html_stored` URL has exactly one `pages` row.
 5. A terminal job has no unfinished URLs, and its data never changes afterward.
-6. Every `index_outbox` row is eventually published, and every stored page eventually has exactly one
-   `search_documents` row.
+6. Every stored page has exactly one `search_documents` row, and every `pending` one is eventually
+   published and indexed.
 7. No request is ever sent to a blocked destination. Tests assert this with a recording resolver and a
    recording transport.
 
@@ -718,8 +839,9 @@ All values are configurable. The defaults are starting points, not measurements.
 
 ## 13. Search, indexing, and link analysis
 
-**Pipeline.** Result commit → `index_outbox` row (in the same transaction) → relay → `sitescope:index` →
-indexer → upsert into `search_documents` ([ADR-0005](adr/0005-postgresql-full-text-search.md)). The index
+**Pipeline.** Result commit → `search_documents` row as `pending` (in the same transaction) → relay
+→ `sitescope:index` → indexer → vector written, row `indexed`
+([ADR-0005](adr/0005-postgresql-full-text-search.md), [ADR-0008](adr/0008-search-documents-as-index-outbox.md)). The index
 lives in its own table so that GIN maintenance stays off the crawl write path, and so that re-indexing
 (for example, with new weights) needs no re-crawl.
 
@@ -745,7 +867,8 @@ Body text is truncated before `to_tsvector`, because a `tsvector` is limited to 
 IDF or BM25. There is no fuzzy matching, and only the `english` configuration is used. Any ranking
 change, such as boosting pages by in-link count, must be justified by an evaluation rather than assumed.
 
-**Link analysis.** Computed in SQL over `page_links` joined to `crawl_urls` on `(job_id, url_hash)`:
+**Link analysis.** Computed in SQL over `page_links` joined to `crawl_urls` on
+`(job_id, normalized_url)`:
 
 - **Broken links:** internal links whose target `failed`, or was fetched with a status of 400 or higher.
   Each is reported with its source page, anchor text, and status or error.
@@ -805,8 +928,9 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 
 ## 15. Deployment topology
 
-Deployment uses Docker Compose. Phase 2 starts PostgreSQL and Redis for development, and Phase 9 runs the
-full stack.
+Deployment uses Docker Compose. Since Phase 2B, `backend/compose.yaml` runs PostgreSQL 18.6 and Redis
+8.10.3 for development: ports bound to 127.0.0.1, named volumes, health checks, `restart:
+unless-stopped`. Phase 9 runs the full stack.
 
 | Service | Networks | Port published | Notes |
 |---|---|---|---|
@@ -832,14 +956,15 @@ SITESCOPE/
 |-- CLAUDE.md                    # stable context and rules for contributors and Claude
 |-- README.md                    # Phase 11: overview, quickstart, design highlights
 |-- .gitignore, .gitattributes  # Phase 1: ignore rules, LF line endings
-|-- docker-compose.yml           # Phase 2: postgres + redis; Phase 9: full stack
+|-- docker-compose.yml           # Phase 9: full stack (reuses backend/compose.yaml)
 |-- .github/workflows/ci.yml     # added once a GitHub remote exists; extended in later phases
 |-- backend/
 |   |-- .venv/                   # existing; never committed, never recreated
 |   |-- .env.example             # Phase 1: every setting, with safe placeholders
+|   |-- compose.yaml             # Phase 2B: PostgreSQL + Redis for development
 |   |-- pyproject.toml           # dependencies + ruff / mypy / pytest config
-|   |-- alembic.ini
-|   |-- alembic/                 # migrations
+|   |-- alembic.ini              # Phase 2B
+|   |-- alembic/                 # Phase 2B: migrations
 |   |-- Dockerfile               # Phase 9
 |   |-- app/
 |   |   |-- main.py              # FastAPI app factory, lifespan, routers, error handlers
@@ -883,11 +1008,11 @@ SITESCOPE/
 |---|---|---|
 | API | FastAPI + Uvicorn (already installed) | async, Pydantic validation, generated OpenAPI docs |
 | Settings | pydantic-settings | typed environment configuration, using the same validation model as the API |
-| Database | PostgreSQL, a current release (16 or later), with the version pinned in Phase 2 | transactions, row locks, `SKIP LOCKED`, constraints, and full-text search with GIN, all in one system |
-| ORM / migrations | SQLAlchemy 2.x (async) + Alembic | typed models; SQLAlchemy Core for set-based statements |
-| PostgreSQL driver | asyncpg | mature async driver; psycopg's async mode would require switching Windows to the selector event loop (to be verified on this machine in Phase 2) |
-| Queue | Redis Streams, Redis 7.0 or later | consumer groups, pending entries list, `XAUTOCLAIM` |
-| Redis client | redis-py (`redis.asyncio`) | the official client |
+| Database | PostgreSQL 18.6 (`postgres:18.6-trixie`; 18+ needed for `uuidv7()`) | transactions, row locks, `SKIP LOCKED`, constraints, and full-text search with GIN, all in one system |
+| ORM / migrations | SQLAlchemy 2.1 (async) + Alembic 1.20 | typed models; SQLAlchemy Core for set-based statements |
+| PostgreSQL driver | asyncpg 0.32 | mature async driver; verified in Phase 2B on Windows with the default Proactor event loop (psycopg's async mode would need the selector loop) |
+| Queue | Redis 8.10.3 Streams (`redis:8.10.3-alpine3.23`; 7.0+ required) | consumer groups, pending entries list, `XAUTOCLAIM`. Redis 8 is tri-licensed (AGPLv3 / RSALv2 / SSPLv1); Valkey is a BSD-licensed alternative if that matters later |
+| Redis client | redis-py 8.1 (`redis.asyncio`) | the official client; its automatic retries are disabled so failures surface immediately (callers retry deliberately) |
 | HTTP | HTTPX (HTTP/1.1) | async streaming, granular timeouts, pluggable transport; Phase 5 chooses between `httpx` and its successor `httpx2`, which Starlette 1.x's TestClient already uses |
 | HTML parsing | BeautifulSoup 4 with the stdlib `html.parser` | tolerant and has no native dependency; lxml only if benchmarks justify it |
 | robots.txt | chosen in Phase 5 | must be RFC 9309-compliant (§12.5) |
@@ -924,7 +1049,8 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
   later.
 - Messages can be duplicated, delayed, reordered, or lost in Redis.
 - Server clocks are NTP-synchronized. Even so, correctness relies only on the PostgreSQL clock (leases)
-  and the Redis clock (idle times and rate limits).
+  and the Redis clock (idle times and rate limits). This matters on the development machine: the
+  Windows host and the WSL VM clocks were observed about 160 ms apart.
 - The scale is small: up to about 10^5 URLs per deployment and between a few and a few tens of worker
   processes.
 
@@ -956,3 +1082,6 @@ tests (Phase 10): fixed parameters, a recorded environment, and raw output commi
 | [0005](adr/0005-postgresql-full-text-search.md) | PostgreSQL full-text search instead of a dedicated search engine |
 | [0006](adr/0006-target-allowlist-ssrf-defenses.md) | Target allowlist and layered SSRF defenses |
 | [0007](adr/0007-modular-monolith-process-roles.md) | Modular monolith with separate process roles |
+| [0008](adr/0008-search-documents-as-index-outbox.md) | `search_documents` is both the index store and the indexing outbox |
+| [0009](adr/0009-dedup-on-normalized-url.md) | Deduplicate URLs on the normalized URL itself |
+| [0010](adr/0010-database-enforced-fencing.md) | Fencing is enforced by the database, not only by worker code |

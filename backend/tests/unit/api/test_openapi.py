@@ -17,7 +17,16 @@ def test_openapi_document_lists_every_endpoint(client: TestClient) -> None:
         "/": "get_service_info",
         "/health": "get_health",
         "/api/v1/health/live": "get_liveness",
+        "/api/v1/health/ready": "get_readiness",
     }
+
+
+def test_readiness_documents_its_503_response(client: TestClient) -> None:
+    responses = client.get("/openapi.json").json()["paths"]["/api/v1/health/ready"]["get"][
+        "responses"
+    ]
+
+    assert set(responses) >= {"200", "503"}
 
 
 def test_interactive_docs_are_served(client: TestClient) -> None:

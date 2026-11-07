@@ -14,7 +14,7 @@ and divergence between Redis and PostgreSQL must all be handled.
 React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
   -> scheduler (dispatcher, outbox relay, level advancer, reconciler)
   -> Redis stream "sitescope:crawl" -> crawler workers (asyncio + HTTPX + BeautifulSoup)
-  -> PostgreSQL (pages, links, index_outbox) -> Redis stream "sitescope:index"
+  -> PostgreSQL (pages, links, search_documents) -> Redis stream "sitescope:index"
   -> indexer worker -> PostgreSQL full-text index (tsvector + GIN) -> search API
 ```
 
@@ -72,10 +72,10 @@ explanations for the project owner in Chinese.
    - Losing Redis data must never lose work (ADR-0001).
 2. **At-least-once processing with idempotent effects.** Every consumer tolerates duplicate and
    redelivered messages (ADR-0003).
-3. **Outbox, never dual writes** (ADR-0002).
+3. **Outbox, never dual writes** (ADR-0002, ADR-0008).
    - Request handlers never publish to Redis.
-   - Crawl tasks are published from `crawl_urls` (the frontier acts as the outbox), and index events from
-     `index_outbox`.
+   - The state row is the outbox: crawl tasks are published from `crawl_urls`, and index tasks from
+     `search_documents` rows in status `pending`. There is no separate outbox table.
    - The relay publishes, then marks the row as published, in the same transaction.
 4. **Leases with fencing tokens.**
    - A worker claims a URL with a compare-and-set that increments `lease_epoch`.
@@ -83,13 +83,16 @@ explanations for the project owner in Chinese.
      lock.
    - A fenced-out worker discards its result and does not `XACK`.
    - Timing must satisfy `task_deadline < lease_duration <= reclaim_min_idle`.
+   - The database enforces fencing (ADR-0010): an outcome must carry `result_epoch = lease_epoch`
+     (CHECK), a claim must clear `result_epoch`, and `lease_epoch` never decreases (trigger).
 5. **Level-synchronous BFS** (ADR-0004).
    - Only URLs at a job's `current_level` are dispatched.
    - Workers only record links. Only the scheduler admits the next level, under the job row lock.
    - The single exception: workers admit same-level redirect targets.
 6. **Exact page budget.** Serialized admission plus a CHECK constraint keep `admitted_count <= max_pages`.
-7. **Deduplication by constraint.** Use `UNIQUE (job_id, url_hash)` with `INSERT ... ON CONFLICT DO
-   NOTHING`. Never rely on check-then-insert alone.
+7. **Deduplication by constraint.** Use `UNIQUE (job_id, normalized_url)` with `INSERT ... ON CONFLICT
+   DO NOTHING` (ADR-0009). Never rely on check-then-insert alone. Normalized URLs are http(s),
+   printable ASCII, at most 2048 bytes; the database rejects anything else.
 8. **State transitions are conditional updates** (`UPDATE ... WHERE state = :expected ... RETURNING`).
    Zero rows means the race was lost: treat it as a no-op, log it, and move on.
 9. **No transaction spans a request to a crawl target.** Claim and commit, then fetch outside any
@@ -151,6 +154,10 @@ explanations for the project owner in Chinese.
 | `backend/tests/fault` | failure injection and recovery (marker `fault`) |
 
 - A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
+  `pytest --require-services` turns those skips into failures (use it whenever the services are up,
+  and in CI). Select suites with `-m integration` or `-m "not integration"`.
+- Integration tests never touch the development database. They create, migrate (with Alembic)
+  and drop a disposable `<db>_test` database, and use Redis database 15.
 - pytest treats warnings as errors. Starlette's `TestClient` uses `httpx2`; with plain `httpx` it
   emits a deprecation warning, which would fail the run.
 - Concurrency and fault tests assert the invariants listed under "Correctness invariants" in
@@ -167,7 +174,8 @@ explanations for the project owner in Chinese.
 - Node.js 24 and npm 11 are installed (for the frontend, Phase 8).
 - Docker Engine 29.9.3 and the Compose plugin run **inside WSL Ubuntu 24.04**. There is no Docker
   Desktop. Run Docker from an Ubuntu terminal, or with `wsl docker ...` from PowerShell.
-- PostgreSQL and Redis will run as containers (Phase 2).
+- PostgreSQL 18.6 and Redis 8.10.3 run as containers from `backend/compose.yaml`, with ports bound
+  to 127.0.0.1. Credentials come from `backend/.env`, which the backend and Compose both read.
 - WSL stops Ubuntu, and Docker with it, about 15–30 s after the last WSL session closes. Keep a WSL
   session open while anything needs the containers. Details: `docs/development.md`, section
   "Docker (WSL 2)".
@@ -176,8 +184,10 @@ explanations for the project owner in Chinese.
   | Task | Command |
   |---|---|
   | Install | `.\.venv\Scripts\python.exe -m pip install -e ".[dev]"` |
+  | Start PostgreSQL + Redis | `wsl docker compose up -d --wait` |
+  | Apply migrations | `.\.venv\Scripts\python.exe -m alembic upgrade head` |
   | Run the API | `.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload` |
-  | Tests | `.\.venv\Scripts\python.exe -m pytest` |
+  | Tests | `.\.venv\Scripts\python.exe -m pytest --require-services` |
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
   | Type check | `.\.venv\Scripts\python.exe -m mypy` |
@@ -188,9 +198,11 @@ explanations for the project owner in Chinese.
 
 ```
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
-  app/            api/ core/ (Phase 1); db/ services/ queue/ scheduler/ crawler/ indexing/ workers/ (later)
-  alembic/        migrations (Phase 2)
-  tests/          unit/ (Phase 1); integration/ fault/ (later)
+  app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); queue/ scheduler/ crawler/ indexing/
+                  workers/ (later)
+  alembic/        migrations (Phase 2B); alembic.ini next to it
+  compose.yaml    PostgreSQL + Redis for development (Phase 2B)
+  tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (later)
   pyproject.toml  dependencies + ruff / mypy / pytest configuration
   .env.example    configuration template; copy to backend/.env (git-ignored)
 frontend/         React + TypeScript dashboard (Phase 8; currently empty)

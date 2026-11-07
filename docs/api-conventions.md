@@ -66,6 +66,7 @@ Every error response has the media type `application/problem+json`. For example:
 | 409 | `conflict` | A `ConflictError` from the service layer |
 | 422 | `validation_failed` | The request failed validation |
 | 500 | `internal_error` | An unexpected error. Details appear only in the server logs, never in the response. |
+| 503 | `dependency_unavailable` | PostgreSQL or Redis is unreachable, or rejected the connection. Sent with `Retry-After: 5`. Ordinary SQL errors are never reported this way. |
 | other | status name in `snake_case` | For example, 403 → `forbidden` |
 
 Rules for code that produces errors:
@@ -80,10 +81,31 @@ Rules for code that produces errors:
 |---|---|---|
 | `GET /health` | Liveness probe for load balancers and container health checks | No |
 | `GET /api/v1/health/live` | Liveness with service name, version, and uptime | No |
-| `GET /api/v1/health/ready` | Readiness: PostgreSQL and Redis connectivity (**planned for Phase 2, not implemented**) | Yes |
+| `GET /api/v1/health/ready` | Readiness: runs `SELECT 1` on PostgreSQL and `PING` on Redis, concurrently, each within `SITESCOPE_READINESS_TIMEOUT_SECONDS` (default 2 s) | Yes |
 
 Liveness means only that the process is serving requests. It never reports anything about
-PostgreSQL or Redis.
+PostgreSQL or Redis. An outage of either therefore never makes an orchestrator restart a healthy
+API process.
+
+Readiness answers `200` when both dependencies respond, and `503` otherwise. It is the one
+endpoint that answers `503` with its own schema instead of problem+json, so that probes and
+dashboards parse a single shape:
+
+```json
+{
+  "status": "not_ready",
+  "checks": {
+    "postgres": {"status": "ok", "latency_ms": 4.11},
+    "redis": {"status": "unavailable", "latency_ms": 0.39}
+  },
+  "checked_at": "2026-11-06T23:53:41.147208Z"
+}
+```
+
+- Each check's `status` is `ok`, `unavailable` (refused, rejected credentials, …) or `timeout`.
+- The body never contains hosts, ports, database names, users, passwords or exception text. Those
+  details go to the server log, which records only the exception type.
+- Responses carry `Cache-Control: no-store`.
 
 ## Documentation endpoints
 

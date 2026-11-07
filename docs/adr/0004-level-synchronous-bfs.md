@@ -1,6 +1,7 @@
 # ADR-0004: Level-synchronous BFS with scheduler-side admission
 
-- Status: Accepted
+- Status: Accepted. The deduplication key is amended by
+  [ADR-0009](0009-dedup-on-normalized-url.md) (`normalized_url` instead of `url_hash`).
 - Date: 2026-11-06
 
 ## Context

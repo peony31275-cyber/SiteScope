@@ -4,6 +4,7 @@ These are the development commands for the Windows 10 development machine:
 
 - The backend commands were run in Windows PowerShell 5.1 at the end of Phase 1.
 - The Docker commands were run during the Docker setup on 2026-11-06 (see [Docker (WSL 2)](#docker-wsl-2)).
+- The database and Compose commands were run in Phase 2B.
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
@@ -216,16 +217,16 @@ So **keep one WSL session open while you develop.**
    ```powershell
    wsl -d Ubuntu --exec sleep infinity
    ```
-2. **Run Docker commands.** Either use the Ubuntu terminal, where the repository is at
-   `/mnt/c/Users/24419/Desktop/SITESCOPE`, or run `wsl docker ...` from PowerShell in the
-   repository root. WSL translates the current directory, for example `C:\...\SITESCOPE` becomes
-   `/mnt/c/.../SITESCOPE`.
+2. **Start PostgreSQL and Redis.** The Compose file is `backend/compose.yaml`, so run Compose from
+   `backend\`. In PowerShell, `wsl docker ...` runs Docker in Ubuntu, and WSL translates the current
+   directory (`C:\...\backend` becomes `/mnt/c/.../backend`). In an Ubuntu terminal, `cd` to
+   `/mnt/c/Users/24419/Desktop/SITESCOPE/backend` first.
    ```powershell
-   Set-Location C:\Users\24419\Desktop\SITESCOPE
-   wsl docker compose version          # verified
-   wsl docker compose up -d            # once Phase 2 adds docker-compose.yml
+   Set-Location C:\Users\24419\Desktop\SITESCOPE\backend
+   wsl docker compose up -d --wait     # waits until both health checks pass
    ```
    A one-off `wsl docker ...` command ends its own session immediately, so step 1 is still needed.
+   See [Local services](#local-services-postgresql-and-redis) for details.
 3. **Run the API on Windows** as described in [Run the API](#run-the-api).
 4. **Finish.** Run `docker compose stop` (keeps data) or `docker compose down` (removes the
    containers but keeps named volumes), then close the WSL terminal.
@@ -238,9 +239,10 @@ So **keep one WSL session open while you develop.**
   - reachable from Windows at `127.0.0.1` (TCP connect, and HTTP 200);
   - reachable from Windows at `localhost` (HTTP 200);
   - **not** reachable through the WSL VM's own network address.
-- **Planned endpoints (Phase 2, not implemented yet):** PostgreSQL at `127.0.0.1:5432` and Redis at
-  `127.0.0.1:6379`. The backend will read the connection URLs from `SITESCOPE_` settings, whose
-  exact names are defined in Phase 2.
+- **Endpoints (Phase 2B):** PostgreSQL at `127.0.0.1:5432` and Redis at `127.0.0.1:6379`, set by
+  the `SITESCOPE_POSTGRES_*` and `SITESCOPE_REDIS_*` settings (see
+  [Connection configuration](#connection-configuration)). Verified end to end: the Windows-hosted
+  API reports ready against both containers.
 - **Use `127.0.0.1` in connection URLs.** `localhost` also worked in the test, but an explicit IPv4
   address does not depend on IPv6 (`::1`) forwarding.
 - **Keep the 127.0.0.1 binding.** Docker's documentation warns that published ports bypass ufw and
@@ -274,6 +276,177 @@ docker run --rm hello-world      # "Hello from Docker!"
 | Restart WSL | `wsl --terminate Ubuntu` restarts only Ubuntu. `wsl --shutdown` stops **all** distributions. |
 | Admin command without the sudo password | From PowerShell: `wsl -d Ubuntu -u root -- <command>` |
 
+## Local services: PostgreSQL and Redis
+
+`backend/compose.yaml` defines the development infrastructure (Compose project `sitescope`):
+
+| Service | Image | Port (host side) | Data | Health check |
+|---|---|---|---|---|
+| `postgres` | `postgres:18.6-trixie` | `127.0.0.1:5432` | volume `sitescope_postgres-data` | `pg_isready` over TCP |
+| `redis` | `redis:8.10.3-alpine3.23` | `127.0.0.1:6379` | volume `sitescope_redis-data` (AOF, fsync every second) | `redis-cli ping` |
+
+- Both services use `restart: unless-stopped`, and share the network `sitescope-backend`.
+- The ports are bound to `127.0.0.1` only, so they are never reachable from the network.
+- Redis requires a password. PostgreSQL uses SCRAM-SHA-256.
+- Credentials come from `backend/.env`. Both Compose and the backend read that file.
+
+**First start**
+
+1. Create `backend\.env` from `backend\.env.example` and replace the placeholder passwords.
+2. Keep a WSL session open (see [How Docker starts and stops](#how-docker-starts-and-stops-read-this-first)).
+3. Run, from `backend\`:
+
+```powershell
+wsl docker compose up -d --wait                       # create and start both services
+.\.venv\Scripts\python.exe -m alembic upgrade head    # create or upgrade the schema
+```
+
+PostgreSQL applies `SITESCOPE_POSTGRES_USER` and `SITESCOPE_POSTGRES_PASSWORD` only when it first
+creates its data volume. To change them later, either `ALTER ROLE` inside psql, or reset the
+development database (below).
+
+**Everyday commands** (from `backend\`)
+
+```powershell
+wsl docker compose ps                                  # status and health
+wsl docker compose logs -f postgres                    # follow a service's logs (Ctrl+C to stop)
+wsl docker compose exec postgres psql -U sitescope -d sitescope   # interactive SQL shell
+wsl docker compose exec postgres psql -U sitescope -d sitescope -c "SELECT count(*) FROM crawl_jobs"
+wsl docker compose exec redis redis-cli ping           # authenticates through REDISCLI_AUTH
+```
+
+Type psql meta-commands such as `\dt` inside the interactive shell. Passed as a `-c` argument from
+PowerShell, they lose their backslash on the way into WSL.
+
+**Stopping, removing, deleting: three different commands**
+
+| Command | Containers | Network | Named volumes (all data) | Use it when |
+|---|---|---|---|---|
+| `wsl docker compose stop` | stopped, kept | kept | **kept** | pausing work; `start` or `up -d` resumes |
+| `wsl docker compose down` | removed | removed | **kept** | cleaning up containers; `up -d` recreates them with the same data |
+| `wsl docker compose down -v` | removed | removed | **DELETED** | you deliberately want to lose all PostgreSQL and Redis data |
+
+Ordinary restarts never lose data: `stop`/`start`, `down`/`up`, WSL shutting Ubuntu down, and
+rebooting Windows all keep the volumes. Run `down -v` only on purpose.
+
+## Connection configuration
+
+All settings use the `SITESCOPE_` prefix. They are read from the environment or from
+`backend\.env`, and the complete list with comments is in `backend\.env.example`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_POSTGRES_HOST` / `_PORT` | `127.0.0.1` / `5432` | where PostgreSQL listens (the container's published port) |
+| `SITESCOPE_POSTGRES_USER` / `_DB` | `sitescope` / `sitescope` | role and database; also used by Compose to initialize the container |
+| `SITESCOPE_POSTGRES_PASSWORD` | none | required for any connection; mandatory in production |
+| `SITESCOPE_DB_POOL_SIZE` / `_MAX_OVERFLOW` | `5` / `5` | connections kept open per process / extra connections under load |
+| `SITESCOPE_DB_POOL_TIMEOUT_SECONDS` | `5` | wait for a free pooled connection before failing |
+| `SITESCOPE_DB_CONNECT_TIMEOUT_SECONDS` / `_COMMAND_TIMEOUT_SECONDS` | `5` / `30` | connect timeout / per-statement client-side timeout |
+| `SITESCOPE_REDIS_HOST` / `_PORT` / `_DB` | `127.0.0.1` / `6379` / `0` | where Redis listens, and the logical database |
+| `SITESCOPE_REDIS_PASSWORD` | none | required for any connection; mandatory in production |
+| `SITESCOPE_REDIS_SOCKET_TIMEOUT_SECONDS` | `5` | connect and reply timeout |
+| `SITESCOPE_READINESS_TIMEOUT_SECONDS` | `2` | deadline for each check in `GET /api/v1/health/ready` |
+
+- **Use `127.0.0.1`, not `localhost`.** Both work through WSL's forwarding, but the IPv4 address
+  avoids depending on IPv6.
+- **Credential handling.** Passwords are `SecretStr` values. They are masked in `repr()`, never
+  logged, and never included in API responses. The startup log shows only host, port and database.
+- **Production checks.** In production the application refuses to start if a password is missing
+  or still a template placeholder (`change-me...`).
+- **Pooling.** Each process holds one connection pool. Connections are checked before reuse
+  (`pool_pre_ping`) and recycled after 30 minutes.
+- **No automatic Redis retries.** The Redis client fails fast instead of retrying silently.
+
+## Database migrations
+
+The schema is managed only through Alembic. Never change it by hand in a database you want to
+keep. Run the commands from `backend\`:
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head      # apply all pending migrations
+.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0001 (head)"
+.\.venv\Scripts\python.exe -m alembic history           # the migration chain
+.\.venv\Scripts\python.exe -m alembic upgrade head --sql    # print the SQL without connecting
+```
+
+To change the schema:
+
+1. **Update the models.** Change `app/db/models.py`.
+2. **Generate a draft.** It needs a database at head:
+   ```powershell
+   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0002
+   ```
+3. **Review and complete the draft.**
+   - Autogenerate handles tables, columns, indexes, foreign keys and unique constraints.
+   - CHECK constraints, triggers, functions and data migrations must be written or checked by hand.
+   - Keep the migration self-contained: never import application code.
+4. **Apply it and run the tests.** `test_migrated_schema_matches_the_models` fails if the
+   migration and the models disagree.
+5. **Never edit a migration once it has been applied anywhere that matters.** Add a new one instead.
+
+Each migration runs in a single transaction, and PostgreSQL's DDL is transactional. A migration
+that fails part-way therefore leaves no partial schema. A test interrupts a migration to prove this.
+
+`alembic downgrade` exists, and the tests use it on disposable databases. Do not downgrade a
+database whose data you need: dropping tables loses data.
+
+## Development database reset
+
+Resetting deletes all development data. Pick the smallest reset that solves the problem.
+
+**Option 1: recreate only the PostgreSQL database.** Redis and the volume are kept. Run from
+`backend\`:
+
+```powershell
+wsl docker compose exec postgres dropdb -U sitescope --force sitescope
+wsl docker compose exec postgres createdb -U sitescope sitescope
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+`--force` disconnects open sessions first, so stop the API before running it. These commands were
+verified on a scratch database; the development database itself was not dropped.
+
+**Option 2: delete everything, including both volumes.** Use this after changing the PostgreSQL
+credentials in `.env`, or when Redis data must go too.
+
+```powershell
+wsl docker compose down -v          # DELETES all PostgreSQL and Redis data
+wsl docker compose up -d --wait
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+## Integration tests
+
+Integration tests (`backend/tests/integration`, marker `integration`) run against the real
+PostgreSQL and Redis containers. They never touch the development data:
+
+- **Disposable PostgreSQL database.** At session start, the tests create `<SITESCOPE_POSTGRES_DB>_test`
+  (`sitescope_test`), migrate it with Alembic (not `create_all`), and drop it at the end. Every
+  test truncates the tables afterwards.
+- **Migration tests.** These use a second disposable database, `sitescope_test_migrations`.
+- **Redis.** Redis tests use logical database 15 and namespaced keys.
+
+To run them, make sure:
+
+1. a WSL session is open;
+2. the services are healthy (`wsl docker compose ps`);
+3. `backend\.env` contains both passwords.
+
+Then, from `backend\`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --require-services            # everything (unit + integration)
+.\.venv\Scripts\python.exe -m pytest -m "not integration"          # unit tests only, no services needed
+.\.venv\Scripts\python.exe -m pytest -m integration --require-services
+```
+
+Without `--require-services`, a missing service makes the integration tests **skip**, and the skip
+reason says which service is unreachable and how to start it. With the flag they **fail** instead.
+Use the flag whenever the services are supposed to be up.
+
+Expect a few tests to take about 2 s each. They connect to a closed local port on purpose, and on
+Windows a refused localhost connection takes about 2 s before it fails.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -282,3 +455,7 @@ docker run --rm hello-world      # "Hello from Docker!"
 | `[Errno 10048]` or "address already in use" | Port 8000 is taken. Use `--port 8001`, or find the owning process: `Get-NetTCPConnection -LocalPort 8000 -State Listen` |
 | `ModuleNotFoundError: No module named 'app'` | Run from `backend\`, and re-run the install command. |
 | Settings validation error at startup | Check `backend\.env` and any `SITESCOPE_` variables against `backend\.env.example`. |
+| `GET /api/v1/health/ready` returns 503 | Read `checks`. If a service is `unavailable` or `timeout`, check `wsl docker compose ps`, and make sure a WSL session is open. |
+| `password authentication failed` after editing `.env` | PostgreSQL kept the password from the volume's first start. `ALTER ROLE ... PASSWORD`, or reset (Option 2). |
+| Integration tests are all skipped | The skip reason names the unreachable service. Start it, or run with `--require-services` to make this an error. |
+| `alembic` says "Can't locate revision" | The database was migrated by a different branch of the code. Check `alembic current` against `alembic history`. |

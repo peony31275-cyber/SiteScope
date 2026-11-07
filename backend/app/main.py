@@ -17,6 +17,8 @@ from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.redis import create_redis_client
+from app.db.session import Database
 
 logger = logging.getLogger(__name__)
 
@@ -28,25 +30,42 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run startup and shutdown work for the process.
+    """Create the process-wide PostgreSQL and Redis clients, and close them on shutdown.
 
-    Today this records the start time and logs both transitions. Clients that need explicit
-    setup and teardown (database engine, Redis) are added here as they arrive.
+    Both clients connect lazily, so the process starts even while a dependency is down:
+    liveness stays green and the readiness probe reports the outage.
     """
     settings: Settings = app.state.settings
+    database = Database(settings, application_name=SERVICE_NAME)
+    redis = create_redis_client(settings, client_name=SERVICE_NAME)
+    app.state.database = database
+    app.state.redis = redis
     app.state.started_at = datetime.now(UTC)
     app.state.started_monotonic = time.monotonic()
+
+    if missing := settings.missing_credentials():
+        logger.warning(
+            "Credentials are not configured; dependency connections will fail",
+            extra={"event": "config.credentials_missing", "settings": missing},
+        )
     logger.info(
         "Application started",
         extra={
             "event": "app.startup",
             "environment": settings.environment,
             "version": __version__,
+            # Host, port and database only; credentials are never logged.
+            "postgres": f"{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}",
+            "redis": f"{settings.redis_host}:{settings.redis_port}/{settings.redis_db}",
         },
     )
     try:
         yield
     finally:
+        try:
+            await redis.aclose()
+        finally:
+            await database.dispose()
         logger.info(
             "Application stopped",
             extra={

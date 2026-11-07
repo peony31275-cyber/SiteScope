@@ -3,6 +3,7 @@
 import json
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +13,31 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from tests.support import LogReader
+
+INTEGRATION_DIR = Path(__file__).parent / "integration"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--require-services",
+        action="store_true",
+        default=False,
+        help="Fail integration tests, instead of skipping them, when PostgreSQL or Redis "
+        "is unavailable (use in CI).",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Mark every test under tests/integration so `-m integration` selects them."""
+    for item in items:
+        if INTEGRATION_DIR in item.path.parents:
+            item.add_marker(pytest.mark.integration)
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Async tests run on asyncio (AnyIO's pytest plugin, bundled with AnyIO)."""
+    return "asyncio"
 
 
 @pytest.fixture(autouse=True)

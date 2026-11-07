@@ -1,0 +1,83 @@
+# Local development infrastructure for SiteScope: PostgreSQL and Redis.
+#
+# Run these commands from the backend/ directory: in an Ubuntu (WSL) shell, or prefixed with `wsl`
+# in PowerShell. See docs/development.md for the full workflow.
+#
+#   docker compose up -d      create (if needed) and start both services
+#   docker compose ps         show status, including health
+#   docker compose stop       stop the containers; containers, network and data are kept
+#   docker compose down       remove the containers and the network; named volumes (data) are kept
+#   docker compose down -v    ALSO DELETES THE NAMED VOLUMES: all PostgreSQL and Redis data is lost
+#
+# Credentials and ports come from backend/.env (copy it from backend/.env.example). Compose reads
+# that file automatically because it sits next to this one, and the backend reads the same file,
+# so the containers and the application always agree on credentials.
+#
+# Ports are published on 127.0.0.1 only. They are reachable from this machine (from Windows, through
+# WSL's localhost forwarding) and never from the network.
+
+name: sitescope
+
+services:
+  postgres:
+    image: postgres:18.6-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SITESCOPE_POSTGRES_USER:-sitescope}
+      POSTGRES_PASSWORD: ${SITESCOPE_POSTGRES_PASSWORD:?set SITESCOPE_POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_DB: ${SITESCOPE_POSTGRES_DB:-sitescope}
+    ports:
+      - "127.0.0.1:${SITESCOPE_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18+ images keep the cluster in /var/lib/postgresql/<major>/docker and declare
+      # /var/lib/postgresql as the volume, which also leaves room for future major upgrades.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Checks over TCP on purpose. The temporary server that runs during first-time
+      # initialisation listens only on a Unix socket, so this check cannot report the database
+      # healthy before initialisation has finished.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+    networks: [backend]
+
+  redis:
+    image: redis:8.10.3-alpine3.23
+    restart: unless-stopped
+    # Persistence: append-only file, fsync'd every second. Redis holds only deliverable messages,
+    # caches and rate-limit state (ADR-0001), so losing up to ~1 s of writes after a crash is
+    # acceptable; PostgreSQL and the reconciler restore anything that matters.
+    # The command starts with redis-server so the official entrypoint drops root privileges.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${SITESCOPE_REDIS_PASSWORD:?set SITESCOPE_REDIS_PASSWORD in backend/.env}
+    environment:
+      # Read by redis-cli in the health check, so the password never appears in a command line.
+      REDISCLI_AUTH: ${SITESCOPE_REDIS_PASSWORD:?set SITESCOPE_REDIS_PASSWORD in backend/.env}
+    ports:
+      - "127.0.0.1:${SITESCOPE_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -h 127.0.0.1 ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks: [backend]
+
+networks:
+  backend:
+    name: sitescope-backend
+
+volumes:
+  postgres-data:
+  redis-data:

@@ -9,6 +9,7 @@ Every error response has the media type ``application/problem+json`` and the sam
 See docs/api-conventions.md.
 """
 
+import logging
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
@@ -17,6 +18,8 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis import exceptions as redis_errors
+from sqlalchemy import exc as sqlalchemy_errors
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import request_id_var
@@ -24,6 +27,25 @@ from app.core.logging import request_id_var
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 INTERNAL_ERROR_DETAIL = "An unexpected error occurred. Quote the request_id when reporting it."
 VALIDATION_ERROR_DETAIL = "The request failed validation."
+DEPENDENCY_UNAVAILABLE_DETAIL = "A required backing service is temporarily unavailable."
+
+# SQLSTATE codes and classes that mean "PostgreSQL cannot serve us right now", as opposed to an
+# error in the statement itself: 08 connection exception, 28 invalid authorization,
+# 53300 too many connections, 57P01-57P03 server shutting down or starting up.
+_UNAVAILABLE_SQLSTATE_PREFIXES = ("08", "28", "53300", "57P01", "57P02", "57P03")
+
+# Exception types that can signal an unavailable backing service; is_dependency_unavailable()
+# decides for each instance.
+DEPENDENCY_EXCEPTION_TYPES: tuple[type[Exception], ...] = (
+    ConnectionError,  # e.g. connection refused while opening a PostgreSQL connection
+    TimeoutError,  # e.g. PostgreSQL connect timeout
+    sqlalchemy_errors.DBAPIError,
+    sqlalchemy_errors.TimeoutError,  # connection pool exhausted
+    redis_errors.ConnectionError,  # includes AuthenticationError
+    redis_errors.TimeoutError,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class DomainError(Exception):
@@ -85,6 +107,16 @@ def internal_error_response(instance: str) -> JSONResponse:
     )
 
 
+def is_dependency_unavailable(exc: BaseException) -> bool:
+    """Whether ``exc`` means PostgreSQL or Redis is unreachable, rather than a bug or bad SQL."""
+    if isinstance(exc, sqlalchemy_errors.DBAPIError):
+        if exc.connection_invalidated:
+            return True
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        return isinstance(sqlstate, str) and sqlstate.startswith(_UNAVAILABLE_SQLSTATE_PREFIXES)
+    return isinstance(exc, DEPENDENCY_EXCEPTION_TYPES)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register the handlers that turn expected exceptions into problem responses.
 
@@ -94,6 +126,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DomainError, _handle_domain_error)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    for exception_type in DEPENDENCY_EXCEPTION_TYPES:
+        app.add_exception_handler(exception_type, _handle_dependency_error)
 
 
 # Starlette types every handler as (Request, Exception). Each handler narrows the exception to
@@ -138,6 +172,24 @@ async def _handle_validation_error(request: Request, exc: Exception) -> JSONResp
         instance=request.url.path,
         detail=VALIDATION_ERROR_DETAIL,
         extensions={"errors": jsonable_encoder(errors)},
+    )
+
+
+async def _handle_dependency_error(request: Request, exc: Exception) -> JSONResponse:
+    # The registered types also cover ordinary SQL errors (e.g. a constraint violation is a
+    # DBAPIError). Those are bugs or conflicts, not outages: re-raise them so they become a 500.
+    if not is_dependency_unavailable(exc):
+        raise exc
+    logger.warning(
+        "Backing service unavailable while handling request",
+        extra={"event": "dependency.unavailable", "error_type": type(exc).__name__},
+    )
+    return problem_response(
+        status=503,
+        code="dependency_unavailable",
+        instance=request.url.path,
+        detail=DEPENDENCY_UNAVAILABLE_DETAIL,
+        headers={"Retry-After": "5"},
     )
 
 

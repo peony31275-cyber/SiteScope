@@ -10,7 +10,9 @@ The next phase starts only when the project owner asks for it. For the design, s
 |---|---|---|
 | 0 | Repository inspection and architecture baseline | **Done** (2026-11-06) |
 | 1 | Backend foundation | **Done** (2026-11-06) |
-| 2 | Persistence, migrations, and the job API | Not started (Docker environment ready) |
+| 2A | Docker environment (WSL 2) | **Done** (2026-11-06) |
+| 2B | PostgreSQL, Redis, and database infrastructure | **Done** (2026-11-06) |
+| 2C | Job API and URL normalization | Not started |
 | 3 | Task distribution core | Not started |
 | 4 | Fault tolerance and recovery | Not started |
 | 5 | Safe HTTP crawling | Not started |
@@ -21,18 +23,20 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 10 | Benchmarks | Not started |
 | 11 | CI hardening and documentation | Not started |
 
-## Repository state after Phase 1
+## Repository state after Phase 2B
 
 Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
-| Git | Local repository on branch `master` (the configured default). Phase 0 and Phase 1 are committed. No remote yet. |
-| `backend/app/` | FastAPI foundation: configuration, logging, errors, middleware, health endpoints. |
-| `backend/tests/` | 51 unit tests. |
-| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
+| Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B). |
+| `backend/alembic/` | Migration `0001` (the six-table schema). |
+| `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
+| `backend/tests/` | 165 tests: 89 unit, 76 integration (real PostgreSQL and Redis). |
+| `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0007, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0010, API conventions, development guide. |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -147,50 +151,129 @@ phase relies on. No database yet.
 - **Readiness endpoint path:** the endpoint planned for Phase 2 moves from `GET /ready` to
   `GET /api/v1/health/ready`, beside the new versioned liveness endpoint.
 
-### Phase 2: Persistence, migrations, and the job API
+### Phase 2A: Docker environment in WSL 2 (done)
 
-**Goal.** Durable job state and the job lifecycle API, on a real PostgreSQL.
+Docker Engine 29.9.3 and Compose v5.7.0 run inside WSL Ubuntu 24.04 and have been verified. See
+"Environment setup" above and [development.md](development.md#docker-wsl-2).
+
+### Phase 2B: PostgreSQL, Redis, and database infrastructure (done)
+
+**Goal.** A reliable database and infrastructure foundation: the services, the schema and its
+migrations, connection management, readiness, and integration tests. No crawling, scheduling or
+workers.
+
+**Delivered**
+
+- **Infrastructure:** `backend/compose.yaml`.
+  - Official, pinned images: PostgreSQL 18.6 and Redis 8.10.3.
+  - Named volumes; Redis persists with AOF (`everysec`) and requires a password.
+  - Health checks, `restart: unless-stopped`, ports bound to `127.0.0.1` only, a dedicated network.
+  - Credentials come from `backend/.env`, which the backend reads too.
+- **Configuration:**
+  - `SITESCOPE_POSTGRES_*`, `SITESCOPE_DB_*` (pool), `SITESCOPE_REDIS_*`,
+    `SITESCOPE_READINESS_TIMEOUT_SECONDS`.
+  - Passwords are secrets, and are mandatory in production, where template placeholders are
+    rejected.
+- **PostgreSQL access:** `app/db/session.py`.
+  - An async engine with a connection pool (pre-ping, recycle) and an asyncpg connect timeout and
+    command timeout.
+  - Per-request sessions (`get_session`), per-operation units of work (`Database.transaction()`),
+    `ping()` and `dispose()`.
+- **Redis access:** `app/core/redis.py`. One pooled async client per process, connecting lazily,
+  with redis-py's hidden retries disabled.
+- **Schema:** migration `0001`, mirrored by `app/db/models.py`.
+  - Six tables: `crawl_jobs`, `crawl_urls`, `pages`, `page_links`, `search_documents`,
+    `crawl_events`.
+  - 52 CHECK constraints and 7 foreign keys; every reference between job-scoped tables is a
+    composite key that includes `job_id`.
+  - 27 indexes, including partial and GIN indexes; 6 triggers from 3 functions.
+  - See architecture section 5.
+- **Lifecycle:** the lifespan creates and closes both clients. The application starts even while
+  a dependency is down: liveness stays up, and readiness reports the outage.
+- **Readiness:** `GET /api/v1/health/ready` checks PostgreSQL and Redis concurrently under a
+  deadline. It answers 200 or 503 with the same schema, and never exposes connection details.
+- **Errors:** connection failures on the request path become `503 dependency_unavailable`
+  (problem+json, `Retry-After`). Ordinary SQL errors still become 500.
+- **Decisions:** ADR-0008 (indexing outbox), ADR-0009 (deduplication key), ADR-0010
+  (database-enforced fencing).
+
+**Verification** (2026-11-06; Windows 10, Python 3.13.7, services in WSL)
+
+- `pytest --require-services`: 165 passed. That is 89 unit tests and 76 integration tests against
+  PostgreSQL 18.6 and Redis 8.10.3. The integration tests cover:
+  - connectivity, persistence, transactions and rollback, session lifecycle;
+  - recovery from a connection the server killed mid-transaction;
+  - every constraint family, job isolation, cascades;
+  - leases and fencing, including a stale worker rejected by the database;
+  - concurrent discovery, competing claims, the page budget;
+  - migrations and Redis;
+  - readiness success, and failure with wrong passwords, closed ports and a hanging server.
+- `ruff check` and `ruff format --check`: clean. `mypy` strict over `app`, `tests` and `alembic`
+  (45 files): no issues.
+- Alembic:
+  - `upgrade head` on the development database gives `0001 (head)`; the history is linear.
+  - Tested on disposable databases: upgrade from empty, models matching the migrated schema,
+    downgrade to base and upgrade again, and an interrupted migration leaving no partial schema.
+- `docker compose config --quiet` is valid, and both services are healthy.
+- End to end on this machine, with the API running on Windows:
+  - readiness 200 with both services up;
+  - `docker compose stop redis` gave readiness 503 while liveness stayed 200;
+  - after Redis restarted, readiness returned to 200;
+  - no passwords appeared in the logs.
+
+**Findings and design adjustments**
+
+- **Scope split.** This phase covers the infrastructure only. The job API and URL normalization
+  from the original Phase 2 move to Phase 2C.
+- **Indexing outbox (ADR-0008).** `search_documents` replaces the planned `index_outbox`: one
+  table holds both the indexing state and the publication state.
+- **Deduplication key (ADR-0009).** Deduplication uses `UNIQUE (job_id, normalized_url)`, guarded
+  by an ASCII and length CHECK, instead of a hash column.
+- **Fencing (ADR-0010).** Fencing is enforced by the database: `result_epoch` CHECKs plus a
+  monotonic `lease_epoch` trigger.
+- **Primary keys.** UUIDv7 keys come from PostgreSQL 18's `uuidv7()`, instead of the bigint
+  identity keys sketched in Phase 0.
+- **Compose location.** The Compose file lives in `backend/`, so Compose and the backend share one
+  `.env` file.
+- **redis-py retries.** redis-py retries `ConnectionError` by default, and `AuthenticationError`
+  is a subclass of it. A wrong password pushed readiness into a timeout, and an unreachable Redis
+  made one request take 27 s. Automatic retries are now disabled.
+- **Clock skew.** The Windows host and the WSL VM clocks differed by about 160 ms. A CHECK
+  constraint caught a test helper that mixed the two clocks, so comparable timestamps now always
+  come from PostgreSQL.
+- **Refused connections on Windows.** A refused localhost connection takes about 2 s to fail on
+  Windows. The tests and the documentation account for this.
+
+### Phase 2C: Job API and URL normalization
+
+**Goal.** The remaining scope of the original Phase 2: creating, listing, inspecting and
+cancelling crawl jobs, on top of the Phase 2B schema.
 
 **Scope**
 
-- `docker-compose.yml` with `postgres` and `redis`, using:
-  - pinned image versions;
-  - named volumes;
-  - Redis AOF enabled;
-  - ports published on `127.0.0.1` only;
-  - `restart: unless-stopped` (see [development.md](development.md#docker-wsl-2)).
-- SQLAlchemy 2.x with an async engine and sessions.
-- Models for `crawl_jobs`, `crawl_urls`, `pages`, `page_links`, and `index_outbox`.
-- An initial Alembic migration with the constraints and partial indexes from the architecture.
-- URL normalization, scope checks, and allowlist validation, as pure functions with table-driven tests.
+- URL normalization, scope checks and allowlist validation, as pure functions with table-driven
+  tests. The output must satisfy the database's URL CHECK (ADR-0009).
+- Service functions that own the transactions:
+  - create the job and its seed URL atomically;
+  - cancel a job (architecture section 8.6);
+  - record job lifecycle events in `crawl_events`.
 - Job API:
-  - `POST /api/v1/jobs` (with `Idempotency-Key`)
+  - `POST /api/v1/jobs` (with `Idempotency-Key` and a request fingerprint)
   - `GET /api/v1/jobs` (keyset pagination, status filter)
   - `GET /api/v1/jobs/{id}` (state counts, current level, budget)
   - `POST /api/v1/jobs/{id}/cancel`
-- `GET /api/v1/health/ready`, which checks PostgreSQL and Redis.
-- New database and Redis settings in `backend/.env.example`.
 - The CI workflow (deferred from Phase 1), if a GitHub remote exists by then.
 
 **Tests**
 
-- Unit:
-  - the normalization corpus;
-  - allowlist and cap validation.
+- Unit: the normalization corpus; allowlist and cap validation.
 - Integration:
-  - migrations upgrade and downgrade;
   - the job and its seed URL are created atomically;
   - an `Idempotency-Key` replay returns the same job, and a mismatched body returns 409;
   - cancel transitions;
   - errors are returned as problem+json.
 
-**Done when.** Unit and integration tests pass against the Compose services, and migrations can be rolled
-back.
-
-**Needs**
-
-- Docker Engine in WSL (installed; see Environment setup).
-- A WSL session kept open while tests or the API use the containers.
+**Needs.** The Phase 2B services, and a WSL session kept open.
 
 ### Phase 3: Task distribution core
 
@@ -207,6 +290,8 @@ duplicates, driven by a test-double fetcher.
   - a dispatcher that treats the frontier as the outbox, gates by level, enforces a per-job in-flight
     window, and serves jobs round-robin;
   - level advancement and job completion.
+- Start from the claim and fenced-commit statements already exercised against the real schema in
+  `tests/integration/test_leases.py`.
 - `app/workers`:
   - a consumer runtime with bounded concurrency and graceful shutdown;
   - the crawl task flow: claim (compare-and-set + `lease_epoch`) → `Fetcher` protocol → fenced result
@@ -301,8 +386,10 @@ reason.
 
 **Scope**
 
-- The `index_outbox` relay and the indexer worker.
-- A `search_documents` migration with a GIN index, and a weighted `tsvector` with truncation.
+- The index relay, which publishes `pending` `search_documents` rows (ADR-0008), and the indexer
+  worker.
+- A weighted `tsvector` with truncation. The `search_documents` table and its GIN index exist
+  since Phase 2B.
 - `GET /api/v1/search`:
   - `websearch_to_tsquery` for parsing and `ts_rank_cd` for ranking;
   - safe `ts_headline` snippets;
