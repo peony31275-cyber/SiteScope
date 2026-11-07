@@ -102,7 +102,9 @@ class MemorySlotStore:
     hosts: dict[str, HostState] = field(default_factory=dict)
     attempts: list[Attempt] = field(default_factory=list)
     grants: list[tuple[str, float]] = field(default_factory=list)  # (token, time)
+    renewals: list[tuple[str, float, float]] = field(default_factory=list)  # (token, time, lease)
     fail_release: bool = False
+    fail_renew: bool = False
 
     def state(self, host: str) -> HostState:
         return self.hosts.setdefault(host, HostState())
@@ -154,6 +156,19 @@ class MemorySlotStore:
         state.active.pop(token, None)
         state.queue.pop(token, None)
         state.seen.pop(token, None)
+
+    async def renew(self, host: str, token: str, *, lease: float) -> bool:
+        if self.fail_renew:
+            raise RedisConnectionError("Redis is unavailable")
+        now = self.clock()
+        state = self.state(host)
+        expiry = state.active.get(token)
+        if expiry is None or expiry <= now:  # expired: another request may hold its place
+            state.active.pop(token, None)
+            return False
+        state.active[token] = now + lease
+        self.renewals.append((token, now, lease))
+        return True
 
     async def raise_crawl_delay(self, host: str, delay: float, *, ttl: float) -> None:
         state = self.state(host)

@@ -15,11 +15,17 @@ The loop, for one job:
    lease expired (left behind by a stopped run; they are taken over with a new fencing token),
    then newly dispatched ``pending`` URLs (T3);
 4. each task claims its URL (T4), runs ``crawl_task.crawl_url`` under a deadline that ends
-   ``SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS`` before its lease, and records the result (T5). A
-   fenced-out result is discarded;
+   ``SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS`` before its lease, and records the result (T5), or
+   schedules a retry when the retry policy says so (``app/workers/retry.py``, Phase 6: the URL
+   is ``pending`` again until its ``next_attempt_at``, and step 3 dispatches it when it is due).
+   A fenced-out result is discarded;
 5. a URL whose expired lease used its last attempt is failed (``recover_exhausted_url``);
 6. if the level has unfinished URLs that this process cannot act on (live leases of another
-   process), wait and look again.
+   process, or retries that are not due yet), wait and look again.
+
+**Cancellation** (Phase 6). A cancelled job is no longer running, so nothing new is dispatched
+or claimed; tasks in flight finish (their results are kept), and the run then settles the
+cancellation (``crawl_cancellation.settle_cancellation``), as the scheduler would.
 
 **Crash safety.** Everything is in PostgreSQL. If the process stops (a crash, Ctrl+C, or a
 PostgreSQL or Redis error, which ends the run), the URLs it had claimed stay ``in_progress``
@@ -51,7 +57,9 @@ from app.core.errors import NotFoundError
 from app.core.logging import configure_logging, task_context_var
 from app.core.process import int_in_range, process_name
 from app.core.redis import create_redis_client
+from app.db.models import JobStatus
 from app.db.session import Database
+from app.services.crawl_cancellation import settle_cancellation
 from app.services.crawl_jobs import CrawlJobProgress, get_crawl_job
 from app.services.crawl_state import (
     AdvanceAction,
@@ -65,6 +73,7 @@ from app.services.crawl_state import (
     recover_exhausted_url,
 )
 from app.workers.crawl_task import CrawlContext
+from app.workers.retry import RetryPolicy
 from app.workers.runtime import build_crawl_context, crawl_within, worker_database
 
 logger = logging.getLogger(__name__)
@@ -85,6 +94,7 @@ class DriverConfig:
     max_attempts: int = 3
     max_redirect_hops: int = 5  # redirect targets admitted in a row from one URL
     idle_poll_seconds: float = 1.0  # wait when only other processes' leases remain
+    retry: RetryPolicy | None = None  # None: the default policy, with max_attempts
     owner: str = field(default_factory=worker_name)
 
     def __post_init__(self) -> None:
@@ -92,6 +102,16 @@ class DriverConfig:
             raise ValueError("concurrency must be at least 1")
         if not 0 < self.task_deadline < self.lease_seconds:
             raise ValueError("the task deadline must be positive and shorter than the lease")
+        if self.retry is None:
+            object.__setattr__(self, "retry", RetryPolicy(max_attempts=self.max_attempts))
+        elif self.retry.max_attempts != self.max_attempts:
+            raise ValueError("the retry policy must use the same max_attempts")
+
+    @property
+    def retry_policy(self) -> RetryPolicy:
+        if self.retry is None:  # pragma: no cover - __post_init__ always sets it
+            raise RuntimeError("the driver has no retry policy")
+        return self.retry
 
     @classmethod
     def from_settings(cls, settings: Settings, *, concurrency: int | None = None) -> Self:
@@ -101,6 +121,7 @@ class DriverConfig:
             task_deadline=settings.crawl_lease_seconds - settings.crawl_lease_margin_seconds,
             max_attempts=settings.crawl_max_attempts,
             max_redirect_hops=settings.fetch_max_redirects,
+            retry=RetryPolicy.from_settings(settings),
         )
 
 
@@ -169,6 +190,14 @@ class LocalCrawler:
             await asyncio.gather(*in_flight.values(), return_exceptions=True)
         async with self._database.session() as session:
             progress = await get_crawl_job(session, job_id)
+        if progress.job.status == JobStatus.CANCELLING.value:
+            # Cancelled during the run (Phase 6): this process's tasks are done, so finish the
+            # cancellation as the scheduler would; a live lease of another process keeps the
+            # job cancelling until that URL is final.
+            async with self._database.session() as session:
+                await settle_cancellation(session, job_id)
+            async with self._database.session() as session:
+                progress = await get_crawl_job(session, job_id)
         logger.info(
             "Local crawl finished",
             extra={
@@ -218,9 +247,8 @@ class LocalCrawler:
         return started + recovered
 
     async def _process(self, url_id: uuid.UUID) -> bool:
-        """One task: claim, crawl under the task deadline, record the fenced result.
-
-        Returns whether the claim succeeded.
+        """One task: claim, crawl under the task deadline, record the fenced result (or schedule
+        a retry). Returns whether the claim succeeded.
         """
         config = self._config
         async with self._database.session() as session:
@@ -242,9 +270,14 @@ class LocalCrawler:
             }
         )
         result = await crawl_within(self._context, lease, deadline=config.task_deadline)
+        decision = config.retry_policy.decide(result, attempt=lease.attempt)
         async with self._database.session() as session:
             recorded = await record_result(
-                session, lease, result, max_redirect_hops=config.max_redirect_hops
+                session,
+                lease,
+                result,
+                max_redirect_hops=config.max_redirect_hops,
+                retry_delay=decision.delay,
             )
         if recorded.status is RecordStatus.RECORDED:
             logger.info(

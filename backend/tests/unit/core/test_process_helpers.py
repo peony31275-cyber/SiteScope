@@ -132,7 +132,7 @@ def test_scheduler_config_from_settings() -> None:
     config = SchedulerConfig.from_settings(settings)
 
     assert config.max_running_jobs == 10
-    assert config.reconcile_after == 600
+    assert config.reconcile_after == 300  # 600 until Phase 6
     assert config.reconcile_interval == 30  # reconcile_after / 4, at most 30 s
     assert config.maintenance_interval == 60  # retention / 4, at most 60 s
     assert config.name.startswith("scheduler-")

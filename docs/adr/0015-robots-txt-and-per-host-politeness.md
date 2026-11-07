@@ -1,6 +1,7 @@
 # ADR-0015: robots.txt (RFC 9309) and per-host politeness through Redis
 
-- Status: Accepted
+- Status: Accepted. Amended by [ADR-0017](0017-retries-dead-letters-cancellation-idempotency.md) (a politeness slot is a lease that its holder renews;
+  decision 7's fixed expiry becomes the longest hold).
 - Date: 2026-11-06
 - Extends: [ADR-0006](0006-target-allowlist-ssrf-defenses.md),
   [ADR-0013](0013-safe-fetcher-pinned-connections.md)

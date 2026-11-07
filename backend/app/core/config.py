@@ -43,6 +43,10 @@ LEASE_MARGIN_SECONDS = 10.0
 # Values copied unchanged from backend/.env.example; they must never reach production.
 _PLACEHOLDER_SECRET_PREFIX = "change-me"  # noqa: S105 - a marker for template values, not a secret
 
+# The only client errors that SITESCOPE_RETRY_HTTP_STATUSES may list: Request Timeout, Too Early
+# and Too Many Requests. Every other 4xx status (404 and 410 above all) is permanent.
+RETRYABLE_CLIENT_ERRORS = frozenset({408, 425, 429})
+
 
 class Settings(BaseSettings):
     """Immutable, validated configuration for a SiteScope process."""
@@ -132,8 +136,26 @@ class Settings(BaseSettings):
     crawl_lease_seconds: float = Field(default=90.0, gt=0, le=3600)
     # The task deadline is the lease minus this margin, which leaves time to commit the result.
     crawl_lease_margin_seconds: float = Field(default=LEASE_MARGIN_SECONDS, gt=0, le=60)
-    # Claims of one URL before it fails with max_attempts_exceeded; bounds crash loops.
+    # Claims of one URL, retries and crashed attempts included, before its last failure is
+    # final (or, after crashes, it fails with max_attempts_exceeded).
     crawl_max_attempts: int = Field(default=3, ge=1, le=10)
+    # How often a crawler worker checks whether the jobs of its running tasks were cancelled
+    # (it then stops those tasks and records them as cancelled).
+    crawl_cancel_check_seconds: float = Field(default=2.0, gt=0, le=60)
+
+    # --- Retries (Phase 6) -----------------------------------------------------------------------
+    # A retryable failure (temporary DNS failure, connection failure, timeout, truncated
+    # response, rate_limited, deadline_exceeded, a status in SITESCOPE_RETRY_HTTP_STATUSES) is
+    # tried again while attempts remain. The n-th retry waits a random time between 0 and
+    # min(SITESCOPE_RETRY_MAX_DELAY_SECONDS, SITESCOPE_RETRY_BASE_DELAY_SECONDS * 2^(n-1)),
+    # and at least what a valid Retry-After asks for.
+    retry_base_delay_seconds: float = Field(default=2.0, gt=0, le=3600)
+    retry_max_delay_seconds: float = Field(default=60.0, gt=0, le=86_400)
+    # A Retry-After (HTTP 429 or 503) longer than this is not waited for: the URL is not retried.
+    retry_after_max_seconds: float = Field(default=300.0, ge=0, le=86_400)
+    # HTTP statuses retried: server errors (500-599), and of the client errors only 408, 425 and
+    # 429 (RETRYABLE_CLIENT_ERRORS). Any other HTTP status is final; empty retries none.
+    retry_http_statuses: Annotated[tuple[int, ...], NoDecode] = (429, 500, 502, 503, 504)
 
     # --- Redis Streams task delivery (app/queue, Phase 5) ----------------------------------------
     # How long a worker's XREADGROUP blocks waiting for tasks (below the Redis socket timeout).
@@ -142,8 +164,12 @@ class Settings(BaseSettings):
     # and how long a task must have been idle first. The idle time must be at least the lease,
     # so a task is never taken from a worker that still holds its lease.
     stream_reclaim_interval_seconds: float = Field(default=15.0, gt=0, le=3600)
-    stream_reclaim_min_idle_seconds: float = Field(default=120.0, gt=0, le=86_400)
+    stream_reclaim_min_idle_seconds: float = Field(default=100.0, gt=0, le=86_400)
     stream_reclaim_batch_size: int = Field(default=50, ge=1, le=1000)
+    # A message delivered more often without being settled, whose URL can no longer be claimed
+    # (its attempts are used up), is poison: the URL is failed (max_deliveries_exceeded) and the
+    # message is dead-lettered (Phase 6). A URL that a claim can take is claimed as usual.
+    stream_max_deliveries: int = Field(default=10, ge=2, le=1000)
     # Delivered tasks older than this are trimmed from the stream; tasks still pending in a
     # consumer group, and tasks not yet delivered, are never trimmed.
     stream_retention_seconds: int = Field(default=3600, ge=60, le=7 * 86_400)
@@ -163,7 +189,12 @@ class Settings(BaseSettings):
     scheduler_max_running_jobs: int = Field(default=10, ge=1, le=10_000)
     # A queued task, or an expired lease, that has made no progress this long is published
     # again (its message may have been lost from Redis).
-    scheduler_reconcile_after_seconds: float = Field(default=600.0, gt=0, le=86_400)
+    scheduler_reconcile_after_seconds: float = Field(default=300.0, gt=0, le=86_400)
+
+    # --- API (Phase 6) ---------------------------------------------------------------------------
+    # How long an Idempotency-Key of POST /api/v1/crawls is remembered. Afterwards the key is
+    # forgotten (the job stays) and may create a new job.
+    idempotency_key_ttl_seconds: int = Field(default=86_400, ge=60, le=30 * 86_400)
 
     # --- Process shutdown ------------------------------------------------------------------------
     # On SIGINT or SIGTERM, how long a worker lets its running tasks finish before it stops them.
@@ -177,6 +208,10 @@ class Settings(BaseSettings):
     politeness_max_concurrent_per_host: int = Field(default=1, ge=1, le=16)
     # The longest a request waits for its slot; after that it fails as rate_limited.
     politeness_max_wait_seconds: float = Field(default=30.0, gt=0, le=600)
+    # A slot is a lease of this many seconds, renewed by its holder while the request runs, so
+    # the slot of a crashed process frees after at most this long (Phase 6). A live holder never
+    # keeps a slot longer than the fetch deadline plus 10 s.
+    politeness_slot_lease_seconds: float = Field(default=15.0, ge=1, le=600)
     # How long a robots.txt result is cached in Redis (RFC 9309: at most 24 hours), and how long
     # an unreachable robots.txt (5xx, 429, network error: complete disallow) is cached before
     # the next attempt.
@@ -196,11 +231,26 @@ class Settings(BaseSettings):
         return value.upper() if isinstance(value, str) else value
 
     @field_validator(
-        "crawl_allowed_hosts", "crawl_allowed_ports", "fetch_internal_origins", mode="before"
+        "crawl_allowed_hosts",
+        "crawl_allowed_ports",
+        "fetch_internal_origins",
+        "retry_http_statuses",
+        mode="before",
     )
     @classmethod
     def _split_comma_separated(cls, value: object) -> object:
         return _split_list(value)
+
+    @field_validator("retry_http_statuses")
+    @classmethod
+    def _check_retry_statuses(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        # A client error is permanent (404 and 410 above all), except a request timeout (408),
+        # a request sent too early (425) and too many requests (429).
+        if any(not (500 <= status <= 599 or status in RETRYABLE_CLIENT_ERRORS) for status in value):
+            raise ValueError(
+                "retryable HTTP statuses must be server errors (500-599), 408, 425 or 429"
+            )
+        return tuple(sorted(set(value)))
 
     @field_validator("fetch_internal_origins")
     @classmethod
@@ -255,6 +305,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SITESCOPE_STREAM_READ_BLOCK_MS must be shorter than"
                 " SITESCOPE_REDIS_SOCKET_TIMEOUT_SECONDS"
+            )
+        if self.retry_base_delay_seconds > self.retry_max_delay_seconds:
+            raise ValueError(
+                "SITESCOPE_RETRY_BASE_DELAY_SECONDS must not exceed"
+                " SITESCOPE_RETRY_MAX_DELAY_SECONDS"
             )
         # A request that finds its host idle may still have to wait one interval.
         if self.politeness_interval_seconds > self.politeness_max_wait_seconds:

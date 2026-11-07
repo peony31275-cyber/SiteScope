@@ -33,6 +33,8 @@ class ProblemDetails(BaseModel):
 
 _DESCRIPTIONS = {
     404: "The resource does not exist (`not_found`).",
+    409: "The request conflicts with earlier ones: an `Idempotency-Key` reused for a different "
+    "request (`idempotency_key_reused`).",
     422: "The request failed validation (`validation_failed`); `errors` lists each field.",
     503: "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
 }

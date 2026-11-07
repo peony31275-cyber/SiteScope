@@ -64,6 +64,7 @@ Every error response has the media type `application/problem+json`. For example:
 | 404 | `not_found` | An unknown route, or a `NotFoundError` from the service layer |
 | 405 | `method_not_allowed` | Wrong method. The `Allow` header lists the permitted methods. |
 | 409 | `conflict` | A `ConflictError` from the service layer |
+| 409 | `idempotency_key_reused` | An `Idempotency-Key` that already created a job for a different request (Phase 6) |
 | 422 | `validation_failed` | The request failed validation: its shape (schema), or a server-side rule such as an unapproved crawl target. `errors` lists each field. |
 | 500 | `internal_error` | An unexpected error. Details appear only in the server logs, never in the response. |
 | 503 | `dependency_unavailable` | PostgreSQL or Redis is unreachable, or rejected the connection. Sent with `Retry-After: 5`. Ordinary SQL errors are never reported this way. |
@@ -126,9 +127,10 @@ List endpoints use cursor (keyset) pagination:
 
 | Endpoint | Success | Errors |
 |---|---|---|
-| `POST /api/v1/crawls` | `201`, with a `Location` header pointing to the new job | `422`, `503` |
+| `POST /api/v1/crawls` | `201`, with a `Location` header pointing to the new job; `200` for a replayed `Idempotency-Key` | `409`, `422`, `503` |
 | `GET /api/v1/crawls` | `200`: a page of jobs, newest first | `422`, `503` |
 | `GET /api/v1/crawls/{job_id}` | `200`: the job and its progress | `404`, `422` (malformed ID), `503` |
+| `POST /api/v1/crawls/{job_id}/cancel` | `202` while the job is `cancelling`; `200` once it is `cancelled`, or if it was already finished | `404`, `422` (malformed ID), `503` |
 
 Creating a job:
 
@@ -144,6 +146,36 @@ Creating a job:
   `SITESCOPE_CRAWL_MAX_PAGES_LIMIT`).
 - A new job is `queued`. It stays `queued` until the scheduler (Phase 5) starts it. The API never
   reports a job as running when nothing runs it.
+
+**Idempotent creation** (Phase 6). The optional `Idempotency-Key` request header makes a retried
+creation safe:
+
+- The key is 1 to 255 visible ASCII characters (`!` to `~`, no spaces); anything else is a `422`
+  (`validation_failed`, `loc` `["header", "Idempotency-Key"]`). A random UUID per intended job is
+  a good key.
+- The first request with a key creates the job (`201`). A later request with the same key and an
+  equivalent body (the same seed URL after normalization, the same `max_depth` and `max_pages`)
+  creates nothing and returns that job: `200`, the same `Location`, and the header
+  `Idempotent-Replayed: true`. Concurrent requests with one key create one job.
+- The same key with a different body is refused: `409` with code `idempotency_key_reused`. The key
+  is not echoed in the error.
+- Keys are stored in PostgreSQL with the job, in its transaction, and remembered for
+  `SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS` (24 hours by default). After that the key may create a
+  new job; the old job is unchanged.
+- Without the header, every request creates a new job, as before.
+
+**Cancelling a job** (Phase 6). `POST /api/v1/crawls/{job_id}/cancel` has no body and returns the
+job summary:
+
+- A `queued` job is `cancelled` at once (`200`).
+- A `running` job stops dispatching and claiming, and its waiting URLs are cancelled at once. If
+  none of its URLs is being crawled, it is `cancelled` at once (`200`); otherwise it is
+  `cancelling` (`202`) until the URLs in flight are final (normally within seconds; up to one lease
+  duration if a worker crashed), and then `cancelled`.
+- Cancelling again, or cancelling a `completed`, `failed` or `cancelled` job, changes nothing and
+  returns the job (`202` while it is still `cancelling`, `200` otherwise).
+- A cancelled URL has the state `cancelled` and the outcome `job_cancelled`. Pages already stored
+  are kept.
 
 The job detail adds `progress`, counted from the job's URL rows when the request is served:
 `urls_total`, `urls_finished`, and `urls_by_state` with a count for each of the seven URL states.

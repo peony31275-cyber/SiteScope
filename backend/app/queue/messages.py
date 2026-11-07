@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Final
 
 MESSAGE_VERSION: Final = "1"
+CONTRACT_FIELDS: Final = ("v", "job_id", "url_id")
 
 
 class MalformedMessageError(ValueError):

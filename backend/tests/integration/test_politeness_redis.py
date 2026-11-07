@@ -186,6 +186,53 @@ async def test_every_key_expires(redis_client: Redis, redis_prefix: str) -> None
     assert 0 < await redis_client.pttl(seen) <= 9_000
 
 
+async def test_a_held_slot_is_renewed_and_a_released_one_is_not(
+    redis_client: Redis, redis_prefix: str
+) -> None:
+    store = RedisSlotStore(redis_client, key_prefix=redis_prefix)
+    active = store.keys(HOST)[1]
+    assert (await attempt(store, "t", slot_ttl=2.0)).granted
+    first = await redis_client.zscore(active, "t")
+    assert first is not None
+    assert await store.renew(HOST, "t", lease=30.0)
+    renewed = await redis_client.zscore(active, "t")
+    assert renewed is not None
+    assert renewed - first >= 27_000_000  # now about 30 s from now, instead of 2 s
+    assert 28_000 < await redis_client.pttl(active) <= 31_000  # the key outlives the slot
+    await store.release(HOST, "t")
+    assert not await store.renew(HOST, "t", lease=30.0)
+    assert await redis_client.zscore(active, "t") is None  # a renewal never adds a slot back
+
+
+async def test_an_expired_slot_cannot_be_renewed(redis_client: Redis, redis_prefix: str) -> None:
+    """Once a slot has expired, another request may have taken its place: renewing it then
+    would exceed the concurrency cap."""
+    store = RedisSlotStore(redis_client, key_prefix=redis_prefix)
+    active = store.keys(HOST)[1]
+    assert (await attempt(store, "t", slot_ttl=0.05)).granted
+    await asyncio.sleep(0.15)
+    assert not await store.renew(HOST, "t", lease=30.0)
+    assert await redis_client.zscore(active, "t") is None
+    assert (await attempt(store, "u")).granted
+
+
+async def test_a_live_request_keeps_its_slot_for_longer_than_one_lease(
+    redis_client: Redis, redis_prefix: str
+) -> None:
+    config = PolitenessConfig(
+        interval=0.0, max_wait=0.5, slot_ttl=30.0, slot_lease=0.6, poll_interval=0.02
+    )
+    holder = PolitenessGate(RedisSlotStore(redis_client, key_prefix=redis_prefix), config)
+    other = PolitenessGate(RedisSlotStore(redis_client, key_prefix=redis_prefix), config)
+    async with holder.slot(URL):
+        await asyncio.sleep(2.0)  # more than three leases: renewed every 0.2 s
+        with pytest.raises(RateLimitedError):
+            async with other.slot(URL):
+                pass
+    async with other.slot(URL):  # released at once when the request ends
+        pass
+
+
 async def test_a_backward_clock_step_costs_one_interval_at_most(
     redis_client: Redis, redis_prefix: str
 ) -> None:

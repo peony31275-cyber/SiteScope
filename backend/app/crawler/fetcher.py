@@ -42,6 +42,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol
 
 import httpcore2
@@ -68,6 +69,7 @@ from app.crawler.destinations import (
 from app.crawler.errors import FailureKind, FetchError, RateLimitedError
 from app.crawler.resolver import ResolutionError, Resolver, SystemResolver
 from app.crawler.results import FetchResult, Redirect
+from app.crawler.retry_after import parse_retry_after
 from app.crawler.scope import CrawlTargetPolicy, TargetNotAllowedError
 from app.crawler.urls import (
     InvalidUrlError,
@@ -480,7 +482,14 @@ class SafeFetcher:
                 fail(FailureKind.INVALID_REDIRECT, f"unusable redirect target: {exc}", status)
             return _RedirectResponse(status, destination, headers, remote)
         if not 200 <= status < 300:
-            fail(FailureKind.HTTP_ERROR, f"HTTP {status} from {target.host}", status)
+            raise FetchError(
+                FailureKind.HTTP_ERROR,
+                f"HTTP {status} from {target.host}",
+                url=target.url,
+                http_status=status,
+                redirects=redirects,
+                retry_after=_retry_after(response.headers, status),
+            )
 
         media_type, parameters = parse_media_type(headers.get("content-type"))
         if content.media_types is not None and media_type not in content.media_types:
@@ -622,6 +631,24 @@ def _header(headers: Sequence[tuple[bytes, bytes]], name: bytes) -> str | None:
             except UnicodeDecodeError:
                 return value.decode("latin-1")
     return None
+
+
+def _retry_after(headers: Sequence[tuple[bytes, bytes]], status: int) -> float | None:
+    """The Retry-After of a 429 or 503 response, in seconds (None if absent or malformed).
+
+    An HTTP-date counts from the response's Date header; only without one does it fall back to
+    this process's clock, which then merely shifts a retry delay (bounded by the retry policy).
+    """
+    if status not in (429, 503):
+        return None
+    value = _header(headers, b"retry-after")
+    if value is None:
+        return None
+    try:
+        return parse_retry_after(value, date=_header(headers, b"date"), now=datetime.now(UTC))
+    except (ValueError, OverflowError):  # pragma: no cover - the parser already returns None
+        # A header can never turn a well-formed HTTP error into an unexpected exception.
+        return None
 
 
 def _kept_headers(headers: Sequence[tuple[bytes, bytes]]) -> dict[str, str]:

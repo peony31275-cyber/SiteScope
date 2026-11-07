@@ -5,7 +5,8 @@ Run from backend\ (settings come from the environment and backend\.env)::
     .\.venv\Scripts\python.exe -m app.scheduler.status
 
 Prints one JSON document and changes nothing, in PostgreSQL (a read-only transaction) or in
-Redis (``XINFO``, ``XLEN``, ``XPENDING``). The exit status is 0 if both were reachable, 1 if not.
+Redis (``XINFO``, ``XLEN``, ``XPENDING``, ``XREVRANGE``). The stream section ends with the newest
+dead letters (``--dead-letters``). The exit status is 0 if both were reachable, 1 if not.
 """
 
 import argparse
@@ -24,7 +25,7 @@ from app.queue.streams import CrawlStream
 from app.services.diagnostics import crawl_overview
 
 
-async def collect(settings: Settings, *, jobs: int = 20) -> dict[str, Any]:
+async def collect(settings: Settings, *, jobs: int = 20, dead_letters: int = 10) -> dict[str, Any]:
     """The diagnostics document: a ``database`` and a ``stream`` section (or their errors)."""
     report: dict[str, Any] = {}
     database = Database(settings, application_name="sitescope-status")
@@ -41,6 +42,7 @@ async def collect(settings: Settings, *, jobs: int = 20) -> dict[str, Any]:
         described = await stream.describe()
         if described.get("exists"):
             described["pending"] = asdict(await stream.pending())
+        described["recent_dead_letters"] = await stream.recent_dead_letters(dead_letters)
         report["stream"] = described
     except Exception as exc:
         report["stream"] = {"error": error_type(exc)}
@@ -60,8 +62,16 @@ def main(argv: Sequence[str] | None = None, *, settings: Settings | None = None)
         default=20,
         help="running jobs to list, oldest first (default: 20)",
     )
+    parser.add_argument(
+        "--dead-letters",
+        type=int_in_range(0, 1000),
+        default=10,
+        help="newest dead letters to list (default: 10)",
+    )
     args = parser.parse_args(argv)
-    report = asyncio.run(collect(settings or get_settings(), jobs=args.jobs))
+    report = asyncio.run(
+        collect(settings or get_settings(), jobs=args.jobs, dead_letters=args.dead_letters)
+    )
     sys.stdout.write(json.dumps(report, indent=2, default=str) + "\n")
     failed = any("error" in report[section] for section in ("database", "stream"))
     return 1 if failed else 0

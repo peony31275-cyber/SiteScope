@@ -29,16 +29,26 @@ network I/O to a crawl target (architecture, section 9):
   Otherwise the same transaction writes the page, its links and its ``search_documents`` row
   (not for ``noindex`` pages), and admits a redirect target at the same depth under the job row
   lock. Any failure rolls all of it back.
+* **T5, retry branch** ``record_result(..., retry_delay=...)`` (Phase 6, ADR-0017): the same
+  fenced update, back to ``pending`` with ``next_attempt_at`` by the database clock, and a
+  ``url.retry_scheduled`` event. It counts no attempt: claims do.
 * **T6** ``advance_job``: under the job row lock, and only when no URL of the job is unfinished:
   admit the next level (deterministic order, exact budget), or finish the job.
 * **Recovery** ``recover_exhausted_url``: a URL whose lease expired after its last allowed
   attempt fails as ``max_attempts_exceeded``. A recovery claim issues a new token first, so the
   failure is a fenced result like any other, and a stalled holder is fenced out.
+* **Quarantine** ``quarantine_url`` (Phase 6): a ``queued`` URL whose attempts are used up, and
+  whose task message was delivered too often, fails as ``max_deliveries_exceeded`` through a
+  quarantine claim (a new token) and the fenced update.
 
 **Lock order.** ``record_result`` locks the URL row (its fenced update) before the job row (only
 to admit a redirect). ``advance_job`` locks the job row first, but then only reads URL rows and
 inserts new ones; it never locks an ``in_progress`` row. ``activate_job`` and
 ``dispatch_urls`` lock one table each. There is no cycle, so there is no deadlock.
+Foreign-key checks take ``FOR KEY SHARE`` on the job row when an event or a page is inserted; the
+quarantine does so while it holds its ``queued`` URL row, so cancellation, which locks the job
+row first and then waits for ``queued`` rows, takes ``FOR NO KEY UPDATE`` (no conflict with
+``FOR KEY SHARE``; ``crawl_cancellation``).
 
 **Budget and deduplication.** Every admission (job creation, ``advance_job``, redirect
 admission) holds the job row lock, inserts with ``ON CONFLICT DO NOTHING`` on
@@ -50,6 +60,7 @@ backstop.
 import hashlib
 import json
 import logging
+import math
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -82,6 +93,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS: Final = 2000  # crawl_urls.last_error
 EXHAUSTED_OUTCOME: Final = "max_attempts_exceeded"
+MAX_DELIVERIES_OUTCOME: Final = "max_deliveries_exceeded"  # a poison task message (Phase 6)
 # How long a recovery claim's lease lasts; it is released in the same transaction.
 _RECOVERY_LEASE_SECONDS: Final = 60.0
 _OUTCOME = re.compile(r"[a-z][a-z0-9_]*")
@@ -156,6 +168,8 @@ class UrlResult:
     # limit and the page budget allow.
     follow_redirect: bool = False
     page: PageRecord | None = None
+    # Seconds the server asked to wait before retrying (Retry-After of a 429 or 503 response).
+    retry_after: float | None = None
 
     def __post_init__(self) -> None:
         if self.state not in WORKER_OUTCOME_STATES:
@@ -167,7 +181,8 @@ class UrlResult:
 
 
 class RecordStatus(StrEnum):
-    RECORDED = "recorded"
+    RECORDED = "recorded"  # the URL's outcome is final
+    RETRY_SCHEDULED = "retry_scheduled"  # the URL is pending again, until next_attempt_at
     FENCED = "fenced"  # the lease was lost: nothing was written
 
 
@@ -176,6 +191,7 @@ class RecordedResult:
     status: RecordStatus
     page_id: uuid.UUID | None = None
     redirect_url_id: uuid.UUID | None = None  # the redirect target admitted with this result
+    next_attempt_at: datetime | None = None  # RETRY_SCHEDULED: when the URL may run again
 
 
 class AdvanceAction(StrEnum):
@@ -423,6 +439,45 @@ _RECOVERY_CLAIM = text(
       AND attempt_count >= :max_attempts
     RETURNING lease_epoch, job_id, normalized_url, depth, redirect_hops, attempt_count,
               old.lease_owner AS previous_owner
+    """
+)
+
+# The retry branch of T5: the same fenced update as a result (the worker's own token), back to
+# pending. The lease is released; attempt_count is left alone (the next claim counts the next
+# attempt), and outcome stays NULL: only a terminal state has an outcome.
+_RETRY = text(
+    """
+    UPDATE crawl_urls
+    SET state = 'pending',
+        next_attempt_at = clock_timestamp() + make_interval(secs => :delay),
+        lease_owner = NULL,
+        lease_expires_at = NULL,
+        http_status = :http_status,
+        last_error = :error
+    WHERE id = :url_id AND job_id = :job_id
+      AND state = 'in_progress' AND lease_epoch = :token
+    RETURNING next_attempt_at, attempt_count
+    """
+)
+
+# A quarantine claim (poison message): a new token for a queued URL of a running job whose
+# attempts are used up, so that no claim can ever take it; no attempt is counted. The token then
+# records the failure. A URL with attempts left is never quarantined: a claim, which counts an
+# attempt, bounds its work (Phase 6 independent review).
+_QUARANTINE_CLAIM = text(
+    """
+    UPDATE crawl_urls AS u
+    SET state = 'in_progress',
+        lease_epoch = u.lease_epoch + 1,
+        lease_owner = :owner,
+        lease_expires_at = clock_timestamp() + make_interval(secs => :lease_seconds),
+        result_epoch = NULL
+    FROM crawl_jobs AS j
+    WHERE u.id = :url_id AND u.job_id = :job_id
+      AND j.id = u.job_id AND j.status = 'running'
+      AND u.state = 'queued' AND u.attempt_count >= :max_attempts
+    RETURNING u.lease_epoch, u.normalized_url, u.depth, u.redirect_hops, u.attempt_count,
+              old.state AS previous_state
     """
 )
 
@@ -734,16 +789,32 @@ async def claim_url(
 
 
 async def record_result(
-    session: AsyncSession, lease: Lease, result: UrlResult, *, max_redirect_hops: int
+    session: AsyncSession,
+    lease: Lease,
+    result: UrlResult,
+    *,
+    max_redirect_hops: int,
+    retry_delay: float | None = None,
 ) -> RecordedResult:
     """T5: commit a task's result under its lease, all or nothing. See the module docstring.
+
+    With ``retry_delay`` (a retryable failure with attempts left, as the caller's retry policy
+    decided), the URL goes back to ``pending`` instead (``RETRY_SCHEDULED``): the same fenced
+    update, with ``next_attempt_at`` that many seconds from now by the database clock, then a
+    ``url.retry_scheduled`` event. The dispatcher publishes it again when it is due; until then
+    it is unfinished, so its BFS level cannot end (ADR-0017).
 
     Returns ``FENCED`` if the lease was lost (another claim took the URL over, or the URL is no
     longer in progress); nothing was written then, and the caller must discard the result.
     """
     try:
         async with session.begin():
-            recorded = await _record(session, lease, result, max_redirect_hops=max_redirect_hops)
+            if retry_delay is None:
+                recorded = await _record(
+                    session, lease, result, max_redirect_hops=max_redirect_hops
+                )
+            else:
+                recorded = await _schedule_retry(session, lease, result, delay=retry_delay)
     except _FencedOutError:
         logger.warning(
             "Result rejected: the lease was lost",
@@ -756,6 +827,21 @@ async def record_result(
             },
         )
         return RecordedResult(status=RecordStatus.FENCED)
+    if recorded.status is RecordStatus.RETRY_SCHEDULED:
+        logger.info(
+            "Retry scheduled",
+            extra={
+                "event": "task.retry_scheduled",
+                "job_id": str(lease.job_id),
+                "url_id": str(lease.url_id),
+                "lease_epoch": lease.token,
+                "attempt": lease.attempt,
+                "outcome": result.outcome,
+                "http_status": result.http_status,
+                "delay_ms": round((retry_delay or 0) * 1000),
+            },
+        )
+        return recorded
     logger.debug(
         "Result recorded",
         extra={
@@ -767,6 +853,90 @@ async def record_result(
         },
     )
     return recorded
+
+
+async def quarantine_url(
+    session: AsyncSession,
+    url_id: uuid.UUID,
+    *,
+    job_id: uuid.UUID,
+    owner: str,
+    deliveries: int,
+    max_attempts: int,
+) -> bool:
+    """Fail a URL whose task message became poison (delivered too often, never settled).
+
+    Only a ``queued`` URL of a running job whose attempts are used up (``attempt_count >=
+    max_attempts``, possible only after the limit was lowered): no claim can ever take it, so
+    its message would stay pending forever. A quarantine claim issues a new token (no attempt is
+    counted) and that token records ``failed: max_deliveries_exceeded`` through the normal
+    fenced update. A URL with attempts left, or with a lease, is never quarantined. False if the
+    URL does not qualify (a no-op).
+    """
+    try:
+        async with session.begin():
+            await session.execute(_CLAIM_LOCK, {"url_id": url_id})
+            row = (
+                await session.execute(
+                    _QUARANTINE_CLAIM,
+                    {
+                        "url_id": url_id,
+                        "job_id": job_id,
+                        "owner": owner,
+                        "lease_seconds": _RECOVERY_LEASE_SECONDS,
+                        "max_attempts": max_attempts,
+                    },
+                )
+            ).one_or_none()
+            if row is None:
+                return False
+            lease = Lease(
+                url_id=url_id,
+                job_id=job_id,
+                token=row.lease_epoch,
+                owner=owner,
+                url=row.normalized_url,
+                depth=row.depth,
+                redirect_hops=row.redirect_hops,
+                attempt=row.attempt_count,
+                allowed_hosts=(),
+                takeover=True,
+            )
+            await _record(
+                session,
+                lease,
+                UrlResult(
+                    state=UrlState.FAILED,
+                    outcome=MAX_DELIVERIES_OUTCOME,
+                    error=f"its task message was delivered {deliveries} times without a result",
+                ),
+                max_redirect_hops=0,
+            )
+            _add_event(
+                session,
+                job_id,
+                "url.dead_lettered",
+                crawl_url_id=url_id,
+                from_state=row.previous_state,
+                to_state="failed",
+                worker_id=owner,
+                lease_epoch=lease.token,
+                detail={"reason": MAX_DELIVERIES_OUTCOME, "deliveries": deliveries},
+            )
+    except _FencedOutError:  # pragma: no cover - the quarantine claim holds the row lock
+        return False
+    logger.warning(
+        "Failed a URL whose task message was poison",
+        extra={
+            "event": "url.dead_lettered",
+            "job_id": str(job_id),
+            "url_id": str(url_id),
+            "worker_id": owner,
+            "lease_epoch": lease.token,
+            "deliveries": deliveries,
+        },
+    )
+    return True
 
 
 async def find_actionable_urls(
@@ -955,6 +1125,48 @@ async def advance_job(session: AsyncSession, job_id: uuid.UUID) -> AdvanceResult
 
 
 # --- Internals ---------------------------------------------------------------------------------
+
+
+async def _schedule_retry(
+    session: AsyncSession, lease: Lease, result: UrlResult, *, delay: float
+) -> RecordedResult:
+    """The retry branch of T5, inside the caller's transaction. Raises ``_FencedOutError``."""
+    if not math.isfinite(delay) or delay < 0:
+        raise ValueError(f"invalid retry delay {delay!r}")
+    error = f"{result.outcome}: {result.error}" if result.error else result.outcome
+    row = (
+        await session.execute(
+            _RETRY,
+            {
+                "url_id": lease.url_id,
+                "job_id": lease.job_id,
+                "token": lease.token,
+                "delay": delay,
+                "http_status": _http_status(result.http_status),
+                "error": _db_text(error, MAX_ERROR_CHARS),
+            },
+        )
+    ).one_or_none()
+    if row is None:
+        raise _FencedOutError
+    _add_event(
+        session,
+        lease.job_id,
+        "url.retry_scheduled",
+        crawl_url_id=lease.url_id,
+        from_state="in_progress",
+        to_state="pending",
+        worker_id=lease.owner,
+        lease_epoch=lease.token,
+        detail={
+            "attempt": row.attempt_count,
+            "outcome": result.outcome,
+            "http_status": result.http_status,
+            "delay_ms": round(delay * 1000),
+            "retry_after": result.retry_after,
+        },
+    )
+    return RecordedResult(RecordStatus.RETRY_SCHEDULED, next_attempt_at=row.next_attempt_at)
 
 
 async def _record(
@@ -1193,6 +1405,10 @@ def _add_event(
             detail=detail or {},
         )
     )
+
+
+# For the other crawl-state modules (crawl_cancellation): the same event writer.
+add_event = _add_event
 
 
 def _log_advance(job_id: uuid.UUID, result: AdvanceResult) -> None:

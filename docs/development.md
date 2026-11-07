@@ -137,7 +137,29 @@ The rows are in PostgreSQL:
 wsl docker compose exec -T postgres psql -U sitescope -d sitescope -c "SELECT id, status, seed_url, admitted_count FROM crawl_jobs ORDER BY created_at DESC LIMIT 5"
 ```
 
-Jobs stay `queued`: nothing crawls them until the scheduler and the workers exist (Phases 3–5).
+A job stays `queued` until a scheduler starts it ([Distributed crawling](#distributed-crawling-phase-5)).
+
+**Idempotent creation** (Phase 6). Send an `Idempotency-Key` header (1 to 255 visible ASCII
+characters, for example a UUID) to make a retried request safe: the same key with an equivalent
+body returns the job the first request created, with status `200` and `Idempotent-Replayed: true`
+instead of `201`; the same key with a different body is a `409` (`idempotency_key_reused`). Keys
+are kept for `SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS` (24 hours by default).
+
+```powershell
+$key = [guid]::NewGuid().ToString()
+$headers = @{ "Idempotency-Key" = $key }
+$first = Invoke-WebRequest -Method Post -Uri $base -ContentType "application/json" -Body $body -Headers $headers
+$again = Invoke-WebRequest -Method Post -Uri $base -ContentType "application/json" -Body $body -Headers $headers
+$first.StatusCode, $again.StatusCode, $again.Headers["Idempotent-Replayed"]   # 201, 200, true
+```
+
+**Cancel a job** (Phase 6). A queued job is cancelled at once (`200`); a running one stops: its
+waiting URLs are cancelled at once, and the job is `cancelling` (`202`) until the URLs in flight
+are final, then `cancelled`. Repeating the request changes nothing.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "$base/$($job.id)/cancel"
+```
 
 ## Tests, lint, format, and type check
 
@@ -498,13 +520,26 @@ The design is in [architecture.md](architecture.md) (sections 8, 9 and 12.4-12.5
 | `SITESCOPE_CRAWL_CONCURRENCY` | `4` | URLs one crawl process (a worker, or the driver) processes at once |
 | `SITESCOPE_CRAWL_LEASE_SECONDS` | `90` | lease of a claimed URL (database clock); at least the fetch deadline + the margin |
 | `SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS` | `10` | a task is cut off this long before its lease ends |
-| `SITESCOPE_CRAWL_MAX_ATTEMPTS` | `3` | claims of one URL before it fails as `max_attempts_exceeded` |
+| `SITESCOPE_CRAWL_MAX_ATTEMPTS` | `3` | claims of one URL, retries and crashed attempts included; the failure of the last one is final |
 | `SITESCOPE_POLITENESS_INTERVAL_SECONDS` | `1` | minimum time between request starts to one host, across processes |
 | `SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST` | `1` | requests in flight to one host |
 | `SITESCOPE_POLITENESS_MAX_WAIT_SECONDS` | `30` | the longest wait for a slot before `rate_limited` |
+| `SITESCOPE_POLITENESS_SLOT_LEASE_SECONDS` | `15` | a slot's lease, renewed while its request runs; a crashed process's slot frees after at most this long (Phase 6) |
 | `SITESCOPE_ROBOTS_CACHE_SECONDS` / `_RETRY_SECONDS` | `86400` / `300` | robots.txt cache time; cache time of an unreachable robots.txt |
 | `SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS` | `10` | cap on a robots.txt `Crawl-delay` |
 | `SITESCOPE_REDIS_KEY_PREFIX` | `sitescope` | prefix of every Redis key |
+
+**Retries** (Phase 6, [ADR-0017](adr/0017-retries-dead-letters-cancellation-idempotency.md)). A
+transient failure (timeouts, connection errors, temporary DNS failures, `rate_limited`, HTTP 429,
+500, 502, 503, 504) returns its URL to `pending` until a backoff ends; the failure of the last
+attempt is final. The driver and the workers use the same policy:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_RETRY_BASE_DELAY_SECONDS` | `2` | attempt n waits a random time up to `base * 2^(n-1)` (full jitter) |
+| `SITESCOPE_RETRY_MAX_DELAY_SECONDS` | `60` | the cap of that random wait |
+| `SITESCOPE_RETRY_AFTER_MAX_SECONDS` | `300` | a longer `Retry-After` (429, 503) is not waited for: the failure is final |
+| `SITESCOPE_RETRY_HTTP_STATUSES` | `429,500,502,503,504` | statuses retried: 5xx, 408, 425 and 429 only (never 404 or 410) |
 
 **Crawl the demo site.** The commands below use a separate database, `sitescope_manual`, so
 that the development database and its jobs are untouched; drop the variable to use the
@@ -580,8 +615,9 @@ stream `<prefix>:crawl` (consumer group `crawlers`). The design is in
 |---|---|---|
 | `SITESCOPE_STREAM_READ_BLOCK_MS` | `2000` | how long `XREADGROUP` waits for tasks (below the Redis socket timeout) |
 | `SITESCOPE_STREAM_RECLAIM_INTERVAL_SECONDS` | `15` | how often a worker looks for abandoned tasks (`XAUTOCLAIM`) |
-| `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` | `120` | how long a task must have been idle before another worker takes it (at least the lease) |
+| `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` | `100` | how long a task must have been idle before another worker takes it (at least the lease; 120 until Phase 6) |
 | `SITESCOPE_STREAM_RECLAIM_BATCH_SIZE` | `50` | tasks taken over per `XAUTOCLAIM` |
+| `SITESCOPE_STREAM_MAX_DELIVERIES` | `10` | a task delivered more often without being settled, whose URL can no longer be claimed (its attempts are used up), is poison: the URL fails as `max_deliveries_exceeded` and the message is dead-lettered (Phase 6). Deliveries counted during a PostgreSQL outage fail nothing |
 | `SITESCOPE_STREAM_RETENTION_SECONDS` | `3600` | acknowledged entries older than this are trimmed |
 | `SITESCOPE_STREAM_CONSUMER_MAX_IDLE_SECONDS` | `3600` | consumers with nothing pending are removed after this idle time |
 | `SITESCOPE_SCHEDULER_INTERVAL_SECONDS` | `0.5` | pause between scheduler passes |
@@ -589,8 +625,10 @@ stream `<prefix>:crawl` (consumer group `crawlers`). The design is in
 | `SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB` | `100` | tasks of one job queued or in progress |
 | `SITESCOPE_SCHEDULER_MAX_OUTSTANDING` | `1000` | tasks queued or in progress over all jobs |
 | `SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS` | `10` | jobs running at once; the oldest queued start first |
-| `SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` | `600` | a task without progress this long is published again if its message is gone |
+| `SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` | `300` | a task without progress this long is published again if its message is gone (600 until Phase 6) |
 | `SITESCOPE_SHUTDOWN_GRACE_SECONDS` | `30` | how long a stopping worker lets running tasks finish |
+| `SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS` | `2` | how often a worker checks whether the jobs of its running tasks are being cancelled (Phase 6) |
+| `SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS` | `86400` | how long an `Idempotency-Key` is remembered; the scheduler forgets expired keys (Phase 6) |
 
 The timing order is checked at startup: task deadline < lease <= reclaim min idle <= reconcile
 after <= retention.
@@ -626,15 +664,24 @@ Diagnostics (read-only; it changes nothing in PostgreSQL or Redis):
 ```
 
 It prints the jobs by status, the running jobs with their URL states, the live leases per worker,
-expired leases, and the stream: length, dead letters, the group's pending count and lag, and each
-consumer's pending count and idle time.
+expired leases, and the stream: length, dead letters, the group's pending count and lag, each
+consumer's pending count and idle time, and the newest dead letters (`--dead-letters N`, 10 by
+default; Phase 6). A dead letter shows its `kind` (`malformed`, `unknown_url`, `job_mismatch`,
+`max_deliveries_exceeded`), `reason`, delivery count, consumer and the task's IDs, never a URL.
+
+**Cancellation** (Phase 6). `POST /api/v1/crawls/{id}/cancel` (see [Crawl jobs](#crawl-jobs)) works
+while the processes run: the workers stop the job's running tasks within about
+`SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS` and record them `cancelled`, and the scheduler marks the job
+`cancelled` once nothing is in flight. If a worker crashed holding one of its URLs, the job stays
+`cancelling` until that lease expires (90 s by default).
 
 **Stopping.** Ctrl+C in a process's window stops it gracefully: a worker stops reading and lets
 its running tasks finish for up to `SITESCOPE_SHUTDOWN_GRACE_SECONDS`, then cancels the rest; a
 second Ctrl+C cancels at once. Another program can send `CTRL_BREAK_EVENT` to a process started
 with `CREATE_NEW_PROCESS_GROUP` (the tests do). Closing a window or killing a process is safe too:
 its unfinished tasks keep their leases and pending messages, and other workers take them over
-after `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120 s by default).
+after `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (100 s by default). A politeness slot it held
+frees within `SITESCOPE_POLITENESS_SLOT_LEASE_SECONDS` (15 s).
 
 **Redis keys.** The stream `sitescope:crawl` with its group `crawlers`, and the dead-letter
 stream `sitescope:crawl:dlq`:
@@ -737,6 +784,18 @@ PostgreSQL and Redis containers. They never touch the development data:
   database and Redis database 15 explicitly: `child_environment` refuses any database that is not
   a disposable `*_test` one. Each process writes its JSON log to the test's `tmp_path` (pytest
   keeps the last three runs under `%TEMP%\pytest-of-<user>\`).
+- **Retries, cancellation, idempotency** (Phase 6): `test_retries.py`, `test_cancellation.py` and
+  `test_idempotency.py` run the transactions concurrently on separate connections;
+  `backend/tests/fault/test_retries_and_cancellation.py` uses real processes and local servers
+  whose pages fail on purpose (`LocalHttpServer(sequences=...)`).
+- **Redis data loss** (Phase 6): `backend/tests/fault/test_redis_data_loss.py` sends `FLUSHALL`,
+  but only to a disposable Redis container that it starts itself (`wsl -e docker run --rm ...
+  redis:8.10.3-alpine3.23`, no persistence, a random password, 127.0.0.1 on a random port) and
+  removes at the end. Before flushing it checks that the port and the server's `run_id` differ
+  from the development Redis, and that a sentinel key in the development Redis survives.
+  `FLUSHALL` is never sent to the development Redis: a separate database number does not isolate
+  it. The test needs Docker in WSL; without it, the test is skipped (or fails with
+  `--require-services`).
 
 To run them, make sure:
 
@@ -776,6 +835,8 @@ Windows a refused localhost connection takes about 2 s before it fails.
 | The fetcher reports `blocked_destination` for a local server | Add its exact origin to `SITESCOPE_FETCH_INTERNAL_ORIGINS` (development only); approving the host is not enough. |
 | The fetcher reports `target_not_allowed` | Add the host to `SITESCOPE_CRAWL_ALLOWED_HOSTS`, and its port to `SITESCOPE_CRAWL_ALLOWED_PORTS` if it is not 80 or 443. |
 | The scheduler started jobs you did not want to run | It starts every queued job of its database. Stop it (Ctrl+C), and always set `SITESCOPE_POSTGRES_DB` to a separate database before starting it (see [Distributed crawling](#distributed-crawling-phase-5)). |
-| Tasks stay pending after a worker crashed | Expected for `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120 s by default); then a live worker takes them over. `python -m app.scheduler.status` shows the pending count per consumer. |
+| Tasks stay pending after a worker crashed | Expected for `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (100 s by default); then a live worker takes them over. `python -m app.scheduler.status` shows the pending count per consumer. |
+| A job stays `cancelling` | Its in-flight URLs are not final yet: a crashed worker's URL is cancelled when its lease expires, and only a running scheduler (or the single-process driver) finalizes the job. |
+| `POST /api/v1/crawls` returns 409 `idempotency_key_reused` | The `Idempotency-Key` was already used for a different request (seed, depth or page limit). Use a new key for a new job. |
 | A worker does not stop on Ctrl+C | It is finishing running tasks (up to `SITESCOPE_SHUTDOWN_GRACE_SECONDS`). Press Ctrl+C again to cancel them; they are recovered later. |
 | `alembic` says "Can't locate revision" | The database was migrated by a different branch of the code. Check `alembic current` against `alembic history`. |

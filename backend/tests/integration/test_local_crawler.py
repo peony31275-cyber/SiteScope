@@ -19,6 +19,7 @@ import json
 import logging
 import threading
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -43,6 +44,7 @@ from app.db.models import (
     UrlState,
 )
 from app.db.session import Database
+from app.services.crawl_cancellation import cancel_crawl_job
 from app.services.crawl_jobs import CrawlJobProgress, create_crawl_job, target_policy
 from app.services.crawl_state import (
     RecordStatus,
@@ -54,6 +56,7 @@ from app.services.crawl_state import (
 )
 from app.workers.crawl_task import CrawlContext
 from app.workers.local_crawler import DriverConfig, LocalCrawler, main
+from app.workers.retry import RetryPolicy
 from tests.fetch_support import (
     LocalHttpServer,
     ReceivedRequest,
@@ -68,6 +71,8 @@ pytestmark = pytest.mark.anyio
 
 HOST = "site.test"
 LOOPBACK = ["127.0.0.1"]
+# Retries of transient failures (Phase 6), quick enough for tests.
+FAST_RETRIES = RetryPolicy(max_attempts=3, base_delay=0.05, max_delay=0.2)
 DEMO_SITE = helpers.BACKEND_DIR.parent / "demo-site"
 
 Row = tuple[int, str, str | None]  # depth, state, outcome
@@ -196,6 +201,7 @@ class Crawler:
                     lease_seconds=lease_seconds,
                     task_deadline=lease_seconds / 2,
                     idle_poll_seconds=0.05,
+                    retry=FAST_RETRIES,
                 ),
             )
             if before_run is not None:
@@ -444,6 +450,10 @@ async def test_robots_directives_and_failures(crawler: Crawler) -> None:
     }
     assert (statuses[f"{base}/missing"], statuses[f"{base}/error"]) == (404, 500)
     assert statuses[f"{base}/reset"] is None
+    # Phase 6: transient failures were tried three times (the attempts), permanent ones once.
+    requested = Counter(request.target for request in run.requests)
+    assert (requested["/error"], requested["/reset"], requested["/missing"]) == (3, 3, 1)
+    assert (requested["/text"], requested["/noindex"]) == (1, 1)
 
 
 # --- The page budget -----------------------------------------------------------------------------
@@ -566,6 +576,29 @@ async def test_a_crashed_workers_lease_is_taken_over_after_it_expires(crawler: C
         )
     assert late.status is RecordStatus.FENCED
     await assert_invariants(crawler.database, run.job_id)
+
+
+async def test_a_job_cancelled_during_the_run_ends_cancelled(crawler: Crawler) -> None:
+    """Phase 6: the seed is in flight when the job is cancelled. Its result is kept, nothing
+    new is admitted or claimed, and the run settles the cancellation before it returns."""
+    site = routes({"/": P(links=("/a", "/b")), "/a": P(), "/b": P()})
+    site["/"].delay = 1.0
+    cancellations: list[asyncio.Task[None]] = []
+
+    async def cancel_while_fetching(job_id: uuid.UUID, port: int) -> None:
+        async def cancel() -> None:
+            await asyncio.sleep(0.3)
+            async with crawler.database.session() as session:
+                await cancel_crawl_job(session, job_id)
+
+        cancellations.append(asyncio.create_task(cancel()))
+
+    run = await crawler.crawl(site, max_depth=1, before_run=cancel_while_fetching)
+    await cancellations[0]
+
+    assert run.progress.job.status == "cancelled"
+    assert run.rows == {"/": stored(0)}
+    assert [request.target for request in run.requests if request.target != "/robots.txt"] == ["/"]
 
 
 # --- Politeness ----------------------------------------------------------------------------------

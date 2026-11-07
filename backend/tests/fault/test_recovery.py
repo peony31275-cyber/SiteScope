@@ -549,10 +549,12 @@ async def test_processes_ride_out_redis_and_postgresql_outages(
     await assert_job_invariants(database, job_id)
     rows = await url_rows(database, job_id)
     assert {urlsplit(row.normalized_url).path for row in rows} == set(site.depths)
-    # Known Phase 5 limitation (docs/architecture.md, section 10.4): slots whose release failed
-    # during the Redis outage stay held until their TTL (fetch deadline + 10 s), and a request
-    # that waits for one longer than the politeness maximum wait fails as rate_limited, which
-    # stays terminal until Phase 6 retries retryable failures. Nothing else may go wrong.
+    # Phase 5 limitation, mitigated in Phase 6 (docs/architecture.md, section 10.4): a slot
+    # whose release failed during the Redis outage used to stay held until its TTL (fetch
+    # deadline + 10 s), and a request that waited for one longer than the politeness maximum
+    # wait failed as rate_limited for good. Slots are now 1 s leases here, and rate_limited is
+    # retried, so a rate_limited result remains possible only after every attempt was refused.
+    # Nothing else may go wrong.
     outcomes = Counter((row.state, row.outcome) for row in rows)
     assert set(outcomes) <= {("fetched", "html_stored"), ("failed", "rate_limited")}, outcomes
     assert next(row for row in rows if row.depth == 0).state == "fetched"

@@ -140,6 +140,31 @@ def test_get_rejects_a_malformed_job_id(crawl_client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
+    ("key", "error_type"),
+    [
+        (b"has space", "string_pattern_mismatch"),
+        (b"caf\xc3\xa9", "string_pattern_mismatch"),  # UTF-8 on the wire: not visible ASCII
+        (b"k" * 256, "string_too_long"),
+    ],
+)
+def test_create_rejects_invalid_idempotency_keys(
+    crawl_client: TestClient, key: bytes, error_type: str
+) -> None:
+    """Phase 6: rejected before the service runs, with the header's name as the location."""
+    response = crawl_client.post("/api/v1/crawls", json=VALID, headers={b"Idempotency-Key": key})
+
+    [error] = errors_of(response)
+    assert (error["loc"], error["type"]) == (["header", "Idempotency-Key"], error_type)
+    assert key.decode("latin-1") not in response.text  # the rejected value is not echoed
+
+
+def test_cancel_rejects_a_malformed_job_id(crawl_client: TestClient) -> None:
+    [error] = errors_of(crawl_client.post("/api/v1/crawls/not-a-uuid/cancel"))
+
+    assert error["loc"] == ["path", "job_id"]
+
+
+@pytest.mark.parametrize(
     ("query", "loc", "error_type"),
     [
         ({"limit": "0"}, ["query", "limit"], "greater_than_equal"),

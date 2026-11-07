@@ -18,9 +18,12 @@
 >   work through a Redis stream and consumer group: publication inside the dispatch transaction,
 >   explicit acknowledgment rules, `XAUTOCLAIM` takeover, reconciliation of lost messages, safe
 >   stream trimming, backpressure, and graceful shutdown (sections 3, 6, 9 and 10, ADR-0016).
+> - Phase 6: durable crawl retries with backoff and `Retry-After`, dead-lettering of poison
+>   messages, job cancellation (`POST /api/v1/crawls/{id}/cancel`), idempotent job creation
+>   (`Idempotency-Key`), renewable politeness slot leases, and shorter recovery defaults
+>   (sections 3, 7 to 10, ADR-0017).
 >
-> Crawl retries, cancellation, idempotent job creation, indexing and search are not implemented
-> yet.
+> Indexing and search are not implemented yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -136,8 +139,10 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
   down.
 - Uses Redis only for queue statistics and request rate limiting.
 - Enforces the target allowlist and the server-side caps on depth, pages, and running jobs.
-- Will accept an `Idempotency-Key` header on job creation (planned for Phase 6; the columns exist
-  since Phase 2B).
+- Accepts an `Idempotency-Key` header on job creation (Phase 6, ADR-0017): a retried request
+  returns the job the first one created (`200`, `Idempotent-Replayed: true`), and a key reused
+  for a different request is refused (`409 idempotency_key_reused`). PostgreSQL stores the keys.
+- Cancels jobs (`POST /api/v1/crawls/{id}/cancel`, Phase 6, section 8.6) with one transaction.
 - Follows [`api-conventions.md`](api-conventions.md): versioned routes under `/api/v1`, an
   `X-Request-ID` header on every response, and RFC 9457 problem+json errors.
 
@@ -148,11 +153,14 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
   `SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS` run. A transaction-level advisory lock makes the cap
   exact across schedulers.
 - *Level advancer / finalizer*: when a running job has no unfinished URLs, admits the next BFS level from
-  the recorded links, or completes the job (T6). Moving `cancelling` jobs to `cancelled` arrives with
-  cancellation (Phase 6).
+  the recorded links, or completes the job (T6).
+- *Cancellation finalizer* (Phase 6): for each `cancelling` job, cancels its `pending` and `queued`
+  URLs and its in-progress URLs whose lease expired, and marks the job `cancelled` once none of its
+  URLs is unfinished (T11, section 8.6).
 - *Dispatcher*: publishes eligible frontier rows to the crawl stream and marks them `queued` (T3). A row
   is eligible when its state is `pending`, its depth equals the job's `current_level`, and
-  `next_attempt_at <= now()`. Backpressure: a per-job in-flight window
+  `next_attempt_at <= now()`; a URL waiting for a retry becomes eligible when its backoff ends
+  (Phase 6). Backpressure: a per-job in-flight window
   (`SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`), a cap on queued and in-progress URLs over all jobs
   (`SITESCOPE_SCHEDULER_MAX_OUTSTANDING`), and a batch size per job and pass. The free room is shared
   fairly among jobs, oldest first.
@@ -161,7 +169,8 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
   Abandoned leases and exhausted attempts are recovered by the workers, through `XAUTOCLAIM` and the
   rules of section 10.3.
 - *Maintenance*: every `retention / 4` (at most 60 s), trims the stream (never an undelivered or pending
-  entry), removes idle consumers that have nothing pending, and logs statistics.
+  entry), removes idle consumers that have nothing pending, forgets expired idempotency keys
+  (Phase 6), and logs statistics.
 - *Index relay* (Phase 7): publishes `pending` `search_documents` rows to the index stream and marks
   them `queued` (the indexing outbox, ADR-0008).
 
@@ -184,9 +193,18 @@ whole pass, which is retried with backoff.
 - Handles each message as: claim (compare-and-set) → policy checks, robots.txt, per-host rate limit →
   fetch (outside any transaction) → parse (in a worker thread) → fenced result commit → `XACK`.
   Section 10.3 lists when it acknowledges a message.
-- Runs `XAUTOCLAIM` periodically to adopt messages abandoned by crashed or stalled consumers.
+- Runs `XAUTOCLAIM` periodically to adopt messages abandoned by crashed or stalled consumers. A
+  reclaimed message delivered more than `SITESCOPE_STREAM_MAX_DELIVERIES` times whose URL can never be
+  claimed again (queued, attempts used up) is poison: the URL is failed through a fenced quarantine,
+  and the message is dead-lettered (Phase 6). Any other URL follows the usual rules: its attempts
+  bound the work.
+- Asks the retry policy (`app/workers/retry.py`, Phase 6) after a failed attempt: a retryable failure
+  with attempts left goes back to `pending` with a backoff, through the same fenced update as a result.
+- Checks every `SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS` whether the jobs of its running tasks are being
+  cancelled, stops those tasks, and records their URLs `cancelled` under its own token (Phase 6).
 - After a PostgreSQL or Redis error, leaves the message pending and pauses reading (exponential backoff
-  with full jitter), so an outage does not churn through the stream.
+  with full jitter), so an outage does not churn through the stream. An error before the claim is first
+  handled again in the same process a few times (Phase 6).
 - On SIGINT or SIGTERM (Windows: Ctrl+C or `CTRL_BREAK_EVENT`), stops reading, lets running tasks finish
   within `SITESCOPE_SHUTDOWN_GRACE_SECONDS`, cancels the rest, and exits. A cancelled task keeps its
   lease and its pending message, and other workers recover it.
@@ -229,8 +247,9 @@ whole pass, which is retried with backoff.
      page is `noindex`;
    - for a redirect, admits its target at the same depth (section 8.5).
 
-   A retryable failure will return the URL to `pending` with a backoff (Phase 6; in Phases 4 and
-   5 every failure is terminal). Then the worker sends `XACK`, never before the commit.
+   A retryable failure with attempts left returns the URL to `pending` instead, with a
+   `next_attempt_at` from the retry policy (Phase 6, section 10.5): the same fenced update, and a
+   `url.retry_scheduled` event. Then the worker sends `XACK`, never before the commit.
 7. **Advance.** When none of the job's URLs is unfinished, the scheduler takes the job row lock. It
    admits the next level's URLs from links recorded by the current level, in deterministic order, up to
    the remaining page budget. If nothing can be admitted, it marks the job `completed`, or `failed` if
@@ -431,9 +450,9 @@ recoverable. The full list of windows is in section 10.4.
 |---|---|---|
 | `sitescope:crawl` | stream; group `crawlers` | crawl tasks `{v, job_id, url_id}` |
 | `sitescope:index` | stream; group `indexers` | index tasks `{v, page_id}` |
-| `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters, kept for inspection and capped near 10,000 entries: the original fields, entry ID and reason (Phase 5: malformed messages, and messages naming an unknown URL or another job) |
+| `sitescope:crawl:dlq`, `sitescope:index:dlq` | streams | dead letters, kept for inspection and capped near 10,000 entries: the original entry ID, the reason and kind, and the contract fields (Phase 5: malformed messages, and messages naming an unknown URL or another job; Phase 6: poison messages, delivered more than `SITESCOPE_STREAM_MAX_DELIVERIES` times, with the delivery count and the consumer). Other fields are listed by name only, never copied |
 | `sitescope:rate:{<host>}:last` | string with TTL | the start of the host's latest request, in microseconds of Redis time (Phase 4) |
-| `sitescope:rate:{<host>}:active` | sorted set with TTL | the host's politeness slots in use: slot token -> expiry (Phase 4) |
+| `sitescope:rate:{<host>}:active` | sorted set with TTL | the host's politeness slots in use: slot token -> expiry (Phase 4). Since Phase 6 each slot is a lease that its holder renews while its request runs |
 | `sitescope:rate:{<host>}:queue` | sorted set with TTL | requests waiting for a slot, in arrival order: slot token -> first attempt (Phase 4) |
 | `sitescope:rate:{<host>}:seen` | sorted set with TTL | when each waiter last asked, to drop waiters of crashed processes (Phase 4) |
 | `sitescope:rate:{<host>}:delay` | string with TTL | the host's crawl delay: the largest robots.txt `Crawl-delay` of its origins (Phase 4) |
@@ -442,6 +461,9 @@ recoverable. The full list of windows is in section 10.4.
 - Messages are small and versioned (`v`). Consumers re-read state from PostgreSQL.
 - Consumer groups are created idempotently at startup with `XGROUP CREATE <stream> <group> 0 MKSTREAM`,
   ignoring `BUSYGROUP` errors.
+- Dead-lettering is one Lua script: it acknowledges the entry and copies it to the dead-letter stream
+  only if that acknowledgment removed it from the pending list, so an entry is copied at most once
+  (Phase 6).
 - Each worker process uses a unique consumer name. Maintenance removes idle consumers that have no pending
   entries, in one Lua script that checks and deletes atomically (`XGROUP DELCONSUMER` would drop the
   pending entries of a consumer that resumed in between).
@@ -467,17 +489,17 @@ recoverable. The full list of windows is in section 10.4.
 | (none) | `queued` | create (API) | valid, allowlisted seed within caps; seed URL inserted in the same transaction |
 | `queued` | `running` | activation (scheduler) | running jobs below the cap |
 | `queued` | `cancelled` | cancel (API) | seed URL is cancelled |
-| `running` | `cancelling` | cancel (API) | the same transaction cancels every `pending` and `queued` URL |
+| `running` | `cancelling` | cancel (API) | the same transaction cancels every `pending` and `queued` URL; if no URL is in progress, the job continues to `cancelled` in that transaction |
 | `running` | `completed` | level advancer | no unfinished URLs, no further level to admit, seed was fetched |
 | `running` | `failed` | level advancer | no unfinished URLs and the seed was never fetched (e.g. disallowed or unreachable) |
-| `cancelling` | `cancelled` | finalizer | no URL is `in_progress`; the reconciler cancels expired leases |
+| `cancelling` | `cancelled` | finalizer (scheduler, or the single-process driver) | no URL is unfinished; the finalizer first cancels `pending` and `queued` URLs again (a retry scheduled meanwhile) and in-progress URLs whose lease expired |
 
 Terminal states (`completed`, `failed`, `cancelled`) are absorbing. After a job becomes terminal, its URLs,
 pages, and links never change. Indexing may still be catching up; its progress is reported separately.
 
 Phase 4 implements activation, level advancement and completion (`backend/app/services/
 crawl_state.py`); until the Phase 5 scheduler exists, the single-process driver calls them.
-Cancellation is Phase 6.
+Phase 6 implements cancellation (`backend/app/services/crawl_cancellation.py`, section 8.6).
 
 ### 7.2 Crawl URL
 
@@ -488,10 +510,12 @@ Cancellation is Phase 6.
 | `queued` | `in_progress` | claim (worker) | job `running`, `attempt_count < max_attempts`; `lease_epoch` advances by exactly one (ADR-0011) |
 | `in_progress` | `in_progress` | takeover claim (worker) | lease expired by the database clock; `lease_epoch` is incremented |
 | `in_progress` | `fetched` / `skipped` / `failed` | result commit (worker) | fencing check passes; the database requires `result_epoch = lease_epoch` (ADR-0010) |
-| `in_progress` | `pending` | retryable failure (worker) | fencing check passes; `next_attempt_at = now() + backoff` |
-| `in_progress` | `failed` | attempts exhausted after crashes (worker or reconciler) | lease expired by the database clock; a recovery claim issues a new token, which records `max_attempts_exceeded` (ADR-0014) |
-| `pending`, `queued` | `cancelled` | job cancel (API) | none |
-| `in_progress` | `cancelled` | reconciler | job is `cancelling` and the lease has expired |
+| `in_progress` | `pending` | retryable failure with attempts left (worker; Phase 6) | fencing check passes; `next_attempt_at = now() + backoff` (database clock); `attempt_count` unchanged: the next claim counts the next attempt |
+| `in_progress` | `failed` | attempts exhausted after crashes (worker) | lease expired by the database clock; a recovery claim issues a new token, which records `max_attempts_exceeded` (ADR-0014) |
+| `queued` | `failed` | poison message (worker; Phase 6) | delivered more than `SITESCOPE_STREAM_MAX_DELIVERIES` times, and no claim can take the URL (its attempts are used up); a quarantine claim issues a new token, which records `max_deliveries_exceeded` |
+| `pending`, `queued` | `cancelled` | job cancel (API), or the cancellation finalizer (scheduler) | job `cancelling` or `cancelled` |
+| `in_progress` | `cancelled` | the lease holder (worker; Phase 6) | job `cancelling`; fenced update with the worker's own token (`job_cancelled`) |
+| `in_progress` | `cancelled` | cancellation finalizer (scheduler) | job `cancelling`, and the lease has expired |
 
 Terminal outcomes:
 
@@ -500,11 +524,13 @@ Terminal outcomes:
 - `skipped`: no request was sent because of a policy decision (`robots_disallowed`,
   `robots_unreachable`, `target_not_allowed`, `blocked_destination`).
 - `failed`: no usable response after bounded retries (`read_timeout`, `connection_error`,
-  `dns_error`, `rate_limited`, `parse_error`, `max_attempts_exceeded`, ...). In Phase 4 a
-  retryable failure is terminal at once; Phase 6 adds the retries.
+  `dns_error`, `rate_limited`, `infrastructure_error`, `parse_error`, `max_attempts_exceeded`,
+  `max_deliveries_exceeded`, ...). Since Phase 6 a retryable failure is final only on the last
+  allowed attempt (section 10.5); before, it was final at once.
+
+- `cancelled` (outcome `job_cancelled`): the job was cancelled before this URL was finished.
 
 The full mapping from fetch results to outcomes is in `backend/app/workers/crawl_task.py`.
-- `cancelled`: the job was cancelled before this URL was processed.
 
 ## 8. Crawl semantics
 
@@ -651,20 +677,32 @@ Phase 4 crawls pages in the "return" mode ([ADR-0014](adr/0014-crawl-state-trans
 - robots.txt follows redirects inline, up to five hops, with the fetcher's "follow" mode
   (section 12.5).
 
-### 8.6 Cancellation
+### 8.6 Cancellation (implemented in Phase 6)
 
-`POST /api/v1/crawls/{id}/cancel` (planned for Phase 6) will run one transaction that takes the job row lock, moves the job from
-`running` to `cancelling` (or from `queued` to `cancelled`), and cancels every `pending` and `queued`
-URL. After that:
+`POST /api/v1/crawls/{id}/cancel` runs one transaction (T7,
+`backend/app/services/crawl_cancellation.py`, ADR-0017). It takes the job row lock, moves the job from
+`queued` to `cancelled`, or from `running` to `cancelling`, and cancels every `pending` and `queued`
+URL (outcome `job_cancelled`). If none of the job's URLs is in progress, the job becomes `cancelled`
+in the same transaction. The response is `202` while the job is `cancelling`, otherwise `200`. After
+that:
 
-- The dispatcher stops, because the job is no longer `running`. Messages already in the stream fail their
-  claim and are acked.
-- In-flight tasks may finish. Their commit still passes the fencing check and stores the page, but admits
-  nothing new.
-- The finalizer moves the job to `cancelled` once no URL is `in_progress`. The reconciler cancels leases
-  left behind by crashed workers once they expire. Cancellation therefore completes within about one
-  lease duration.
-- Cancel is idempotent. Cancelling a terminal job returns its current state.
+- **Nothing new starts.** Dispatch, claims, reconciliation, redirect admission and level advancement
+  all require a `running` job. A message already in the stream, or a stale or duplicate one, meets a
+  refused claim and is acknowledged; it cannot revive the job.
+- **In-flight tasks** are stopped by their workers, which check for cancelled jobs every
+  `SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS` and record the URL `cancelled` with their own token (a
+  fenced update that also requires the job to be `cancelling`). A task that is already committing
+  finishes, and its result is kept (it admits nothing new).
+- **The finalizer** (every scheduler pass, T11) cancels `pending` and `queued` URLs again (a retry may
+  have been scheduled meanwhile), cancels in-progress URLs whose lease expired (their worker is gone;
+  if it was only frozen, its late result is fenced out), and marks the job `cancelled` once none of
+  its URLs is unfinished. A job is never `cancelled` while a URL could still change. Cancellation
+  normally completes within one check interval plus one scheduler pass; a URL of a crashed worker
+  delays it by up to one lease duration.
+- **Idempotent.** Cancelling again, or cancelling a terminal job, changes nothing and returns the
+  current state.
+- **Redis is not touched.** Stream entries of a cancelled job are acknowledged as no-ops when they
+  arrive, and retention trims them.
 
 ### 8.7 Terminal completion (implemented in Phase 4)
 
@@ -679,16 +717,19 @@ can show "nothing in progress" while new work is about to appear.
 
 | | Transaction | Steps | Notes |
 |---|---|---|---|
-| T1 | Create job (Phase 2C) | insert job + seed URL | one transaction, no Redis. Planned for Phase 6: repeating an `Idempotency-Key` returns the existing job, and a different request body returns `409` |
+| T1 | Create job (Phase 2C) | (an expired key is cleared) → insert job `ON CONFLICT (idempotency_key) DO NOTHING` → insert seed URL, or load the job that holds the key | one transaction, no Redis. Phase 6: repeating an `Idempotency-Key` with an equivalent request returns the existing job, a different request returns `409`; concurrent requests serialize on the unique index |
 | T2 | Activate | compare-and-set `queued -> running`; the scheduler's batch version holds a transaction-level advisory lock, so the running-jobs cap is exact | Phase 4; batch in Phase 5 |
 | T3 | Dispatch | lock eligible rows `FOR UPDATE SKIP LOCKED` → `XADD` each → set `queued` and `stream_entry_id` → commit | a crash between `XADD` and commit causes a duplicate message, never a lost task (Phase 5). The single-process driver marks rows `queued` without `XADD` and hands the IDs to in-process tasks |
 | T4 | Claim | lock the URL row (it waits for a dispatch of the row in flight) → compare-and-set update (sketch below) | committed before any network I/O; a takeover is logged as a `url.recovered` event (Phase 4; the row lock since Phase 5) |
-| T5 | Result | fenced update of the URL (outcome, `result_epoch = :token`) → page → links → `search_documents` row (`pending`, not for `noindex`) → (for a redirect: lock job, admit target) → commit → `XACK` | all or nothing (Phase 4, ADR-0014); zero rows from the fenced update: roll back, discard, do not `XACK`; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
+| T5 | Result | fenced update of the URL (outcome, `result_epoch = :token`) → page → links → `search_documents` row (`pending`, not for `noindex`) → (for a redirect: lock job, admit target) → commit → `XACK`. Or, for a retryable failure with attempts left (Phase 6): the same fenced update back to `pending` with `next_attempt_at`, and a `url.retry_scheduled` event | all or nothing (Phase 4, ADR-0014); zero rows from the fenced update: roll back, discard, do not `XACK`; a stale `result_epoch` makes PostgreSQL reject the whole transaction |
 | T6 | Advance | lock job → verify no unfinished URLs → admit next level or set terminal | a single writer per job (Phase 4) |
-| T7 | Cancel | lock job → set status → cancel `pending` and `queued` URLs | |
+| T7 | Cancel (Phase 6) | lock job (`FOR NO KEY UPDATE`) → set status → cancel `pending` and `queued` URLs → if no URL is in progress, `cancelling -> cancelled` | never locks an `in_progress` URL; reading them takes no lock. `FOR NO KEY UPDATE` lets foreign-key checks of other transactions through (see lock order) |
 | T8 | Index relay | lock `pending` `search_documents` rows `FOR UPDATE SKIP LOCKED` → `XADD` → set `queued`, `dispatched_at`, `stream_entry_id` | same publish-then-mark pattern as T3 |
 | T9 | Index | write `search_vector`, `indexed_content_version`, `status = 'indexed'` → commit → `XACK` | idempotent |
 | T10 | Reconcile | lock stale `queued` and long-expired `in_progress` rows `FOR UPDATE SKIP LOCKED` → check their stream entries → `XADD` the lost ones → set `dispatched_at`, `stream_entry_id` | Phase 5: re-publishes only; exhausted URLs are failed by the workers (recovery claim) |
+| T11 | Settle cancellation (Phase 6) | (1) cancel `pending` and `queued` URLs; (2) cancel `in_progress` URLs whose lease expired (`SKIP LOCKED`); (3) lock job → `cancelling -> cancelled` if no URL is unfinished | three short transactions per `cancelling` job and pass; (2) holds no job lock |
+| T12 | Quarantine (Phase 6) | lock the URL row → quarantine claim (new token, no attempt counted; a `queued` URL of a running job whose attempts are used up) → fenced failure `max_deliveries_exceeded` → `url.dead_lettered` event → commit → dead-letter the message | a URL with attempts left, or with a lease, is never quarantined |
+| T13 | Cancel a claimed URL (Phase 6) | fenced update `in_progress -> cancelled` with the worker's token, if the job is `cancelling` → commit → `XACK` | zero rows: the lease was lost; nothing is written and the message is kept |
 
 Claim (sketch):
 
@@ -744,7 +785,11 @@ Rules:
   admits a redirect target. Cancellation and level advancement lock the job row first, but afterwards
   touch only rows that no worker holds: `pending` and `queued` URLs, and newly inserted rows. There is no
   cycle, so there is no deadlock. Any new transaction must also lock a URL row before its job row, or
-  show that it touches disjoint rows.
+  show that it touches disjoint rows. Foreign-key checks count too: inserting a row that references a
+  job (an event, a page) takes `FOR KEY SHARE` on the job row. A quarantine (T12) holds a `queued` URL
+  row while its event insert does so, which is why cancellation (T7) locks the job row `FOR NO KEY
+  UPDATE`: with `FOR UPDATE`, the two deadlocked (Phase 6 review; regression test in
+  `integration/test_cancellation.py`).
 - **Implicit waits.** A unique check waits for any transaction that is updating a row with the same
   key, so `INSERT ... ON CONFLICT` can wait like a lock. While a transaction holds the job row lock,
   it must not insert a key that may exist: redirect admission checks for a known target with a plain
@@ -802,9 +847,11 @@ rejects its commit. The process refuses to start with settings that violate this
 
 Implemented: `SITESCOPE_CRAWL_LEASE_SECONDS` (90) must be at least the fetch deadline plus
 `SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS` (10), and each task runs under a deadline that ends that margin
-before its lease (Phase 4). Phase 5 adds `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS` (120),
-`SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` (600) and `SITESCOPE_STREAM_RETENTION_SECONDS` (3600),
+before its lease (Phase 4). Phase 5 adds `SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS`,
+`SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` and `SITESCOPE_STREAM_RETENTION_SECONDS` (3600),
 and the startup check `task_deadline < lease <= reclaim_min_idle <= reconcile_after <= retention`.
+Phase 6 shortens the first two defaults from 120 s to 100 s and from 600 s to 300 s (ADR-0017):
+the scan intervals stay the same, so recovery is sooner without more queries.
 
 Leases are never renewed (ADR-0016). The deadline already bounds every task, so a live task never needs
 a longer lease, and a worker that kept renewing while stuck would hold its URL forever.
@@ -815,10 +862,13 @@ Initial defaults are starting points to validate in tests, not measured values:
 |---|---|
 | task deadline | 80 s: the lease minus 10 s (the fetch alone: 60 s) |
 | lease duration | 90 s |
-| reclaim min-idle | 120 s |
-| reconcile after | 10 min |
+| reclaim min-idle | 100 s (120 s until Phase 6) |
+| reconcile after | 5 min (10 min until Phase 6) |
 | attempts | 3 |
-| backoff | base 2 s, capped at 60 s |
+| retry backoff (Phase 6) | full jitter, base 2 s, capped at 60 s; `Retry-After` up to 300 s |
+| poison threshold (Phase 6) | 10 deliveries |
+| cancellation check (Phase 6) | every 2 s |
+| politeness slot lease (Phase 6) | 15 s, renewed every 5 s |
 
 ### 10.3 How the crawler worker handles a message
 
@@ -826,41 +876,58 @@ Implemented in Phase 5 (`judge_unclaimed` in `backend/app/workers/crawler.py`; A
 acknowledge only when no work is left that the message stands for.
 
 1. **Malformed message.** Dead-letter it and ack.
-2. **Claim succeeds.** Process the URL, run the fenced commit, then ack.
+2. **Poison message** (Phase 6). A reclaimed message delivered more than
+   `SITESCOPE_STREAM_MAX_DELIVERIES` times whose URL is `queued` with its attempts used up: fail the
+   URL through a fenced quarantine (`max_deliveries_exceeded`), then dead-letter the message (and ack,
+   in one script). Any other URL goes through the rules below: a delivery count also grows while
+   PostgreSQL is down, so it never fails a URL that a claim could still take. If the delivery counts
+   cannot be read, the reclaimed messages are handled as first deliveries.
+3. **Claim succeeds.** Process the URL, run the fenced commit, then ack.
+   - A retryable failure with attempts left is committed as a retry (back to `pending`), then acked
+     (Phase 6).
+   - If the job is cancelled meanwhile, the worker stops the task, records the URL `cancelled` with its
+     token, then acks (Phase 6).
    - If the commit is fenced out, discard the result and **do not ack**. The message now belongs to the
      new lease holder, and `XACK` acts on the whole group, so acking would hide it.
    - On any error, or a cancellation at shutdown, **do not ack** either: the outcome may be uncertain
      (a commit whose reply was lost). The message is redelivered, and the rules below sort it out.
-3. **Claim fails.** Read the URL row (`inspect_url`) and act on what it shows:
+4. **Claim fails.** Read the URL row (`inspect_url`) and act on what it shows:
    - the URL is terminal, or the job is no longer running: ack;
    - the URL is `pending`: the dispatch that published this message rolled back (the claim waited for
-     it, section 9). Ack; the next dispatch publishes the task again;
+     it, section 9), or the URL waits for a retry. Ack; the dispatcher publishes the task again when
+     it is due;
    - the URL is `queued`, or its lease expired with attempts left: claim again (a takeover);
    - another live worker holds the lease: leave the message pending, to be re-examined after
      `reclaim_min_idle`;
    - the lease expired after the last attempt: fail the URL as `max_attempts_exceeded` (a fenced
      recovery claim) and ack;
    - the URL does not exist, or belongs to another job: dead-letter it and ack.
-4. **The ack fails.** Log it. The message stays pending, and its redelivery is acknowledged once the
+5. **The ack fails.** Log it. The message stays pending, and its redelivery is acknowledged once the
    claim finds the URL finished.
+
+A PostgreSQL or Redis error before the claim is handled again in the same process up to five times,
+with backoff, within half the reclaim idle time; after that the message stays pending (Phase 6). A
+Redis error during the task becomes a retryable `infrastructure_error` attempt.
 
 ### 10.4 Failure windows
 
 | # | Failure | State left behind | Recovery | Outcome |
 |---|---|---|---|---|
-| F1 | API crashes after commit, before responding | job exists | client retries with the same `Idempotency-Key` (planned for Phase 6; until then a retry creates a second job) | same job, no duplicate |
+| F1 | API crashes after commit, before responding | job exists | client retries with the same `Idempotency-Key` (Phase 6) | same job, no duplicate (without a key, a retry creates a second job) |
 | F2 | Dispatcher crashes after `XADD`, before commit | URL still `pending`; message in the stream | URL is dispatched again | duplicate message; the second claim is a no-op |
 | F3 | Worker crashes before claiming | message pending under a dead consumer | another worker runs `XAUTOCLAIM` | delay only |
 | F4 | Worker crashes after claiming, before commit | URL `in_progress` with a running lease | `XAUTOCLAIM` after min-idle, then a takeover claim (`lease_epoch + 1`) | page fetched again; the attempt is counted |
 | F5 | Worker stalls past its lease, then resumes | another worker holds the lease | the stale commit fails fencing and rolls back | no duplicate effects |
 | F6 | Worker crashes after commit, before `XACK` | URL terminal; message pending | redelivered → claim fails → ack | no duplicate effects |
 | F7 | Redis loses messages, or they are deleted | URL `queued` or `in_progress` with no live stream entry | the reconciler re-publishes once the entry is gone (trimming never deletes undelivered or pending entries) | delay only |
-| F8 | Redis is unavailable | jobs are still accepted; nothing is dispatched | dispatcher, relay, and workers retry with backoff | delay; politeness slots whose release failed stay held until their TTL (below) |
+| F8 | Redis is unavailable | jobs are still accepted; nothing is dispatched | dispatcher, relay, and workers retry with backoff; a task whose politeness or robots.txt call failed is a retryable attempt (Phase 6) | delay; a politeness slot whose release failed stays held until its lease ends (below) |
 | F9 | PostgreSQL is unavailable | no claims or commits; messages stay pending | resumes through `XAUTOCLAIM` and the reconciler | delay; PostgreSQL is the hard dependency |
 | F10 | Index relay crashes after `XADD`, before commit | search document still `pending` | published again | duplicate index task; indexing again is a no-op |
 | F11 | Indexer crashes before or after commit | message pending | redelivery | idempotent upsert |
 | F12 | Scheduler crashes, or schedulers overlap | a dispatch may roll back after its `XADD` | restart, or another scheduler continues; no leader: advisory lock (activation), job row lock (advancement), `SKIP LOCKED` + compare-and-set (dispatch, reconciliation) | at most duplicate messages |
-| F13 | Poison message repeatedly crashes workers | delivery count grows | `attempt_count` bounds claims, ending in `failed`; malformed and unmatched messages are dead-lettered (Phase 5); dead-lettering after N deliveries is Phase 6 | bounded work |
+| F13 | Poison message repeatedly crashes workers | delivery count grows | `attempt_count` bounds claims, ending in `failed`; malformed and unmatched messages are dead-lettered (Phase 5); a message whose URL can no longer be claimed is quarantined and dead-lettered, once, after `SITESCOPE_STREAM_MAX_DELIVERIES` deliveries (Phase 6). A long PostgreSQL outage inflates delivery counts without harm (Phase 6 review) | bounded work |
+| F14 | Worker crashes holding a URL of a cancelling job (Phase 6) | URL `in_progress`, job `cancelling` | the finalizer cancels the URL once its lease expires | the job is `cancelled` within about one lease |
+| F15 | Scheduler crashes during a backoff or a cancellation (Phase 6) | `pending` retries and `cancelling` jobs in PostgreSQL | any scheduler dispatches the retries when due and finishes the cancellation | delay only |
 
 Phase 5 tests the crawl-stream windows with real services, most of them with real processes:
 
@@ -874,32 +941,59 @@ Phase 5 tests the crawl-stream windows with real services, most of them with rea
 | F7 | `integration/test_task_dispatch.py`, `integration/test_scheduler.py` (lost entries re-published, live ones left alone) |
 | F8, F9 | `fault/test_recovery.py` (Redis, then PostgreSQL, cut off through a TCP proxy, G) |
 | F12 | `integration/test_distributed.py` (three scheduler processes, F); `integration/test_task_dispatch.py` |
-| F13 | dead-lettering in `integration/test_crawler_worker.py` and `integration/test_streams.py`, including entries that are not UTF-8 |
+| F13 | dead-lettering in `integration/test_crawler_worker.py` and `integration/test_streams.py`, including entries that are not UTF-8; poison quarantine and idempotent dead-lettering (Phase 6) |
+| F7 with real processes (Phase 6) | `fault/test_redis_data_loss.py`: `FLUSHALL` of a disposable Redis container mid-crawl |
+| F14, F15, retries, cancellation (Phase 6) | `fault/test_retries_and_cancellation.py` (flaky pages and strict BFS, exhaustion, `Retry-After`, simultaneous failures, a scheduler restart during backoff, a worker killed during a retry, duplicates during backoff, a killed worker's politeness slot, cancellation with live processes and across a scheduler restart); `integration/test_retries.py`, `integration/test_cancellation.py`, `integration/test_crawler_worker.py` |
 
 **Politeness slots after a crash or an outage.** A worker that dies, or loses Redis, while it holds a
-politeness slot cannot release it: the slot stays held until its TTL (the fetch deadline + 10 s, 70 s by
-default). With one slot per host (the default), the host's next requests wait, and those waiting longer
-than `SITESCOPE_POLITENESS_MAX_WAIT_SECONDS` (30 s) fail as `rate_limited`, which is terminal until
-Phase 6 retries retryable failures. The outage test (G) observed this: invariants held and the job
-completed, but URLs can end as `failed: rate_limited`.
+politeness slot cannot release it. Until Phase 6 the slot stayed held until its TTL (the fetch deadline +
+10 s, 70 s by default), and requests that waited longer than `SITESCOPE_POLITENESS_MAX_WAIT_SECONDS`
+(30 s) failed as `rate_limited` for good. Since Phase 6 (ADR-0017) a slot is a lease of
+`SITESCOPE_POLITENESS_SLOT_LEASE_SECONDS` (15 s) that its holder renews while its request runs, never
+longer than the old TTL in total for a live request: a dead holder's slot frees within one lease, and
+`rate_limited` is retried. The process test of a killed worker measures the next request to the host
+about one lease after the kill. Limits:
 
-### 10.5 Retries and backoff
+- A holder frozen for longer than a lease loses its slot, and may then overlap with one other request
+  to its host when it resumes.
+- A holder that stalls at the very moment of a renewal can keep its slot up to one lease past the old
+  TTL. The concurrency limit holds either way.
+- A dead process's *waiting* requests are separate: they stay in the host's queue until their waiter
+  entries expire (`waiter_ttl`: the longest sleep of a live waiter plus 5 s, 15 s by default; Phase
+  4). A pre-check run measured this: 6.95 s with the test timings.
 
-- **Retryable:** timeouts, connection errors, temporary DNS failures, truncated responses, and HTTP
-  429, 500, 502, 503, and 504. Every other error is terminal. The safe fetcher reports each failure
-  as a `FailureKind` with a `retryable` flag (`backend/app/crawler/errors.py`).
-- **Delay:** `uniform(0, min(cap, base * 2^(attempt - 1)))`, i.e. full jitter. `Retry-After` is honored up
-  to the cap.
-- **Durability:** a retry sets the URL back to `pending` with a future `next_attempt_at`. A crash never
-  loses a retry, and a waiting retry never occupies a worker slot.
-- **Infrastructure calls** (Phase 5): a failed PostgreSQL or Redis call is not retried in-process. The
-  worker leaves the message pending and pauses reading with exponential backoff and full jitter (base
-  0.5 s, cap 10 s); the message is then recovered as in F3 and F4. The scheduler retries its whole pass
-  with backoff (cap 30 s).
-- **Phases 4 and 5:** no crawl retries yet. A retryable failure ends its URL as `failed` with the failure
-  kind as its outcome. The single-process driver stops on a PostgreSQL or Redis error (its leases
-  expire, and the next run takes them over); the distributed processes keep running and recover on
-  their own.
+### 10.5 Retries and backoff (implemented in Phase 6)
+
+The retry policy is `backend/app/workers/retry.py` (ADR-0017); both the crawler workers and the
+single-process driver use it.
+
+- **Retryable:** temporary DNS failures (`dns_error`), connection errors, connect and read timeouts,
+  `deadline_exceeded` (the fetch deadline or the task deadline), truncated responses, `rate_limited`
+  (no politeness slot in time), `infrastructure_error` (Redis failed during the task), and HTTP
+  statuses in `SITESCOPE_RETRY_HTTP_STATUSES` (429, 500, 502, 503 and 504 by default; the settings
+  accept only 5xx, 408, 425 and 429). Everything else is final at once: invalid URLs, scope and SSRF
+  refusals, `dns_not_found`, robots.txt decisions, TLS errors, redirect problems, unsupported or
+  oversized content, parse errors, and other HTTP statuses such as 404 and 410.
+- **Attempts:** a claim counts one (crashed attempts included). A retryable failure of attempt `n <
+  SITESCOPE_CRAWL_MAX_ATTEMPTS` is retried; that of the last attempt is the URL's final result, with
+  its own outcome.
+- **Delay:** `uniform(0, min(SITESCOPE_RETRY_MAX_DELAY_SECONDS, SITESCOPE_RETRY_BASE_DELAY_SECONDS *
+  2^(attempt - 1)))`, i.e. full jitter, and at least a valid `Retry-After` of a 429 or 503 response
+  (`backend/app/crawler/retry_after.py`: delay-seconds, or an HTTP-date counted from the response's
+  `Date`). A `Retry-After` above `SITESCOPE_RETRY_AFTER_MAX_SECONDS` (300 s) is not waited for: the
+  failure is final.
+- **Durability:** a retry sets the URL back to `pending` with `next_attempt_at` by the database clock,
+  in the fenced transaction (T5). No timer exists anywhere: the dispatcher publishes the URL when it
+  is due, any scheduler can, a crash loses nothing, and a waiting retry occupies no worker slot. A
+  retry is an ordinary new task: robots.txt, politeness, the safe fetcher and the worker's concurrency
+  limit all apply again.
+- **BFS:** a URL waiting for a retry is unfinished, so its level stays open (section 8.3).
+- **Infrastructure calls:** a PostgreSQL or Redis error before the claim is handled again in the same
+  process up to five times with backoff, within half the reclaim idle time; then the message stays
+  pending and the worker pauses reading with exponential backoff and full jitter (base 0.5 s, cap
+  10 s), and the message is recovered as in F3 and F4. The scheduler retries its whole pass with
+  backoff (cap 30 s). The single-process driver stops on a PostgreSQL or Redis error (its leases
+  expire, and the next run takes them over).
 
 ### 10.6 Redis and PostgreSQL consistency limitations
 
@@ -909,7 +1003,8 @@ completed, but URLs can end as `failed: rate_limited`.
   settings. Correctness does not depend on Redis persistence, because the reconciler restores liveness:
   a task whose entry was lost is published again `reconcile_after` after its last progress.
 - A message re-published as a new entry starts with a fresh delivery count. PostgreSQL's `attempt_count`
-  is therefore the authoritative retry limit.
+  is therefore the authoritative retry limit; the delivery count only detects poison messages
+  (Phase 6).
 - Queue statistics read from Redis (stream lengths, pending counts) are approximate. Job progress always
   comes from PostgreSQL.
 - PostgreSQL is a single point of failure for progress: while it is down nothing advances, but nothing is
@@ -947,6 +1042,11 @@ exact expected URLs and depths. From the test servers' side it also checks that 
 requested once in failure-free runs and with injected duplicates, that every level was requested
 only after the previous one was finished (strict BFS across processes), and the per-host politeness
 limits (requests in flight, spacing) across processes.
+
+Phase 6 checks the same invariants after crawls with flaky pages, exhausted retries, cancellations,
+restarts during backoff and a full loss of Redis data (`backend/tests/fault/`), and, from the
+servers' side, that a level is requested only after every retry of the previous level has finished,
+and that each flaky page was requested exactly once per attempt.
 
 ## 12. Security model
 
@@ -1147,12 +1247,15 @@ fields: `request_id`, `job_id`, `url_id`, `worker_id`, `lease_epoch`, `attempt`.
 | Fetching (Phase 3) | `fetch.destination_blocked` (WARNING: host and address classes, never the URL or the addresses), `fetch.completed` (DEBUG) |
 | Crawl (Phase 4) | `crawl.run_started`, `crawl.run_finished`, `job.started`, `job.level_advanced`, `job.completed`, `job.failed`, `task.completed`, `task.fenced`, `task.parse_failed`, `lease.taken_over`, `url.failed`, `robots.fetched`, `robots.fetch_failed`, `politeness.rate_limited`, `politeness.release_failed` |
 | Distributed (Phase 5) | `worker.started`, `worker.stats`, `worker.error`, `worker.recovered`, `worker.stopping`, `worker.tasks_cancelled`, `worker.stopped`; `task.handled` (one line per message: disposition, reason, message ID, consumer, epoch, depth, outcome, duration), `task.reclaimed`, `task.reclaim_deleted`, `task.settle_failed`, `task.cancelled`, `task.dispatched`, `task.republished`; `scheduler.started`, `scheduler.pass`, `scheduler.pass_failed`, `scheduler.recovered`, `scheduler.stats`, `scheduler.stopped`; `stream.group_recreated`, `stream.consumers_removed` |
+| Retries, dead letters, cancellation, idempotency (Phase 6) | `task.retry_scheduled` (and the `url.retry_scheduled` event), `task.infrastructure_error`, `url.dead_lettered`, `task.stopping_cancelled`, `url.cancelled`, `job.cancel_requested`, `job.cancelled`, `job.replayed`, `api.idempotency_keys_expired`, `politeness.renew_failed`, `politeness.slot_lost`, `stream.group_created` |
 | Indexing | `outbox.published`, `index.upserted` |
 
 Since Phase 4, a crawl task's log lines carry `job_id`, `url_id`, `worker_id` and `lease_epoch`
 from a context variable (`task_context_var`), including lines logged by the fetcher. The job
 lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) and recovery
-(`url.recovered`, `url.failed`) are also written to `crawl_events`.
+(`url.recovered`, `url.failed`) are also written to `crawl_events`, and since Phase 6 retries
+(`url.retry_scheduled`), quarantines (`url.dead_lettered`) and cancellation
+(`job.cancel_requested`, `job.cancelled`).
 
 **Health**
 
@@ -1161,8 +1264,8 @@ lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) a
 - `GET /api/v1/health/ready` (Phase 2B) reports whether PostgreSQL and Redis are reachable.
 - The workers log `worker.stats` every 60 s, and the scheduler `scheduler.stats` at each
   maintenance (Phase 5). `python -m app.scheduler.status` prints jobs, URL states, live leases
-  per worker, and stream and consumer-group statistics, read-only. Compose health checks
-  arrive in Phase 11.
+  per worker, stream and consumer-group statistics, and (Phase 6) the newest dead letters,
+  read-only. Compose health checks arrive in Phase 11.
 
 **Progress views**
 
@@ -1183,15 +1286,17 @@ lifecycle (`job.started`, `job.level_advanced`, `job.completed`, `job.failed`) a
   - target policy and crawl caps (implemented in Phase 2C)
   - concurrency
   - timing
-  - retries
-  - crawling (Phase 4): concurrency of a crawl process, lease duration and margin, attempts
+  - retries (Phase 6): base and maximum delay, `Retry-After` cap, retried HTTP statuses
+  - crawling (Phase 4): concurrency of a crawl process, lease duration and margin, attempts;
+    the cancellation check interval (Phase 6)
   - streams and scheduler (Phase 5): read block time, reclaim interval, idle time and batch,
     retention, consumer idle time; scheduler interval, batch size, per-job and overall in-flight
-    limits, running-jobs cap, reconcile time; shutdown grace period
+    limits, running-jobs cap, reconcile time; shutdown grace period; the poison threshold
+    (deliveries, Phase 6)
   - politeness (Phase 4): interval, requests in flight per host, maximum wait, robots.txt cache
-    and retry times, crawl-delay cap, and the crawler name for the user agent `<name>/<version>`
-    (default `SiteScopeBot`)
-  - API: token, CORS
+    and retry times, crawl-delay cap, the slot lease (Phase 6), and the crawler name for the user
+    agent `<name>/<version>` (default `SiteScopeBot`)
+  - API: idempotency key retention (Phase 6); token and CORS later
 - `backend/.env.example` lists every variable with a safe placeholder.
 - A local `backend/.env` is optional and git-ignored. It may contain only known `SITESCOPE_`
   settings; any other key stops startup.
@@ -1240,7 +1345,8 @@ SITESCOPE/
 |   |   |-- main.py              # FastAPI app factory, lifespan, routers, error handlers
 |   |   |-- core/                # settings, logging, domain errors
 |   |   |-- api/                 # routers (crawls since Phase 2C; search, links, system), schemas
-|   |   |-- services/            # use cases that own transactions: jobs, frontier, indexing, search, links
+|   |   |-- services/            # use cases that own transactions: jobs, frontier, cancellation
+|   |   |                        #   (Phase 6), indexing, search, links
 |   |   |-- db/                  # SQLAlchemy models, engine and session factory
 |   |   |-- queue/               # Phase 5: Redis Streams adapter, versioned message schema
 |   |   |-- scheduler/           # Phase 5: scheduler passes (activation, advancement, dispatch,
@@ -1248,10 +1354,12 @@ SITESCOPE/
 |   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, resolver,
 |   |   |                        #   safe fetcher, content limits, encodings, HTML parser (Phase 3);
 |   |   |                        #   robots.txt, politeness gate, page directives (Phase 4);
+|   |   |                        #   Retry-After parsing (Phase 6);
 |   |   |                        #   no database imports (Redis for politeness and robots.txt)
 |   |   |-- indexing/            # search document building
 |   |   `-- workers/             # crawl task, single-process driver (Phase 4); crawler worker,
-|   |                            #   shared runtime (Phase 5); indexer (Phase 7)
+|   |                            #   shared runtime (Phase 5); retry policy (Phase 6); indexer
+|   |                            #   (Phase 7)
 |   `-- tests/
 |       |-- unit/
 |       |-- integration/
@@ -1317,14 +1425,17 @@ SITESCOPE/
 | Local crawls (Phase 4) | the single-process driver over fixture graphs and the demo site on 127.0.0.1: exact URL sets and depths, budget prefix, directives, failures, redirects, robots.txt, crash recovery with a short lease, politeness spacing, 1 vs N concurrent tasks; invariants after every crawl | PostgreSQL, Redis, local servers |
 | Streams and workers (Phase 5) | the stream adapter on real Redis (groups, blocking reads, acks, `XAUTOCLAIM`, deleted entries, dead letters, trimming, `delivering`); dispatch with publication and its failure windows; a claim waiting for a dispatch; reconciliation; the worker's acknowledgment rules with a test-double fetcher; scheduler passes | PostgreSQL, Redis |
 | Processes (Phase 5) | real scheduler and worker processes crawling local sites: participation from the workers' own logs, injected duplicates, competing schedulers, a killed worker, a frozen worker (fenced out), a killed scheduler, Redis and PostgreSQL cut off through a TCP proxy, graceful stops; the invariants, and BFS order and politeness from the servers' request timelines | PostgreSQL, Redis, local servers |
+| Retries, dead letters, cancellation, idempotency (Phase 6) | the retry transition and its fencing, rollback and races; exhaustion; strict BFS with retries; poison quarantine and idempotent dead-lettering; cancellation (T7, the worker's fenced cancel, the finalizer, races and lock order, the API); `Idempotency-Key` (replays, conflicts, concurrent requests, expiry, rollback, restarts); `Retry-After` through the real fetcher; slot lease renewal on real Redis | PostgreSQL, Redis, local servers |
+| Processes (Phase 6) | real processes with flaky local sites: retries and strict BFS, exhaustion, `Retry-After`, simultaneous failures, a scheduler restart during backoff, a worker killed during a retry, duplicates during backoff, a killed worker's politeness slot, cancellation with live workers and across a scheduler restart; `FLUSHALL` of a disposable Redis container mid-crawl | PostgreSQL, Docker (WSL), local servers |
 | End-to-end | crawl a local fixture site over real HTTP, then check search results and link reports | full stack |
 | Frontend | components and the API client; type check; production build | Node.js |
 
 Tests that need unavailable services skip with an explicit reason. Benchmarks are kept separate from
 tests: fixed parameters, a recorded environment, and raw output committed to the repository
 (`benchmarks/`; the first one in Phase 5, the full set in Phase 10). The concurrency row above was
-planned with an in-memory site; Phase 5 uses real processes and local HTTP servers instead. Not done
-yet: `FLUSHALL` with real processes (lost entries are tested at the service level).
+planned with an in-memory site; Phase 5 uses real processes and local HTTP servers instead. Phase 6
+runs `FLUSHALL` with real processes, against a disposable Redis container only: it is never sent to
+the development Redis, whose test database 15 would not isolate it.
 
 ## 19. Assumptions and known limitations
 
@@ -1361,10 +1472,11 @@ yet: `FLUSHALL` with real processes (lost entries are tested at the service leve
 - For a single host, throughput is bounded by that host's rate limit, not by the number of workers.
   Horizontal scaling helps across hosts and jobs.
 - URLs disallowed by robots.txt consume page budget.
-- Until Phase 6, a retryable failure (timeout, connection error, HTTP 429 or 5xx, no politeness
-  slot in time) ends its URL as `failed`.
+- A retryable failure is retried at most `SITESCOPE_CRAWL_MAX_ATTEMPTS - 1` times; a server that
+  asks for a `Retry-After` beyond the cap (300 s) is not retried (Phase 6).
 - An unreachable robots.txt disallows its origin for the retry time (300 s), and again after each
-  failed retry. A job whose seed is affected fails.
+  failed retry. A job whose seed is affected fails. `robots_unreachable` is not retried per URL: the
+  origin's cached result would mostly answer the same.
 - `noindex` pages are stored (without a search document); only search leaves them out.
 - Separate processes may each fetch an expired robots.txt once (those fetches still pass the
   politeness gate).
@@ -1372,17 +1484,21 @@ yet: `FLUSHALL` with real processes (lost entries are tested at the service leve
   crawl delay is the largest `Crawl-delay` of its origins' robots.txt; a lower one takes effect
   only when the stored value expires (at most 24 hours).
 - A task may need two fetches, robots.txt and then the page. If both are slow, the task deadline
-  (lease minus 10 s) can end it first, as `deadline_exceeded`, which Phase 6 will retry.
+  (lease minus 10 s) can end it first, as `deadline_exceeded`, which is retried (Phase 6).
 - The single-process driver stops on a PostgreSQL or Redis error. The next run continues once the
   stopped run's leases expire.
 - A worker that dies, or loses Redis, while it holds a politeness slot leaves the slot held until its
-  TTL (70 s by default). With one slot per host, the host's requests wait meanwhile, and those
-  waiting longer than the maximum wait (30 s) fail as `rate_limited` until Phase 6 adds retries
-  (section 10.4).
+  lease ends (15 s by default since Phase 6; 70 s before). A holder frozen for longer than a lease
+  loses its slot and may overlap with one other request to its host when it resumes (section 10.4).
 - Recovery is deliberately unhurried with the defaults: a crashed worker's tasks resume after the
-  reclaim idle time (120 s), a lost message after the reconcile time (10 minutes). A transient
-  PostgreSQL error during a claim also leaves the message pending, so that task waits for the reclaim
-  idle time too.
+  reclaim idle time (100 s), a lost message after the reconcile time (5 minutes). A transient
+  PostgreSQL error before a claim is handled again in the process for a short while, and after that
+  the task waits for the reclaim idle time too.
+- A cancelled job stays `cancelling` until its in-flight URLs are final: within seconds while their
+  workers live, up to one lease when a worker crashed, and until a scheduler (or the single-process
+  driver) runs the finalizer.
+- Poison messages are recognized by their delivery count only when they are reclaimed; a message
+  republished as a new entry starts counting again (`attempt_count` still bounds the work).
 - With several schedulers, the backpressure limits (per job, overall) are approximate.
 - A graceful stop on Windows needs a console event (Ctrl+C or `CTRL_BREAK_EVENT`). Terminating the
   process instead is safe, but running tasks then wait for their leases to expire.
@@ -1393,8 +1509,8 @@ yet: `FLUSHALL` with real processes (lost entries are tested at the service leve
 - Charsets are limited to the WHATWG label table; any other declared charset is ignored.
 - Basic relevance ranking (no BM25).
 - No incremental re-crawl; storage is duplicated across jobs.
-- Until Phase 6 adds `Idempotency-Key`, a client that retries job creation after a lost response
-  creates a second job.
+- A client that retries job creation without an `Idempotency-Key` creates a second job; keys are
+  remembered for 24 hours by default.
 
 ## 20. Decision records
 
@@ -1416,3 +1532,4 @@ yet: `FLUSHALL` with real processes (lost entries are tested at the service leve
 | [0014](adr/0014-crawl-state-transactions-and-redirects.md) | Crawl state transactions, same-level redirects, and page directives |
 | [0015](adr/0015-robots-txt-and-per-host-politeness.md) | robots.txt (RFC 9309) and per-host politeness through Redis |
 | [0016](adr/0016-distributed-execution-redis-streams.md) | Distributed execution over Redis Streams: publication, acknowledgment, recovery |
+| [0017](adr/0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation |

@@ -4,6 +4,7 @@ Every test uses its own key prefix in Redis database 15 (``redis_prefix``).
 """
 
 import asyncio
+import logging
 import uuid
 
 import pytest
@@ -28,11 +29,35 @@ async def stream(redis_client: Redis, redis_prefix: str) -> CrawlStream:
 
 
 async def test_ensure_group_is_idempotent(stream: CrawlStream) -> None:
-    await stream.ensure_group()
-    await stream.ensure_group()
+    assert await stream.ensure_group() is False  # the fixture created it
+    assert await stream.ensure_group() is False
 
     described = await stream.describe()
     assert described["group"]["name"] == "crawlers"
+
+
+async def test_ensure_group_reports_a_group_it_had_to_create_again(
+    stream: CrawlStream, redis_client: Redis
+) -> None:
+    """After Redis lost the stream (the group with it), the next call creates both again."""
+    await redis_client.delete(stream.key)
+
+    assert await stream.ensure_group() is True
+    assert await stream.ensure_group() is False
+
+
+async def test_reads_and_reclaims_recreate_a_lost_group(
+    stream: CrawlStream, redis_client: Redis, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="app.queue.streams")
+    await redis_client.delete(stream.key)
+    assert await stream.read("worker-a", count=1, block_ms=10) == []
+    await redis_client.delete(stream.key)
+    reclaimed = await stream.reclaim("worker-a", min_idle_ms=0, start="0-0", count=1)
+
+    assert (reclaimed.next_start, reclaimed.deliveries) == ("0-0", [])
+    assert [getattr(r, "event", None) for r in caplog.records] == ["stream.group_recreated"] * 2
+    assert await stream.ensure_group() is False
 
 
 async def test_published_tasks_are_delivered_once_to_one_consumer(stream: CrawlStream) -> None:

@@ -23,6 +23,7 @@ def test_openapi_document_lists_every_endpoint(client: TestClient) -> None:
         ("POST", "/api/v1/crawls"): "create_crawl",
         ("GET", "/api/v1/crawls"): "list_crawls",
         ("GET", "/api/v1/crawls/{job_id}"): "get_crawl",
+        ("POST", "/api/v1/crawls/{job_id}/cancel"): "cancel_crawl",
     }
 
 
@@ -31,18 +32,29 @@ def test_crawl_errors_are_documented_as_problem_details(client: TestClient) -> N
     paths = schema["paths"]
 
     documented = {
-        ("POST", "/api/v1/crawls"): {"201", "422", "503"},
+        ("POST", "/api/v1/crawls"): {"200", "201", "409", "422", "503"},
         ("GET", "/api/v1/crawls"): {"200", "422", "503"},
         ("GET", "/api/v1/crawls/{job_id}"): {"200", "404", "422", "503"},
+        ("POST", "/api/v1/crawls/{job_id}/cancel"): {"200", "202", "404", "422", "503"},
     }
     for (method, path), statuses in documented.items():
         responses = paths[path][method.lower()]["responses"]
         assert set(responses) == statuses
-        for status in statuses - {"200", "201"}:
+        for status in statuses - {"200", "201", "202"}:
             reference = responses[status]["content"]["application/json"]["schema"]["$ref"]
             assert reference == "#/components/schemas/ProblemDetails"
     # FastAPI's default validation schema does not match the problem+json responses.
     assert "HTTPValidationError" not in schema["components"]["schemas"]
+
+
+def test_the_idempotency_key_header_is_documented(client: TestClient) -> None:
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/crawls"]["post"]
+    [header] = [item for item in operation["parameters"] if item["in"] == "header"]
+    assert header["name"] == "Idempotency-Key"
+    assert header["required"] is False
+    assert header["schema"]["anyOf"][0]["maxLength"] == 255
+    replay = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert replay == "#/components/schemas/CrawlJobSummary"
 
 
 def test_readiness_documents_its_503_response(client: TestClient) -> None:

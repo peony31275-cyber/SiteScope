@@ -139,7 +139,8 @@ class LocalHttpServer:
 
     ``host`` may be any 127.x.y.z address: each one is a separate host for the crawler (its own
     politeness slots), served by this process. ``active``/``max_active`` count requests in
-    flight; ``served`` is the timeline of finished requests.
+    flight; ``served`` is the timeline of finished requests. ``sequences`` script a flaky path:
+    its first requests get those replies, in order, and later ones its route (Phase 6).
     """
 
     def __init__(
@@ -148,8 +149,12 @@ class LocalHttpServer:
         *,
         tls: ssl.SSLContext | None = None,
         host: str = "127.0.0.1",
+        sequences: Mapping[str, Sequence[Reply]] | None = None,
     ) -> None:
         self.routes: dict[str, Reply] = dict(routes or {})
+        self.sequences: dict[str, list[Reply]] = {
+            path: list(replies) for path, replies in (sequences or {}).items()
+        }
         self.requests: list[ReceivedRequest] = []
         self.served: list[Served] = []
         self.connections = 0
@@ -241,7 +246,11 @@ class LocalHttpServer:
     async def _reply(
         self, target: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        reply = self.routes.get(target.split("?")[0], Reply(status=404, reason="Not Found"))
+        path = target.split("?")[0]
+        if self.sequences.get(path):
+            reply = self.sequences[path].pop(0)
+        else:
+            reply = self.routes.get(path, Reply(status=404, reason="Not Found"))
         if reply.hold:
             await reader.read()  # until the client closes the connection
             return

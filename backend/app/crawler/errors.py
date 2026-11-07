@@ -10,7 +10,9 @@ same URL again later may succeed:
 * permanent: everything else (policy refusals, TLS errors, redirect problems, other HTTP errors,
   unsupported or oversized content, malformed responses).
 
-Retry scheduling itself (backoff, attempt limits) belongs to the worker (Phase 6).
+Retry scheduling itself (backoff, attempt limits, the retryable statuses actually used) belongs to
+the worker's retry policy (``app/workers/retry.py``, Phase 6). An HTTP 429 or 503 response's
+``Retry-After`` header is reported as ``FetchError.retry_after`` (seconds).
 """
 
 from enum import StrEnum
@@ -79,6 +81,7 @@ class FetchError(Exception):
         url: str,
         http_status: int | None = None,
         redirects: tuple[Redirect, ...] = (),
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
@@ -86,6 +89,8 @@ class FetchError(Exception):
         self.url = url  # the URL whose request failed (the last hop of a redirect chain)
         self.http_status = http_status
         self.redirects = redirects  # redirects followed before the failure
+        # Seconds a 429 or 503 response's Retry-After asked to wait (app/crawler/retry_after.py).
+        self.retry_after = retry_after
 
     @property
     def retryable(self) -> bool:

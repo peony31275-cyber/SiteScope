@@ -1,6 +1,7 @@
 # ADR-0016: Distributed execution over Redis Streams: publication, acknowledgment, recovery
 
-- Status: Accepted
+- Status: Accepted. Amended by [ADR-0017](0017-retries-dead-letters-cancellation-idempotency.md) (recovery defaults, the dead-letter record, poison
+  messages by delivery count); its "Left for Phase 6" items are decided there.
 - Date: 2026-11-06
 - Extends: [ADR-0001](0001-postgresql-source-of-truth.md),
   [ADR-0002](0002-transactional-outbox.md),

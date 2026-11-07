@@ -13,8 +13,13 @@ Redis Lua script grants slots, and applies three rules per host:
   ``interval`` has passed since the host's previous start. A robots.txt ``Crawl-delay`` raises
   the interval of its host (``set_crawl_delay``), up to ``max_crawl_delay``.
 * **Concurrency.** At most ``max_concurrent`` slots of one host are held at the same time,
-  across all processes. A slot is held until its request has finished. It also expires
-  ``slot_ttl`` seconds after it was granted, so a crashed process cannot block a host for long.
+  across all processes. A slot is held until its request has finished. It is a *lease* of
+  ``slot_lease`` seconds that its holder renews while the request runs (Phase 6), so the slot of
+  a crashed or frozen process frees after at most one lease, while a live request keeps its
+  slot. Renewal stops ``slot_ttl`` seconds after the grant (the longest request hop, the fetch
+  deadline, plus a margin), so a live request holds its slot no longer than that; a holder that
+  stalls at the very moment of a renewal can keep it up to one lease longer. An expired slot is
+  never renewed, so the concurrency limit holds in every case.
 
 The waiter at the head of the queue learns exactly how long the spacing still requires, and
 sleeps that long. Waiters further back poll every ``poll_interval``. A waiter that stops asking,
@@ -57,6 +62,7 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.core.tasks import cancel_and_wait
 from app.crawler.errors import RateLimitedError
 from app.crawler.urls import NormalizedUrl
 
@@ -130,6 +136,26 @@ redis.call('SET', KEYS[1], fmt(now), 'PX', fmt(math.floor(interval / 1000) + 100
 return {1, 0}
 """
 
+# KEYS: active slots. ARGV: slot token, lease (microseconds). Extends a held slot to now + lease
+# and returns 1; returns 0 (and forgets the slot) if it is no longer held or already expired,
+# because then another request may have been granted its place.
+RENEW_SCRIPT: Final = """
+local function fmt(n) return string.format('%.0f', n) end
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000000 + tonumber(clock[2])
+local expiry = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if not expiry or tonumber(expiry) <= now then
+  redis.call('ZREM', KEYS[1], ARGV[1])
+  return 0
+end
+redis.call('ZADD', KEYS[1], 'XX', fmt(now + tonumber(ARGV[2])), ARGV[1])
+local ttl = math.floor(tonumber(ARGV[2]) / 1000) + 1000
+if redis.call('PTTL', KEYS[1]) < ttl then
+  redis.call('PEXPIRE', KEYS[1], fmt(ttl))
+end
+return 1
+"""
+
 # KEYS: crawl delay. ARGV: delay, TTL in milliseconds. Keeps the larger of the stored and the
 # new delay, so that one origin of a host never lowers the delay another origin asked for.
 RAISE_DELAY_SCRIPT: Final = """
@@ -148,17 +174,29 @@ class PolitenessConfig:
     interval: float = 1.0  # minimum seconds between two request starts to one host
     max_concurrent: int = 1  # slots of one host held at the same time
     max_wait: float = 30.0  # the longest a request waits for its slot
-    slot_ttl: float = 70.0  # a slot never released expires this long after it was granted
+    slot_ttl: float = 70.0  # the longest a slot is held, renewals included
     max_crawl_delay: float = 10.0  # cap on a robots.txt Crawl-delay
     poll_interval: float = 0.1  # how often a waiter that is not next in line asks again
+    # A slot's lease, renewed every third of it while its request runs (Phase 6).
+    slot_lease: float = 15.0
 
     def __post_init__(self) -> None:
         if self.interval < 0 or self.max_crawl_delay < 0:
             raise ValueError("intervals must not be negative")
         if self.max_concurrent < 1:
             raise ValueError("max_concurrent must be at least 1")
-        if self.max_wait <= 0 or self.slot_ttl <= 0 or self.poll_interval <= 0:
-            raise ValueError("max_wait, slot_ttl and poll_interval must be positive")
+        if (
+            self.max_wait <= 0
+            or self.slot_ttl <= 0
+            or self.poll_interval <= 0
+            or self.slot_lease <= 0
+        ):
+            raise ValueError("max_wait, slot_ttl, poll_interval and slot_lease must be positive")
+
+    @property
+    def first_lease(self) -> float:
+        """How long a newly granted slot is held before its first renewal is due."""
+        return min(self.slot_lease, self.slot_ttl)
 
     @property
     def waiter_ttl(self) -> float:
@@ -197,6 +235,8 @@ class SlotStore(Protocol):
 
     async def release(self, host: str, token: str) -> None: ...
 
+    async def renew(self, host: str, token: str, *, lease: float) -> bool: ...
+
     async def raise_crawl_delay(self, host: str, delay: float, *, ttl: float) -> None: ...
 
 
@@ -207,6 +247,7 @@ class RedisSlotStore:
         self._redis = redis
         self._prefix = key_prefix
         self._acquire = redis.register_script(ACQUIRE_SCRIPT)
+        self._renew = redis.register_script(RENEW_SCRIPT)
         self._raise_delay = redis.register_script(RAISE_DELAY_SCRIPT)
 
     def keys(self, host: str) -> tuple[str, str, str, str, str]:
@@ -248,6 +289,11 @@ class RedisSlotStore:
             pipe.zrem(seen, token)
             await pipe.execute()
 
+    async def renew(self, host: str, token: str, *, lease: float) -> bool:
+        """Extend a held slot to now + ``lease``; False if the slot is no longer held."""
+        renewed = await self._renew(keys=[self.keys(host)[1]], args=[token, _microseconds(lease)])
+        return bool(renewed)
+
     async def raise_crawl_delay(self, host: str, delay: float, *, ttl: float) -> None:
         await self._raise_delay(
             keys=[self.keys(host)[2]],
@@ -265,6 +311,8 @@ class PolitenessGate:
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        renew_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        renew_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._config = config
@@ -272,6 +320,10 @@ class PolitenessGate:
         # clock only bounds how long this process waits; the schedule itself is Redis time.
         self._sleep = sleep
         self._clock = clock
+        # The renewal of held slots runs in the background, on its own time source, so that a
+        # test's controlled clock for waiting is not advanced by renewals.
+        self._renew_sleep = renew_sleep
+        self._renew_clock = renew_clock
 
     @property
     def config(self) -> PolitenessConfig:
@@ -281,16 +333,55 @@ class PolitenessGate:
     async def slot(self, url: NormalizedUrl) -> AsyncIterator[None]:
         """Wait for a slot of the URL's host and hold it for the block; see the module doc.
 
-        Raises ``RateLimitedError`` if no slot is granted within ``max_wait``. Whatever happens
-        (success, failure, cancellation), the slot or the place in the queue is given back.
+        Raises ``RateLimitedError`` if no slot is granted within ``max_wait``. While the block
+        runs, the slot's lease is renewed in the background. Whatever happens (success, failure,
+        cancellation), the slot or the place in the queue is given back.
         """
         host = url.host
         token = secrets.token_hex(8)
         try:
-            await self._acquire(host, token)
-            yield
+            granted = await self._acquire(host, token)
+            keeper = asyncio.create_task(self._keep(host, token, granted))
+            try:
+                yield
+            finally:
+                await cancel_and_wait(keeper)
         finally:
             await self._release(host, token)
+
+    async def _keep(self, host: str, token: str, granted: float) -> None:
+        """Renew a held slot every third of its lease, until ``slot_ttl`` after ``granted``.
+
+        ``granted`` is read just before the attempt that was granted, so the slot is never held
+        longer than ``slot_ttl``. A renewal that fails leaves the slot to expire after its current
+        lease; it never affects the request itself.
+        """
+        config = self._config
+        while True:
+            await self._renew_sleep(config.slot_lease / 3)
+            remaining = config.slot_ttl - (self._renew_clock() - granted)
+            if remaining <= 0:
+                return  # the longest hold: the slot now expires on its own
+            try:
+                renewed = await self._store.renew(
+                    host, token, lease=min(config.slot_lease, remaining)
+                )
+            except Exception as exc:  # Redis unreachable: try again at the next renewal
+                logger.warning(
+                    "Could not renew a politeness slot",
+                    extra={
+                        "event": "politeness.renew_failed",
+                        "host": host,
+                        "error_type": type(exc).__qualname__,
+                    },
+                )
+                continue
+            if not renewed:  # it expired meanwhile (this process was stalled)
+                logger.warning(
+                    "Lost a politeness slot before the request finished",
+                    extra={"event": "politeness.slot_lost", "host": host},
+                )
+                return
 
     async def set_crawl_delay(self, host: str, delay: float | None, *, ttl: float) -> None:
         """Apply a robots.txt Crawl-delay (capped) to ``host`` for ``ttl`` seconds.
@@ -302,21 +393,23 @@ class PolitenessGate:
             return
         await self._store.raise_crawl_delay(host, min(delay, self._config.max_crawl_delay), ttl=ttl)
 
-    async def _acquire(self, host: str, token: str) -> None:
+    async def _acquire(self, host: str, token: str) -> float:
+        """Wait for a slot; returns the renewal clock's reading just before it was granted."""
         config = self._config
         started = self._clock()
         deadline = started + config.max_wait
         while True:
+            attempted = self._renew_clock()
             grant = await self._store.acquire(
                 host,
                 token,
                 interval=config.interval,
                 max_concurrent=config.max_concurrent,
-                slot_ttl=config.slot_ttl,
+                slot_ttl=config.first_lease,
                 waiter_ttl=config.waiter_ttl,
             )
             if grant.granted:
-                return
+                return attempted
             remaining = deadline - self._clock()
             if remaining <= 0 or (grant.wait is not None and grant.wait > remaining):
                 break  # next in line, but the spacing ends after the deadline: give up now
@@ -338,7 +431,8 @@ class PolitenessGate:
         try:
             await self._store.release(host, token)
         except RedisError:
-            # The slot expires after slot_ttl, a queue place after waiter_ttl.
+            # The slot expires after its lease (no renewal any more), a queue place after
+            # waiter_ttl.
             logger.warning(
                 "Could not release a politeness slot",
                 extra={"event": "politeness.release_failed", "host": host},
@@ -355,6 +449,7 @@ def build_gate(settings: "Settings", redis: Redis) -> PolitenessGate:
             max_wait=settings.politeness_max_wait_seconds,
             slot_ttl=settings.fetch_deadline_seconds + SLOT_TTL_MARGIN_SECONDS,
             max_crawl_delay=settings.robots_max_crawl_delay_seconds,
+            slot_lease=settings.politeness_slot_lease_seconds,
         ),
     )
 

@@ -423,6 +423,62 @@ async def test_error_statuses_are_classified(status: int, retryable: bool) -> No
 
 
 @pytest.mark.parametrize(
+    ("status", "headers", "retry_after"),
+    [
+        (503, [("Retry-After", "120")], 120.0),
+        (429, [("Retry-After", " 7 ")], 7.0),
+        # An HTTP-date counts from the response's own Date header (the server's clock).
+        (
+            503,
+            [
+                ("Date", "Sat, 07 Nov 2026 12:00:00 GMT"),
+                ("Retry-After", "Sat, 07 Nov 2026 12:00:30 GMT"),
+            ],
+            30.0,
+        ),
+        (
+            429,
+            [
+                ("Date", "Sat, 07 Nov 2026 12:00:00 GMT"),
+                ("Retry-After", "Sat, 07 Nov 2026 11:00:00 GMT"),
+            ],
+            0.0,
+        ),
+        (503, [("Retry-After", "soon")], None),  # malformed: ignored
+        # Regression (Phase 6 independent review): dates outside datetime's range in UTC
+        # raised OverflowError out of the fetcher; now they are ignored like any malformed one.
+        (503, [("Retry-After", "Fri, 31 Dec 9999 23:59:59 -0100")], None),
+        (
+            429,
+            [
+                ("Date", "Fri, 31 Dec 9999 23:59:59 -0100"),
+                ("Retry-After", "Mon, 01 Jan 2001 00:00:00 GMT"),
+            ],
+            0.0,  # the Date is unusable: counted from now, a date in the past means 0 s
+        ),
+        (503, [("Retry-After", "-5")], None),
+        (503, [], None),
+        (500, [("Retry-After", "120")], None),  # only 429 and 503 carry a Retry-After here
+    ],
+)
+async def test_retry_after_is_read_from_429_and_503_responses(
+    status: int, headers: list[tuple[str, str]], retry_after: float | None
+) -> None:
+    resolver = ScriptedResolver({"fixture.test": [LOOPBACK]})
+    reply = Reply(status=status, reason="X", headers=headers, body=b"busy")
+    async with LocalHttpServer({"/": reply}) as server:
+        fetcher = make_fetcher(resolver=resolver, port=server.port)
+
+        error = await fetch_error(fetcher.fetch(f"http://fixture.test:{server.port}/"))
+
+    assert (error.kind, error.http_status, error.retry_after) == (
+        FailureKind.HTTP_ERROR,
+        status,
+        retry_after,
+    )
+
+
+@pytest.mark.parametrize(
     "headers",
     [[("Content-Type", "application/pdf")], [("Content-Type", "text/plain")], []],
 )

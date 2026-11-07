@@ -41,9 +41,24 @@ def gate(
             slot_ttl=settings.get("slot_ttl", 70.0),
             max_crawl_delay=settings.get("max_crawl_delay", 10.0),
             poll_interval=settings["poll_interval"],
+            slot_lease=settings.get("slot_lease", 15.0),
         ),
         sleep=clock.sleep,
         clock=clock,
+    )
+
+
+def renewing_gate(
+    clock: VirtualClock, store: MemorySlotStore, *, slot_ttl: float, slot_lease: float
+) -> PolitenessGate:
+    """A gate whose waiting *and* slot renewal run on the virtual clock."""
+    return PolitenessGate(
+        store,
+        PolitenessConfig(interval=0.0, slot_ttl=slot_ttl, slot_lease=slot_lease),
+        sleep=clock.sleep,
+        clock=clock,
+        renew_sleep=clock.sleep,
+        renew_clock=clock,
     )
 
 
@@ -371,6 +386,107 @@ async def test_an_abandoned_slot_expires_after_its_ttl() -> None:
     assert all(seconds <= 0.1 + 1e-9 for seconds in clock.sleeps)
 
 
+async def test_a_dead_holders_slot_frees_after_one_lease_not_the_longest_hold() -> None:
+    """Phase 6: a crashed or frozen process stops renewing, so its slot frees after one lease
+    (6 s here), not after slot_ttl (70 s) as before."""
+    clock = FakeClock()
+    store = MemorySlotStore(clock, fail_release=True)
+    politeness = gate(clock, store, interval=0.0, slot_ttl=70.0, slot_lease=6.0, max_wait=30.0)
+    async with politeness.slot(A):
+        pass  # no release: as if the process had died while holding the slot
+    store.fail_release = False
+    async with politeness.slot(A):
+        assert 1006.0 <= clock() < 1007.0
+
+
+async def test_a_held_slot_is_renewed_but_never_beyond_its_longest_hold() -> None:
+    clock = VirtualClock()
+    store = MemorySlotStore(clock)  # type: ignore[arg-type]  # the virtual clock is a clock
+    politeness = renewing_gate(clock, store, slot_ttl=20.0, slot_lease=6.0)
+    expiries: list[float] = []
+
+    async def hold() -> None:
+        async with politeness.slot(A):
+            for _ in range(15):  # a request longer than slot_ttl (impossible with real settings)
+                await clock.sleep(2.0)
+                expiries.extend(store.state("a.example").active.values())
+
+    await clock.run(hold())
+    # A renewal every lease/3 = 2 s; each extends the slot to now + min(lease, what is left of
+    # slot_ttl), so the slot is held continuously, and never past grant + slot_ttl = 1020.
+    assert [at for _, at, _ in store.renewals] == [1000.0 + 2 * n for n in range(1, 10)]
+    assert [lease for _, _, lease in store.renewals] == [6.0] * 7 + [4.0, 2.0]
+    assert max(expiries) == 1020.0
+    # Observed every 2 s from 1002 to 1018: always still held.
+    observed = zip(expiries[:9], range(1002, 1020, 2), strict=True)
+    assert all(expiry > at for expiry, at in observed), expiries
+    assert store.held("a.example") == 0  # released at the end
+
+
+async def test_a_failed_renewal_is_logged_and_tried_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="app.crawler.politeness")
+    clock = VirtualClock()
+    store = MemorySlotStore(clock, fail_renew=True)  # type: ignore[arg-type]  # virtual clock
+    politeness = renewing_gate(clock, store, slot_ttl=70.0, slot_lease=6.0)
+
+    async def hold() -> str:
+        async with politeness.slot(A):
+            await clock.sleep(3.0)  # the renewal at 1002 fails: Redis is down
+            store.fail_renew = False
+            await clock.sleep(2.0)  # the one at 1004 works
+        return "the request is unaffected"
+
+    assert await clock.run(hold()) == "the request is unaffected"
+    assert [(at, lease) for _, at, lease in store.renewals] == [(1004.0, 6.0)]
+    assert [getattr(r, "event", None) for r in caplog.records] == ["politeness.renew_failed"]
+
+
+async def test_a_lost_slot_is_logged_and_no_longer_renewed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="app.crawler.politeness")
+    clock = VirtualClock()
+    store = MemorySlotStore(clock)  # type: ignore[arg-type]  # the virtual clock is a clock
+    politeness = renewing_gate(clock, store, slot_ttl=70.0, slot_lease=6.0)
+
+    async def hold() -> None:
+        async with politeness.slot(A):
+            # The process stalled past its lease: the slot expired and may be someone else's.
+            store.state("a.example").active.clear()
+            await clock.sleep(10.0)
+
+    await clock.run(hold())
+    assert store.renewals == []
+    assert [getattr(r, "event", None) for r in caplog.records] == ["politeness.slot_lost"]
+
+
+async def test_cancelling_the_request_stops_the_renewal_and_releases_the_slot() -> None:
+    clock = VirtualClock()
+    store = MemorySlotStore(clock)  # type: ignore[arg-type]  # the virtual clock is a clock
+    politeness = renewing_gate(clock, store, slot_ttl=70.0, slot_lease=6.0)
+    holding = asyncio.Event()
+
+    async def request() -> None:
+        async with politeness.slot(A):
+            holding.set()
+            await asyncio.Event().wait()  # until cancelled
+
+    async def scenario() -> None:
+        task = asyncio.create_task(request())
+        await holding.wait()
+        await clock.sleep(5.0)  # one renewal, at 1002
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await clock.sleep(10.0)  # no renewal after the release
+
+    await clock.run(scenario())
+    assert [at for _, at, _ in store.renewals] == [1002.0, 1004.0]
+    assert store.held("a.example") == 0
+
+
 async def test_a_crashed_waiter_stops_blocking_the_queue() -> None:
     clock = FakeClock()
     store = MemorySlotStore(clock)
@@ -418,6 +534,7 @@ async def test_a_crawl_delay_raises_the_interval_up_to_the_cap() -> None:
         {"slot_ttl": 0.0},
         {"poll_interval": 0.0},
         {"max_crawl_delay": -1.0},
+        {"slot_lease": 0.0},
     ],
 )
 def test_invalid_configurations_are_rejected(config: dict[str, float]) -> None:
@@ -430,6 +547,11 @@ def test_a_waiter_may_stay_silent_for_its_longest_sleep() -> None:
     assert config.waiter_ttl == 10.0 + WAITER_TTL_MARGIN_SECONDS
 
 
+def test_the_first_lease_never_exceeds_the_longest_hold() -> None:
+    assert PolitenessConfig(slot_ttl=70.0, slot_lease=15.0).first_lease == 15.0
+    assert PolitenessConfig(slot_ttl=5.0, slot_lease=15.0).first_lease == 5.0
+
+
 def test_build_gate_uses_the_settings(settings: Settings) -> None:
     configured = settings.model_copy(
         update={
@@ -438,6 +560,7 @@ def test_build_gate_uses_the_settings(settings: Settings) -> None:
             "politeness_max_wait_seconds": 20.0,
             "robots_max_crawl_delay_seconds": 7.0,
             "fetch_deadline_seconds": 45.0,
+            "politeness_slot_lease_seconds": 9.0,
         }
     )
 
@@ -452,6 +575,7 @@ def test_build_gate_uses_the_settings(settings: Settings) -> None:
         max_wait=20.0,
         slot_ttl=45.0 + SLOT_TTL_MARGIN_SECONDS,
         max_crawl_delay=7.0,
+        slot_lease=9.0,
     )
 
 

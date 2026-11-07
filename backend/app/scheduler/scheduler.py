@@ -22,11 +22,17 @@ Every ``SITESCOPE_SCHEDULER_INTERVAL_SECONDS``, one pass, each step its own shor
    most ``SITESCOPE_SCHEDULER_MAX_OUTSTANDING`` over all jobs, and at most
    ``SITESCOPE_SCHEDULER_DISPATCH_BATCH_SIZE`` per job and pass. The jobs share the free room
    fairly, oldest first.
-4. **Reconcile**, every ``reconcile_after / 4`` seconds (at most 30 s): publish again the
+4. **Settle cancellations** (Phase 6) of each ``cancelling`` job: cancel its pending and queued
+   URLs, and its in-progress URLs whose lease expired, then mark it ``cancelled`` once none is
+   unfinished (``crawl_cancellation.settle_cancellation``).
+5. **Reconcile**, every ``reconcile_after / 4`` seconds (at most 30 s): publish again the
    tasks without progress whose stream entry is gone (``republish_stale``).
-5. **Maintain**, every ``retention / 4`` seconds (at most 60 s): trim the stream (never
-   undelivered or pending entries), remove idle consumers that have nothing pending, and log
-   statistics.
+6. **Maintain**, every ``retention / 4`` seconds (at most 60 s): trim the stream (never
+   undelivered or pending entries), remove idle consumers that have nothing pending, forget
+   expired idempotency keys, and log statistics.
+
+Retries need no step of their own: a URL waiting for a retry is ``pending`` with a future
+``next_attempt_at``, which dispatch skips until it is due; it also keeps its BFS level open.
 
 **Failures.** A failed pass (PostgreSQL or Redis unreachable) is logged and retried with
 exponential backoff and full jitter. A job whose step fails for a reason of its own is logged
@@ -66,6 +72,8 @@ from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.session import Database
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream
+from app.services.crawl_cancellation import Settlement, cancelling_jobs, settle_cancellation
+from app.services.crawl_jobs import expire_idempotency_keys
 from app.services.crawl_state import (
     AdvanceAction,
     AdvanceResult,
@@ -82,8 +90,10 @@ from app.services.crawl_state import (
 logger = logging.getLogger(__name__)
 
 # Running jobs looked at per pass, oldest first. Not the running-jobs cap: the cap limits
-# activation only, and every running job must make progress.
+# activation only, and every running job must make progress. The same bound applies to the
+# cancelling jobs settled per pass.
 FRONTIER_SCAN_LIMIT: Final = 1000
+_EXPIRED_KEYS_PER_PASS: Final = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +103,10 @@ class SchedulerConfig:
     max_in_flight_per_job: int = 100
     max_outstanding: int = 1000
     max_running_jobs: int = 10
-    reconcile_after: float = 600.0
+    reconcile_after: float = 300.0
     retention_seconds: int = 3600
     consumer_max_idle_seconds: int = 3600
+    idempotency_key_ttl_seconds: int = 86_400
     name: str = field(default_factory=lambda: process_name("scheduler"))
 
     @property
@@ -117,6 +128,7 @@ class SchedulerConfig:
             reconcile_after=settings.scheduler_reconcile_after_seconds,
             retention_seconds=settings.stream_retention_seconds,
             consumer_max_idle_seconds=settings.stream_consumer_max_idle_seconds,
+            idempotency_key_ttl_seconds=settings.idempotency_key_ttl_seconds,
         )
 
 
@@ -131,6 +143,7 @@ class PassReport:
     republished: int = 0  # tasks published again by the reconciliation
     outstanding: int = 0  # tasks queued or in progress before this pass dispatched
     failed_jobs: int = 0  # jobs skipped in this pass after an error of their own
+    cancelled: int = 0  # cancelling jobs whose cancellation finished in this pass
 
     @property
     def busy(self) -> bool:
@@ -142,6 +155,7 @@ class PassReport:
                 self.dispatched,
                 self.republished,
                 self.failed_jobs,
+                self.cancelled,
             )
         )
 
@@ -272,6 +286,16 @@ class Scheduler:
             room -= len(published)
             dispatched += len(published)
 
+        cancelled = 0
+        async with self._database.session() as session:
+            to_settle = await cancelling_jobs(session, limit=FRONTIER_SCAN_LIMIT)
+        for job_id in to_settle:
+            settlement = await self._for_job(job_id, self._settle_cancellation(job_id))
+            if settlement is None:
+                failed_jobs += 1
+            elif settlement.finalized:
+                cancelled += 1
+
         republished = 0
         if self._clock() >= self._next_reconcile:
             republished = await self._reconcile()
@@ -287,6 +311,7 @@ class Scheduler:
             republished=republished,
             outstanding=outstanding,
             failed_jobs=failed_jobs,
+            cancelled=cancelled,
         )
 
     async def _for_job[T](self, job_id: uuid.UUID, step: Awaitable[T]) -> T | None:
@@ -315,6 +340,10 @@ class Scheduler:
         async with self._database.session() as session:
             return await advance_job(session, job_id)
 
+    async def _settle_cancellation(self, job_id: uuid.UUID) -> Settlement:
+        async with self._database.session() as session:
+            return await settle_cancellation(session, job_id)
+
     async def _dispatch(self, job_id: uuid.UUID, window: int) -> list[uuid.UUID]:
         async with self._database.session() as session:
             return await dispatch_urls(session, job_id, limit=window, publish=self._publish)
@@ -326,7 +355,7 @@ class Scheduler:
         config = self._config
         # The group must exist before entries can count as undelivered (CrawlStream.delivering);
         # this also recreates it after Redis lost its data.
-        await self._stream.ensure_group()
+        await self._ensure_group()
         async with self._database.session() as session:
             result = await republish_stale(
                 session,
@@ -339,10 +368,18 @@ class Scheduler:
         self._reconcile_cursor = result.resume_after
         return result.republished
 
+    async def _ensure_group(self) -> None:
+        if await self._stream.ensure_group():
+            # The first start on an empty Redis, or Redis lost its data (ADR-0016).
+            logger.info(
+                "The consumer group did not exist and was created",
+                extra={"event": "stream.group_created", "stream": self._stream.key},
+            )
+
     async def _maintain(self, outstanding: int) -> None:
         config = self._config
         # Without the group, trimming would not know which entries are still undelivered.
-        await self._stream.ensure_group()
+        await self._ensure_group()
         trimmed = await self._stream.trim(retention_ms=config.retention_seconds * 1000)
         removed = await self._stream.remove_idle_consumers(
             max_idle_ms=config.consumer_max_idle_seconds * 1000
@@ -351,6 +388,15 @@ class Scheduler:
             logger.info(
                 "Removed idle consumers without pending messages",
                 extra={"event": "stream.consumers_removed", "consumers": removed},
+            )
+        async with self._database.session() as session:
+            expired_keys = await expire_idempotency_keys(
+                session, ttl=config.idempotency_key_ttl_seconds, limit=_EXPIRED_KEYS_PER_PASS
+            )
+        if expired_keys:
+            logger.info(
+                "Forgot expired idempotency keys",
+                extra={"event": "api.idempotency_keys_expired", "count": expired_keys},
             )
         pending = await self._stream.pending()
         logger.info(

@@ -112,7 +112,7 @@ def test_worker_config_from_settings() -> None:
     assert config.concurrency == 7
     assert config.lease_seconds == 90
     assert config.task_deadline == 80  # the lease minus the margin
-    assert config.reclaim_min_idle == 120
+    assert config.reclaim_min_idle == 100  # 120 until Phase 6
     assert config.name.startswith("crawler-")
     assert WorkerConfig.from_settings(settings).concurrency == settings.crawl_concurrency
 
@@ -128,6 +128,7 @@ def test_every_worker_config_gets_its_own_name() -> None:
         {"task_deadline": 90.0, "lease_seconds": 90.0},
         {"task_deadline": 0.0},
         {"reclaim_min_idle": 89.0, "lease_seconds": 90.0},
+        {"max_deliveries": 1},  # one delivery is no evidence of a poison message
     ],
 )
 def test_worker_config_rejects_unsafe_timing(values: dict[str, float]) -> None:

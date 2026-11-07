@@ -55,6 +55,11 @@ FAST_TIMING: Mapping[str, str] = {
     "POLITENESS_MAX_CONCURRENT_PER_HOST": "2",
     "POLITENESS_MAX_WAIT_SECONDS": "5",
     "ROBOTS_MAX_CRAWL_DELAY_SECONDS": "1",
+    # Phase 6: short retry delays, prompt cancellation checks, short politeness slot leases.
+    "RETRY_BASE_DELAY_SECONDS": "0.2",
+    "RETRY_MAX_DELAY_SECONDS": "1",
+    "CRAWL_CANCEL_CHECK_SECONDS": "0.2",
+    "POLITENESS_SLOT_LEASE_SECONDS": "1",
 }
 
 ALLOW_ALL_ROBOTS = Reply(
@@ -191,6 +196,9 @@ def child_environment(
         **FAST_TIMING,
         **extra_values,
     }
+    if settings.redis_password is not None:
+        # Normally the same as in backend/.env; a disposable Redis has its own (Phase 6).
+        values["REDIS_PASSWORD"] = settings.redis_password.get_secret_value()
     environment = {
         name: value
         for name, value in os.environ.items()

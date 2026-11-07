@@ -476,7 +476,7 @@ def test_stream_and_scheduler_defaults() -> None:
     assert settings.crawl_lease_margin_seconds == 10
     assert settings.stream_read_block_ms == 2000
     assert settings.stream_reclaim_interval_seconds == 15
-    assert settings.stream_reclaim_min_idle_seconds == 120
+    assert settings.stream_reclaim_min_idle_seconds == 100  # 120 until Phase 6
     assert settings.stream_reclaim_batch_size == 50
     assert settings.stream_retention_seconds == 3600
     assert settings.stream_consumer_max_idle_seconds == 3600
@@ -485,7 +485,7 @@ def test_stream_and_scheduler_defaults() -> None:
     assert settings.scheduler_max_in_flight_per_job == 100
     assert settings.scheduler_max_outstanding == 1000
     assert settings.scheduler_max_running_jobs == 10
-    assert settings.scheduler_reconcile_after_seconds == 600
+    assert settings.scheduler_reconcile_after_seconds == 300  # 600 until Phase 6
     assert settings.shutdown_grace_seconds == 30
 
 
@@ -531,12 +531,12 @@ def test_rejects_invalid_stream_and_scheduler_settings(
             {"SITESCOPE_CRAWL_LEASE_SECONDS": "121"},
             "SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS must be at least",
         ),
-        (
-            {"SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS": "119"},
+        (  # one second below the default reclaim idle time (100 s)
+            {"SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS": "99"},
             "SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS must be at least",
         ),
-        (
-            {"SITESCOPE_STREAM_RETENTION_SECONDS": "599"},
+        (  # one second below the default reconcile time (300 s)
+            {"SITESCOPE_STREAM_RETENTION_SECONDS": "299"},
             "SITESCOPE_STREAM_RETENTION_SECONDS must be at least",
         ),
         (  # a blocking read must return before the Redis client gives up on the socket
@@ -574,3 +574,76 @@ def test_accepts_the_fast_timing_of_the_process_tests(monkeypatch: pytest.Monkey
     settings = Settings(_env_file=None)
 
     assert settings.crawl_lease_seconds - settings.crawl_lease_margin_seconds == 3
+
+
+# --- Retries, poison messages, cancellation, idempotency (Phase 6) ------------------------------
+
+
+def test_phase_6_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert (settings.retry_base_delay_seconds, settings.retry_max_delay_seconds) == (2, 60)
+    assert settings.retry_after_max_seconds == 300
+    assert settings.retry_http_statuses == (429, 500, 502, 503, 504)
+    assert settings.stream_max_deliveries == 10
+    assert settings.crawl_cancel_check_seconds == 2
+    assert settings.idempotency_key_ttl_seconds == 86_400
+    assert settings.politeness_slot_lease_seconds == 15
+
+
+def test_retry_statuses_are_comma_separated_sorted_and_unique(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITESCOPE_RETRY_HTTP_STATUSES", " 503, 429,408,503 ,500")
+
+    assert Settings(_env_file=None).retry_http_statuses == (408, 429, 500, 503)
+
+
+def test_an_empty_retry_status_list_retries_no_http_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITESCOPE_RETRY_HTTP_STATUSES", "")
+
+    assert Settings(_env_file=None).retry_http_statuses == ()
+
+
+@pytest.mark.parametrize("statuses", ["404", "410", "429,410", "400", "403", "399", "600", "x"])
+def test_permanent_http_statuses_cannot_be_retried(
+    monkeypatch: pytest.MonkeyPatch, statuses: str
+) -> None:
+    """404 and 410 (and every client error but 408, 425 and 429) are always final."""
+    monkeypatch.setenv("SITESCOPE_RETRY_HTTP_STATUSES", statuses)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_RETRY_BASE_DELAY_SECONDS", "0"),
+        ("SITESCOPE_RETRY_MAX_DELAY_SECONDS", "0"),
+        ("SITESCOPE_RETRY_AFTER_MAX_SECONDS", "-1"),
+        ("SITESCOPE_STREAM_MAX_DELIVERIES", "1"),  # one delivery is no evidence of poison
+        ("SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS", "0"),
+        ("SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS", "61"),
+        ("SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS", "59"),
+        ("SITESCOPE_POLITENESS_SLOT_LEASE_SECONDS", "0.5"),
+    ],
+)
+def test_rejects_invalid_phase_6_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_the_base_retry_delay_must_not_exceed_the_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITESCOPE_RETRY_BASE_DELAY_SECONDS", "61")
+
+    with pytest.raises(ValidationError, match="SITESCOPE_RETRY_BASE_DELAY_SECONDS must not exceed"):
+        Settings(_env_file=None)

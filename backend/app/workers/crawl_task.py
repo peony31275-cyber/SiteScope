@@ -41,8 +41,9 @@ slot in time; the task deadline; a parser failure                 ``read_timeout
                                                                   ``parse_error``
 =====================================================  =========  ==============================
 
-Retryable failures (timeouts, connection errors, HTTP 429 and 5xx, ``rate_limited``) are
-terminal in Phase 4. Durable retries with backoff arrive in Phase 6.
+Retryable failures (timeouts, connection errors, HTTP 429 and 5xx, ``rate_limited``) are retried
+by the retry policy while attempts remain (``app/workers/retry.py``, Phase 6): the URL goes back
+to ``pending`` with a backoff. The table above is then the result of the last attempt.
 """
 
 import asyncio
@@ -134,16 +135,27 @@ async def crawl_url(context: CrawlContext, lease: Lease) -> UrlResult:
 
 
 def failure_result(error: FetchError) -> UrlResult:
-    """The terminal result of a failed fetch (see the outcome table in the module docstring)."""
+    """The result of a failed fetch (see the outcome table in the module docstring).
+
+    It is the URL's final result, unless the retry policy retries it (``app/workers/retry.py``);
+    a 429 or 503 response's Retry-After goes with it.
+    """
     if error.kind in _FETCHED_FAILURES:
         return UrlResult(
             UrlState.FETCHED,
             _FETCHED_FAILURES[error.kind],
             http_status=error.http_status,
             error=error.message,
+            retry_after=error.retry_after,
         )
     state = UrlState.SKIPPED if error.kind in _SKIPPED_FAILURES else UrlState.FAILED
-    return UrlResult(state, error.kind.value, http_status=error.http_status, error=error.message)
+    return UrlResult(
+        state,
+        error.kind.value,
+        http_status=error.http_status,
+        error=error.message,
+        retry_after=error.retry_after,
+    )
 
 
 def in_job_scope(context: CrawlContext, lease: Lease, url: NormalizedUrl) -> bool:

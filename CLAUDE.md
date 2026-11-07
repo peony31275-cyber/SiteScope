@@ -93,6 +93,9 @@ explanations for the project owner in Chinese.
      column, passes every database rule and defeats fencing.
    - The result transaction starts with the fenced update (`services/crawl_state.py`,
      ADR-0014): zero rows means the lease was lost, so roll back and write nothing.
+   - A retry, a worker's cancellation of its URL, and a poison-message quarantine are fenced
+     updates too (ADR-0017). Only a claim counts an attempt; a retry is `pending` with
+     `next_attempt_at` in PostgreSQL, never a timer.
 5. **Level-synchronous BFS** (ADR-0004).
    - Only URLs at a job's `current_level` are dispatched.
    - Workers only record links. Only the scheduler admits the next level, under the job row lock.
@@ -114,7 +117,8 @@ explanations for the project owner in Chinese.
     - timeouts plus an overall deadline;
     - a cap on decoded body size;
     - a per-host politeness gate on every hop of a crawl (`app/crawler/politeness.py`, Redis;
-      ADR-0015). Only the one-URL diagnostic `app.crawler.cli` fetches without it.
+      ADR-0015; slots are leases renewed while the request runs, ADR-0017). Only the one-URL
+      diagnostic `app.crawler.cli` fetches without it.
 
     Every crawled URL is also checked against robots.txt first (`app/crawler/robots.py`, RFC
     9309), and robots.txt itself is fetched through the safe fetcher.
@@ -189,6 +193,9 @@ explanations for the project owner in Chinese.
   environment always names the test database: `child_environment` refuses any database that
   is not a disposable `*_test` one. Never start `python -m app.scheduler` against the
   development database: it starts every queued job there.
+- Never send `FLUSHALL` (or `FLUSHDB`) to the development Redis; database 15 does not isolate
+  it. Destructive Redis tests start their own disposable container and check that it is not
+  the development server first (`tests/fault/test_redis_data_loss.py`).
 
 ## Environment (Windows 10 development machine)
 
@@ -231,8 +238,9 @@ explanations for the project owner in Chinese.
 backend/          Python package `app`: FastAPI API, scheduler, crawler and indexer workers
   app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-4: URLs,
                   scope, safe fetcher, HTML parser, robots.txt, politeness); workers/ (Phase 4:
-                  crawl task, single-process driver; Phase 5: crawler worker); queue/
-                  scheduler/ (Phase 5: Redis Streams, scheduler, status); indexing/ (later)
+                  crawl task, single-process driver; Phase 5: crawler worker; Phase 6: retry
+                  policy); queue/ scheduler/ (Phase 5: Redis Streams, scheduler, status);
+                  services/crawl_cancellation.py (Phase 6); indexing/ (later)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes)

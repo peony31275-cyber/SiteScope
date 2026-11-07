@@ -3,17 +3,23 @@
 Keys (prefix ``SITESCOPE_REDIS_KEY_PREFIX``):
 
 * ``<prefix>:crawl``: the task stream, read by the consumer group ``crawlers``;
-* ``<prefix>:crawl:dlq``: dead letters, i.e. malformed entries that can never be processed,
-  kept (capped) for inspection.
+* ``<prefix>:crawl:dlq``: dead letters, kept for inspection and capped at about
+  ``DEAD_LETTER_MAX_LENGTH`` entries: malformed entries, tasks that do not match the database
+  (an unknown URL, a URL of another job), and poison tasks, delivered more than
+  ``SITESCOPE_STREAM_MAX_DELIVERIES`` times without being settled, whose URL can no longer be
+  claimed (Phase 6, ADR-0017).
 
 Delivery semantics are Redis Streams' own: a message read with ``XREADGROUP`` stays in the
 group's pending entries list (PEL) until it is acknowledged (``XACK``). A message whose consumer
 crashed or stalled stays pending, and ``XAUTOCLAIM`` hands it to another consumer once it has
-been idle long enough. Delivery is therefore at least once: a message can be delivered again,
-and the same task can be published more than once. Consumers make every effect idempotent
-through PostgreSQL (ADR-0016).
+been idle long enough; the PEL counts its deliveries (``delivery_counts``). Delivery is
+therefore at least once: a message can be delivered again, and the same task can be published
+more than once. Consumers make every effect idempotent through PostgreSQL (ADR-0016).
 
-The adapter never decides *whether* to acknowledge; workers do (``app.workers.crawler``).
+The adapter never decides *whether* to acknowledge or dead-letter; workers do
+(``app.workers.crawler``). Dead-lettering is one Lua script that acknowledges the entry and
+copies it only if that acknowledgment removed it from the PEL, so an entry is copied once at
+most, however often it is dead-lettered.
 
 **Trimming.** ``trim`` removes entries older than the retention time, but never an entry that a
 group still holds pending, and never one that has not been delivered yet: the trim point is
@@ -31,12 +37,24 @@ from typing import Any, Final, cast
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-from app.queue.messages import CrawlTask, MalformedMessageError
+from app.queue.messages import CONTRACT_FIELDS, CrawlTask, MalformedMessageError
 
 logger = logging.getLogger(__name__)
 
 GROUP: Final = "crawlers"
 DEAD_LETTER_MAX_LENGTH: Final = 10_000  # approximate cap of the dead-letter stream
+_ORIGINAL_VALUE_CHARS: Final = 64  # a UUID has 36
+
+# KEYS[1] the stream, KEYS[2] the dead-letter stream. ARGV[1] the group, ARGV[2] the entry ID,
+# ARGV[3] the dead-letter stream's approximate maximum length, then field/value pairs. Copies the
+# entry only if this XACK acknowledged it, so an entry is dead-lettered once at most.
+_DEAD_LETTER: Final = """
+if redis.call('XACK', KEYS[1], ARGV[1], ARGV[2]) == 0 then
+    return 0
+end
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[3], '*', unpack(ARGV, 4))
+return 1
+"""
 
 # KEYS[1] the stream, ARGV[1] the group, ARGV[2] the idle time (ms). Deletes the consumers with
 # nothing pending that have been idle longer, and returns their names. (XINFO replies are flat
@@ -125,14 +143,20 @@ class CrawlStream:
         self.dead_letter_key = f"{key_prefix}:crawl:dlq"
         self.group = group
         self._remove_idle = redis.register_script(_REMOVE_IDLE_CONSUMERS)
+        self._dead_letter = redis.register_script(_DEAD_LETTER)
 
-    async def ensure_group(self) -> None:
-        """Create the stream and its group if needed (idempotent; every process calls it)."""
+    async def ensure_group(self) -> bool:
+        """Create the stream and its group if needed (idempotent; every process calls it).
+
+        Returns True if this call created the group: at the first start, or after Redis lost it.
+        """
         try:
             await self._redis.xgroup_create(self.key, self.group, id="0", mkstream=True)
         except ResponseError as exc:
             if "BUSYGROUP" not in str(exc):
                 raise
+            return False
+        return True
 
     async def publish(self, tasks: Sequence[CrawlTask]) -> list[str]:
         """``XADD`` each task, in one round trip; returns the entry IDs in order."""
@@ -160,17 +184,21 @@ class CrawlStream:
         except ResponseError as exc:
             if "NOGROUP" not in str(exc):
                 raise
-            logger.warning(
-                "The consumer group was missing and is created again",
-                extra={"event": "stream.group_recreated", "stream": self.key},
-            )
-            await self.ensure_group()
+            await self._recreate_group()
             return []
         return [
             Delivery.of(entry_id, fields)
             for _, entries in reply or []
             for entry_id, fields in entries
         ]
+
+    async def _recreate_group(self) -> None:
+        """The group vanished (Redis lost its data, or was flushed): create it again, logged."""
+        logger.warning(
+            "The consumer group was missing and is created again",
+            extra={"event": "stream.group_recreated", "stream": self.key},
+        )
+        await self.ensure_group()
 
     async def ack(self, entry_id: str) -> bool:
         """``XACK``: True if the entry was pending (False: acknowledged before, or unknown)."""
@@ -190,7 +218,7 @@ class CrawlStream:
         except ResponseError as exc:
             if "NOGROUP" not in str(exc):
                 raise
-            await self.ensure_group()
+            await self._recreate_group()
             return Reclaimed("0-0", [], [])
         next_start, entries = reply[0], reply[1]
         deleted = list(reply[2]) if len(reply) > 2 else []
@@ -200,19 +228,83 @@ class CrawlStream:
             deleted,
         )
 
-    async def dead_letter(self, delivery: Delivery, reason: str) -> None:
-        """Copy an unprocessable entry to the dead-letter stream, then acknowledge it."""
-        fields = {f"original.{name}"[:64]: value[:512] for name, value in delivery.fields.items()}
-        fields.update({"original_id": delivery.entry_id, "reason": reason[:200]})
-        async with self._redis.pipeline(transaction=True) as pipe:
-            pipe.xadd(
-                self.dead_letter_key,
-                fields,  # type: ignore[arg-type]  # str fields
-                maxlen=DEAD_LETTER_MAX_LENGTH,
-                approximate=True,
-            )
-            pipe.xack(self.key, self.group, delivery.entry_id)
-            await pipe.execute()
+    async def dead_letter(
+        self,
+        delivery: Delivery,
+        reason: str,
+        *,
+        kind: str | None = None,
+        consumer: str | None = None,
+        deliveries: int | None = None,
+    ) -> bool:
+        """Acknowledge an unprocessable entry and copy it to the dead-letter stream, atomically.
+
+        One Lua script copies the entry only if *its* ``XACK`` acknowledged it: an entry that
+        two consumers handle (a reclaim, a duplicate attempt) or that is dead-lettered again
+        after a lost reply is copied once at most. Returns whether this call copied it.
+
+        Stored fields: ``original_id``; ``reason`` (why, as in Phase 5: the decoding error of a
+        malformed entry, otherwise the worker's reason); ``kind``, the classification
+        (``malformed``, ``unknown_url``, ``job_mismatch``, ``max_deliveries_exceeded``);
+        ``deliveries`` (the ``XPENDING`` delivery count) and ``consumer`` when given; the task's
+        ``job_id`` and ``url_id`` when it decoded. Of the original fields, only the contract's
+        (``original.v``, ``original.job_id``, ``original.url_id``) keep their values, shortened;
+        any other field is listed by name only (``original.other_fields``), so the dead-letter
+        stream never copies an arbitrary payload, a URL for example.
+        """
+        fields: dict[str, str] = {
+            f"original.{name}": delivery.fields[name][:_ORIGINAL_VALUE_CHARS]
+            for name in CONTRACT_FIELDS
+            if name in delivery.fields
+        }
+        others = sorted(name for name in delivery.fields if name not in CONTRACT_FIELDS)
+        if others:
+            fields["original.other_fields"] = ",".join(name[:32] for name in others[:16])
+        fields.update(
+            {
+                "original_id": delivery.entry_id,
+                "reason": reason[:200],
+                "kind": (kind or ("malformed" if delivery.task is None else reason))[:64],
+            }
+        )
+        if consumer is not None:
+            fields["consumer"] = consumer[:200]
+        if deliveries is not None:
+            fields["deliveries"] = str(deliveries)
+        if delivery.task is not None:
+            fields["job_id"] = str(delivery.task.job_id)
+            fields["url_id"] = str(delivery.task.url_id)
+        pairs = [item for pair in fields.items() for item in pair]
+        written = await self._dead_letter(
+            keys=[self.key, self.dead_letter_key],
+            args=[self.group, delivery.entry_id, DEAD_LETTER_MAX_LENGTH, *pairs],
+        )
+        return bool(written)
+
+    async def delivery_counts(self, entry_ids: Sequence[str]) -> dict[str, int]:
+        """How often each pending entry was delivered (``XPENDING``); missing if not pending."""
+        if not entry_ids:
+            return {}
+        async with self._redis.pipeline(transaction=False) as pipe:
+            for entry in entry_ids:
+                pipe.xpending_range(self.key, self.group, min=entry, max=entry, count=1)
+            replies = await pipe.execute(raise_on_error=False)
+        counts: dict[str, int] = {}
+        for entry, reply in zip(entry_ids, replies, strict=True):
+            if isinstance(reply, Exception) or not reply:
+                continue
+            counts[entry] = int(reply[0]["times_delivered"])
+        return counts
+
+    async def recent_dead_letters(self, count: int) -> list[dict[str, str]]:
+        """The newest dead letters, newest first (diagnostics)."""
+        if count <= 0:
+            return []
+        entries = cast(
+            list[tuple[str, dict[str, str]]],
+            await self._redis.xrevrange(self.dead_letter_key, count=count),
+        )
+        return [{"id": entry_id, **fields} for entry_id, fields in entries]
 
     async def delivering(self, entry_ids: Sequence[str | None]) -> list[bool]:
         """For each entry ID, whether the group still owes that entry to a consumer.

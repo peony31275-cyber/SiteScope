@@ -16,7 +16,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 3 | Safe HTTP fetching and HTML parsing | **Done** (2026-11-06) |
 | 4 | BFS crawling, persistence and politeness | **Done** (2026-11-06) |
 | 5 | Distributed scheduling and workers | **Done** (2026-11-06) |
-| 6 | Fault tolerance and recovery | Not started |
+| 6 | Fault tolerance and recovery | **Done** (2026-11-07) |
 | 7 | Asynchronous search indexing | Not started |
 | 8 | Search and analysis APIs | Not started |
 | 9 | React dashboard | Not started |
@@ -38,21 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 5
+## Repository state after Phase 6
 
-Updated on 2026-11-06. The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-07. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5). |
-| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims) and `0003` (robots directive flags). Phase 5 added none. |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6). |
+| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims) and `0003` (robots directive flags). Phases 5 and 6 added none. |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 1381 tests: 1030 unit, 351 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, and real scheduler and worker processes). |
+| `backend/tests/` | 1631 tests: 1157 unit, 474 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler and worker processes, and a disposable Redis container). |
 | `benchmarks/` | The distributed throughput benchmark and its raw results (Phase 5). |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0016, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0017, API conventions, development guide. |
 | `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
@@ -795,40 +795,127 @@ invariants, not my conclusions) and my own testing found:
 - The process harness (`tests/process_support.py`) and the `clusters` fixture are ready for new
   failure scenarios.
 
-### Phase 6: Fault tolerance and recovery
+### Phase 6: Fault tolerance and recovery (done)
 
-**Goal.** Retry what failed for a transient reason, cancel jobs, make job creation idempotent,
-and prove the remaining failure windows with automated tests.
+**Goal.** Retry what failed for a transient reason, dead-letter what can never be processed,
+cancel jobs, make job creation idempotent, and prove the failure windows with automated tests.
 
-**Already done in Phase 5** (moved there because the distributed system needed them): the
-`XAUTOCLAIM` takeover loop, the reconciler for lost messages, dead-lettering of malformed and
-unmatched messages, safe stream trimming and idle-consumer cleanup, startup validation of the
-timing order, and real-process tests of worker crashes, a frozen worker, a scheduler crash,
-duplicates, competing schedulers, and Redis and PostgreSQL outages.
+**Scope, reconciled with the plan.** The planned scope is delivered. Added: renewable politeness
+slot leases (the Phase 5 known limitation), shorter recovery defaults, and cancellation in the
+single-process driver. The optional scheduler leader lock was not built: correctness does not
+need it (ADR-0016), and duplicate work stays bounded.
 
-**Scope**
+**Delivered** (design in ADR-0017; architecture sections 3, 6 to 10, 14, 18 and 19)
 
-- Durable retries with exponential backoff and full jitter, and attempt limits: a retryable
-  failure (timeouts, connection errors, HTTP 429 and 5xx, `rate_limited`, `deadline_exceeded`)
-  returns its URL to `pending` with a future `next_attempt_at`. This also covers URLs that fail as
-  `rate_limited` behind politeness slots held by a crashed worker (Phase 5 known limitation).
-- Dead-lettering by delivery count (poison messages), in addition to `attempt_count`.
-- Cancellation end to end: `POST /api/v1/crawls/{id}/cancel` (`cancelling -> cancelled`).
-- `Idempotency-Key` on `POST /api/v1/crawls` (failure window F1). The columns exist since
-  Phase 2B.
-- Optional: a scheduler leader lock, to save duplicate work (Phase 5 runs without one; ADR-0016).
+- **Retries** (`backend/app/workers/retry.py`, `record_result(..., retry_delay)` in
+  `crawl_state.py`): retryable failures go back to `pending` with `next_attempt_at` by the
+  database clock, through the same fenced update as a result; only claims count attempts; the
+  last attempt's failure is final; full jitter and `Retry-After` (`app/crawler/retry_after.py`,
+  read by the fetcher on 429 and 503). No migration: the existing columns, constraints and
+  triggers allow the transition.
+- **Dead letters and poison messages:**
+  - delivery counts come from `XPENDING`;
+  - a message delivered too often whose URL can never be claimed again (queued, attempts used
+    up) gets a fenced quarantine claim, which fails the URL as `max_deliveries_exceeded`; any
+    other URL is claimed as usual;
+  - one Lua script acknowledges and copies an entry at most once;
+  - only the contract fields keep their values, other fields are listed by name;
+  - the status command lists dead letters (`--dead-letters`).
+- **Cancellation** (`app/services/crawl_cancellation.py`, `POST /api/v1/crawls/{id}/cancel`):
+  T7, the workers' cancellation watcher and fenced cancel, the scheduler's finalizer, and the
+  driver's settlement.
+- **`Idempotency-Key`** on `POST /api/v1/crawls` (`submit_crawl_job`): replays (`200`,
+  `Idempotent-Replayed: true`), conflicts (`409 idempotency_key_reused`), expiry and cleanup.
+- **Politeness slot leases** (`RENEW_SCRIPT` and the renewal task in `politeness.py`;
+  `app/core/tasks.py`).
+- **Worker:** local handling of errors before the claim (bounded by half the reclaim idle time),
+  `infrastructure_error` attempts, logged consumer-group recreation.
+- **Settings:** `SITESCOPE_RETRY_*`, `SITESCOPE_STREAM_MAX_DELIVERIES`,
+  `SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS`, `SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS`,
+  `SITESCOPE_POLITENESS_SLOT_LEASE_SECONDS`; reclaim idle 120 → 100 s, reconcile 600 → 300 s.
+- **Tests:** `integration/test_retries.py`, `test_cancellation.py`, `test_idempotency.py`, new
+  cases in `test_crawler_worker.py`, `test_fetcher.py`, `test_politeness_redis.py`,
+  `test_streams.py`, `test_local_crawler.py`; `fault/test_retries_and_cancellation.py` and
+  `fault/test_redis_data_loss.py` (real processes; `FLUSHALL` only on a disposable container);
+  unit tests for `Retry-After`, the retry policy, jitter, settings, slot renewal and
+  `cancel_and_wait`. `LocalHttpServer` takes reply sequences for flaky pages.
+- **Dependencies:** none added.
 
-**Tests**
+**Verification** (2026-11-07; Windows 10, Python 3.13.7, PostgreSQL 18.6 and Redis 8.10.3 in WSL)
 
-- F1: a retried job creation with the same key returns the same job.
-- `FLUSHALL` with real processes mid-crawl, after which the crawl completes with identical
-  results (Phase 5 tests lost entries at the service level only).
-- A poison message dead-lettered after N deliveries.
-- Cancellation while tasks are in flight.
-- Retries: a transient failure is retried after its backoff, by any worker, and survives a crash.
+- `pytest --require-services` on the committed code: **1631 passed** (1157 unit, 474 integration and fault) in 288 s; nothing skipped. Phase 6 added 250 tests (127 unit, 123 integration and fault).
+- Before that, three consecutive full runs after the review fixes:
+  - 1631 passed in 288 s and 1631 passed in 295 s;
+  - 1630 passed and 1 failed in 277 s.
+- The real-process tests (`tests/integration/test_distributed.py`, `test_process_sessions.py`, `tests/fault/`: 24 tests) ran three more times on their own: 23 passed and 1 failed, then 24 passed (208 s), then 24 passed (199 s).
+- **The two failures** were one test assertion: `DBSIZE == 0` right after the `FLUSHALL` of the data-loss test. The live processes write keys again at once (it saw 4 and 2 keys), so the check raced them.
+  - The test now proves the flush with a marker key that only it writes; no application code changed.
+  - The fixed test then passed in the third process-test run, in 5 consecutive runs of its own (about 20 s each, no container left behind), and in the full run above.
+- A pre-check run before the review fixes: 1620 passed, 1 failed. The killed worker's politeness slot freed within its lease, but its second, waiting task held the host's queue until its waiter entry expired (6.95 s, against a bound of 4 s). The test now isolates the slot lease, and the waiter rule is documented.
+- Among the new process tests:
+  - **Retries with strict BFS:** flaky pages (503 twice, 503 with `Retry-After`, 500, 429) on a 13-page tree, with two schedulers and three workers. Every page is stored, with one request per attempt and none duplicated, and every level is requested only after all retries of the previous one (from the server's timeline).
+  - **Exhaustion:** a page that always answers 500 gets three requests and a final `http_error`; the next level starts after its last attempt.
+  - **`Retry-After`:** both forms work through the real safe fetcher; the next attempt comes at least 1.9 s after a 2 s value.
+  - **Simultaneous failures:** ten pages failing at once on three workers get jittered retry delays.
+  - **Restarts and crashes:** a scheduler killed during a backoff, a worker killed during a retry attempt (the takeover's third attempt succeeds), and duplicate messages during a backoff (two requests only).
+  - **Politeness slot leak:** after a worker holding a slot is killed, the next request to the host comes about one lease (1 s) later instead of 16 s.
+  - **Cancellation:** with live workers, fetches longer than the fetch deadline are stopped and the job is cancelled in under 4 s, with every message settled. Across a scheduler restart, the job stays `cancelling` until a new scheduler finalizes it.
+  - **Redis data loss:** `FLUSHALL` of a disposable Redis container mid-crawl (21 pages). The consumer group is created again, the lost tasks are republished, and the job completes with every invariant intact; a sentinel key in the development Redis survived.
+- **Static checks:** `ruff check`, `ruff format --check`: clean. `mypy` strict (134 files): no issues. Alembic head `0003`; no new migration, and the migration tests pass.
+- **Earlier suites:** the Phase 2C to 5 tests still pass, the fetcher's security tests included. Earlier tests were changed only to follow a changed default or extend an enumeration, and none was removed or weakened:
+  - the reclaim and reconcile defaults, and the timing-order boundaries derived from them (119 → 99, 599 → 299);
+  - the OpenAPI endpoint and status lists;
+  - a comment of test G;
+  - stronger assertions: `ensure_group`'s return value, and the local driver's request counts per attempt.
+- **Development database:** untouched. Its fingerprint is `e574f91fa587b2ea` before and after the phase, and its three queued jobs are still queued.
+- **Secrets:** no secret value from `backend/.env` in any changed file, and `backend/.env` is not tracked.
 
-**Done when.** Every failure window has a passing test, or is documented as untested together with
-the reason.
+**Review findings and fixes**
+
+*Self-review* (my own checks, and failures of the existing tests):
+
+- **Cancellation watcher:** it stopped every task whose job was no longer running, so a frozen worker's stale task of a completed job was reported as cancelled (found by Phase 5 fault test C). Only `cancelling` and `cancelled` jobs stop tasks now; regression test added.
+- **Errors before the claim:** handling them locally for longer than the reclaim idle time let `XAUTOCLAIM` hand the message out again while it was still being handled (found by a Phase 5 test timing out). The local handling is now bounded by half the reclaim idle time.
+- **Slot renewal task:** a cancellation of the caller could be swallowed while waiting for it (`app/core/tasks.py`; regression test added), and the hold time counted the wait for the slot.
+- **Dead-letter record:** it copied up to 128 characters of every original field. Now only the contract fields keep their values; other fields are listed by name.
+- **Consumer group:** the scheduler recreated a lost group silently (found by the new `FLUSHALL` test); it is now logged.
+- **Deadlock:** cancellation (T7) could deadlock with the quarantine of a queued URL. T7's `FOR UPDATE` on the job row conflicted with the foreign-key check of the quarantine's event insert. A regression test reproduced it (`deadlock detected`), and T7 now takes `FOR NO KEY UPDATE`. The independent review found it too.
+
+*Independent review.* A separate agent reviewed the code against the invariants and the focus areas, not my conclusions. It worked read-only and ran unit tests only. It was interrupted when a session ended and resumed from its transcript. Each confirmed finding got a regression test that failed before its fix:
+
+1. **High:** a PostgreSQL outage longer than ten reclaim intervals turned queued URLs into poison messages on recovery.
+   - `XAUTOCLAIM` counts a delivery even when the handling fails before the claim, so URLs were quarantined without a single attempt; a seed would fail its job.
+   - Now only a URL that can never be claimed again (queued, attempts used up) is quarantined; the others are claimed as usual, and their attempts bound the work.
+2. **Medium:** a `Retry-After` or `Date` header such as `Fri, 31 Dec 9999 23:59:59 -0100` raised `OverflowError` out of the safe fetcher.
+   - The task failed with a traceback and kept its lease until it expired, and a robots.txt answered that way would never have been cached.
+   - The parser now ignores such dates.
+3. **Medium:** the T7/quarantine deadlock above.
+4. **Low:** when `XPENDING` failed right after an `XAUTOCLAIM`, the reclaimed batch was dropped: hidden for another reclaim interval, with one more delivery counted each round. It is now handled as first deliveries.
+5. **Test quality:**
+   - missing extreme-date cases: added;
+   - no outage test for delivery counts: added;
+   - three wall-clock bounds: made discriminating, with margins;
+   - `sleep` plus `not done()` lock checks: they now wait for a lock wait that `pg_stat_activity` shows.
+6. **Minor:**
+   - an expired last attempt was quarantined instead of recovered: fixed with finding 1;
+   - a holder that stalls at the very moment of a renewal can keep its slot one lease past `slot_ttl`: documented, and the concurrency limit stays safe.
+
+**Known limitations**
+
+- **Errors before the claim:** a message whose handling fails before its claim on every delivery (a bug, not an outage) is not dead-lettered; it keeps failing visibly.
+- **Slow cancellation:** a cancelled job stays `cancelling` while a crashed worker's lease runs (up to 90 s by default), and until a scheduler or the single-process driver finalizes it.
+- **Dead waiters:** the waiting requests of a dead process block their host's politeness queue until their waiter entries expire (15 s by default).
+- **Not retried:** a `Retry-After` beyond 300 s is final, and `robots_unreachable` is not retried per URL.
+- **Delivery counts:** they are read only on reclaims, and a republished message starts counting again.
+- **Cancelling a large job:** all its waiting URLs are updated in one transaction.
+- **Leader lock:** the optional scheduler leader lock was not built.
+
+**Notes for Phase 7**
+
+- **Index relay:** it can reuse the dispatch pattern (publication inside the transaction, `SKIP LOCKED`, `MATERIALIZED` CTEs) and the stream adapter (dead letters, delivery counts, trimming). The index stream needs its own consumer group and dead-letter stream.
+- **Cancelled jobs:** their stored pages are kept, so decide whether they are indexed.
+- **Index writes:** they still need the content-version guard (Phase 2C review finding).
+- **Lock order:** any new transaction that holds a URL row and inserts rows that reference the job takes `FOR KEY SHARE` on the job row (lock order, architecture section 9).
 
 ### Phase 7: Asynchronous search indexing
 

@@ -1,4 +1,4 @@
-r"""Crawler worker process: takes crawl tasks from the Redis stream and processes them (Phase 5).
+r"""Crawler worker process: takes crawl tasks from the Redis stream and processes them.
 
 Start as many as needed, on one machine or several. Settings come from the environment and
 backend\.env::
@@ -11,30 +11,46 @@ the URLs it claims, so log lines, ``crawl_urls.lease_owner``, ``crawl_events`` a
 group all show which process did what. It runs up to ``SITESCOPE_CRAWL_CONCURRENCY`` tasks at
 once, and reads only as many messages as it has free slots.
 
-**Handling a message** (ADR-0016; architecture, section 10.3):
+**Handling a message** (ADR-0016, ADR-0017; architecture, section 10.3):
 
-1. A malformed message (unknown version, missing or invalid fields) can never be processed: it
-   is copied to the dead-letter stream and acknowledged.
-2. The worker claims the URL (T4): a compare-and-set that issues a new fencing token.
-3. With the lease: ``crawl_task.crawl_url`` under the task deadline (the lease minus
-   ``SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS``), then the fenced result (T5) with the worker's own
-   token. The message is acknowledged only after the result is committed (``RECORDED``). A
-   fenced result (``FENCED``: the lease was lost to a takeover) is discarded, and the message
-   is not acknowledged: ``XACK`` acts on the whole group, and the task may be someone else's
-   now.
-4. Without a lease: the worker reads the authoritative state (``inspect_url``) and decides
+1. A malformed message (unknown version, missing or invalid fields, bytes that are not UTF-8)
+   can never be processed: it is copied to the dead-letter stream and acknowledged.
+2. A message delivered more than ``SITESCOPE_STREAM_MAX_DELIVERIES`` times without being settled
+   is poison if its URL can never be claimed again (queued, its attempts used up): the URL is
+   failed as ``max_deliveries_exceeded`` (``crawl_state.quarantine_url``), then the message is
+   dead-lettered. Any other URL goes on to step 3: delivery counts also grow while PostgreSQL is
+   down, and the attempt limit bounds the work of a URL that can be claimed.
+3. The worker claims the URL (T4): a compare-and-set that issues a new fencing token.
+4. With the lease: ``crawl_task.crawl_url`` under the task deadline (the lease minus
+   ``SITESCOPE_CRAWL_LEASE_MARGIN_SECONDS``). The retry policy (``app/workers/retry.py``) then
+   decides: a retryable failure with attempts left goes back to ``pending`` with a backoff
+   (``RETRY_SCHEDULED``); anything else is the URL's result (``RECORDED``). Both are the fenced
+   update with the worker's own token, and both are acknowledged only after the commit. A fenced
+   result (``FENCED``: the lease was lost to a takeover) is discarded, and the message is not
+   acknowledged: ``XACK`` acts on the whole group, and the task may be someone else's now.
+5. Without a lease: the worker reads the authoritative state (``inspect_url``) and decides
    (``judge_unclaimed``). It acknowledges when nothing is left to do (the URL is finished, the
-   job is not running, or the dispatch that published the message rolled back). It leaves the
-   message pending when another worker holds a live lease. It takes over an expired lease, and
-   fails a URL whose last attempt expired.
+   job is not running, or the URL is ``pending``: the dispatch that published the message rolled
+   back, or the URL waits for a retry). It leaves the message pending when another worker holds
+   a live lease. It takes over an expired lease, and fails a URL whose last attempt expired.
 
-Any error (PostgreSQL, Redis, a bug) leaves the message pending: an uncertain outcome is never
-acknowledged. Pending messages of crashed or stalled workers are taken over with ``XAUTOCLAIM``
-once idle for ``SITESCOPE_STREAM_RECLAIM_MIN_IDLE_SECONDS`` (at least the lease). A redelivered
-or duplicate message goes through the same steps, so it has no effect beyond a refused claim.
+**Errors.** An error leaves the message pending: an uncertain outcome is never acknowledged.
 
-**Errors** pause reading for a while (exponential backoff with full jitter), so a PostgreSQL or
-Redis outage does not churn through the stream. The worker resumes on its own.
+* A PostgreSQL or Redis error *before* the claim is retried here a few times, after a backoff,
+  so that a short outage does not leave the message waiting for the reclaim idle time.
+* A Redis error *during* the task (the politeness gate, the robots.txt cache) becomes a
+  retryable ``infrastructure_error`` attempt, recorded like any failed attempt.
+* Anything else after the claim (a failed or uncertain commit) waits for the lease to expire
+  and for ``XAUTOCLAIM``.
+
+Errors also pause reading for a while (exponential backoff with full jitter), so an outage does
+not churn through the stream.
+
+**Cancellation.** Every ``SITESCOPE_CRAWL_CANCEL_CHECK_SECONDS``, the worker asks PostgreSQL
+whether the jobs of its running tasks are being cancelled (``jobs_being_cancelled``). It stops
+those tasks and records their URLs ``cancelled`` under its own token (a fenced update). A task
+that is already committing its result is left to finish. Other job statuses never stop a task:
+a task whose job has completed holds a stale lease, and is fenced out when it records.
 
 **Stopping.** The first SIGINT or SIGTERM (Windows: Ctrl+C or CTRL_BREAK_EVENT) stops reading
 and waits up to ``SITESCOPE_SHUTDOWN_GRACE_SECONDS`` for running tasks, then cancels the rest; a
@@ -47,8 +63,9 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import partial
@@ -60,22 +77,27 @@ from app.core.logging import configure_logging, task_context_var
 from app.core.process import error_type, int_in_range, is_transient, process_name
 from app.core.redis import create_redis_client
 from app.core.shutdown import StopSignals, install_stop_handlers
+from app.core.tasks import cancel_and_wait
 from app.db.models import TERMINAL_URL_STATES, JobStatus, UrlState
 from app.db.session import Database
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream, Delivery
+from app.services.crawl_cancellation import cancel_claimed_url, jobs_being_cancelled
 from app.services.crawl_state import (
     EXHAUSTED_OUTCOME,
+    MAX_DELIVERIES_OUTCOME,
     Lease,
     RecordStatus,
     UrlResult,
     UrlStatus,
     claim_url,
     inspect_url,
+    quarantine_url,
     record_result,
     recover_exhausted_url,
 )
 from app.workers.crawl_task import CrawlContext
+from app.workers.retry import INFRASTRUCTURE_ERROR, RetryPolicy
 from app.workers.runtime import build_crawl_context, crawl_within, worker_database
 
 logger = logging.getLogger(__name__)
@@ -83,6 +105,8 @@ logger = logging.getLogger(__name__)
 # Claims per message: a refused claim is tried again when the URL turns out to be claimable
 # (it raced with a dispatch, or its lease just expired), at most this many times in all.
 _CLAIM_ROUNDS: Final = 3
+# How often a message is handled again here after a transient error before its claim.
+_LOCAL_RETRIES: Final = 5
 _STATS_INTERVAL_SECONDS: Final = 60.0
 
 
@@ -130,11 +154,13 @@ def judge_unclaimed(
         return Handled(Disposition.ACK, "job_not_running")
     if status.state is UrlState.PENDING:
         # The claim waited for any dispatch of the row in flight (claim_url). Still pending
-        # means the dispatch that published this message rolled back; the next dispatch
-        # publishes the task again.
+        # means the dispatch that published this message rolled back, or the URL waits for a
+        # retry; either way the dispatcher publishes the task again when it is due.
         return Handled(Disposition.ACK, "not_dispatched")
     if status.state is UrlState.QUEUED:
-        if status.attempt_count >= max_attempts:  # not reachable before Phase 6 retries
+        # Only after SITESCOPE_CRAWL_MAX_ATTEMPTS was lowered: the message turns poison and
+        # its URL is failed once it was delivered SITESCOPE_STREAM_MAX_DELIVERIES times.
+        if status.attempt_count >= max_attempts:
             return Handled(Disposition.KEEP, "attempts_exhausted")
         return Retry.CLAIM
     if status.lease_live:  # another worker holds the lease; if it dies, this message recovers it
@@ -153,9 +179,12 @@ class WorkerConfig:
     max_redirect_hops: int = 5
     read_block_ms: int = 2000
     reclaim_interval: float = 15.0
-    reclaim_min_idle: float = 120.0  # at least the lease
+    reclaim_min_idle: float = 100.0  # at least the lease
     reclaim_batch: int = 50
     grace_seconds: float = 30.0
+    max_deliveries: int = 10  # a message delivered more often is poison
+    cancel_check_interval: float = 2.0
+    retry: RetryPolicy | None = None  # None: the default policy, with max_attempts
     name: str = field(default_factory=lambda: process_name("crawler"))
 
     def __post_init__(self) -> None:
@@ -165,6 +194,18 @@ class WorkerConfig:
             raise ValueError("the task deadline must be positive and shorter than the lease")
         if self.reclaim_min_idle < self.lease_seconds:
             raise ValueError("the reclaim idle time must be at least the lease")
+        if self.max_deliveries < 2:
+            raise ValueError("max_deliveries must be at least 2")
+        if self.retry is None:
+            object.__setattr__(self, "retry", RetryPolicy(max_attempts=self.max_attempts))
+        elif self.retry.max_attempts != self.max_attempts:
+            raise ValueError("the retry policy must use the same max_attempts")
+
+    @property
+    def retry_policy(self) -> RetryPolicy:
+        if self.retry is None:  # pragma: no cover - __post_init__ always sets it
+            raise RuntimeError("the worker has no retry policy")
+        return self.retry
 
     @classmethod
     def from_settings(cls, settings: Settings, *, concurrency: int | None = None) -> Self:
@@ -179,7 +220,26 @@ class WorkerConfig:
             reclaim_min_idle=settings.stream_reclaim_min_idle_seconds,
             reclaim_batch=settings.stream_reclaim_batch_size,
             grace_seconds=settings.shutdown_grace_seconds,
+            max_deliveries=settings.stream_max_deliveries,
+            cancel_check_interval=settings.crawl_cancel_check_seconds,
+            retry=RetryPolicy.from_settings(settings),
         )
+
+
+@dataclass
+class _Progress:
+    """How far one message got: once its URL was claimed, an error is not retried here."""
+
+    claimed: bool = False
+
+
+@dataclass
+class _Watched:
+    """A running crawl phase, which the cancellation watcher may stop."""
+
+    job_id: uuid.UUID
+    task: "asyncio.Task[UrlResult]"
+    stopped_for_cancellation: bool = False
 
 
 class CrawlWorker:
@@ -200,6 +260,7 @@ class CrawlWorker:
         self._config = config
         self._clock = clock
         self._tasks: dict[str, asyncio.Task[None]] = {}  # by stream entry ID
+        self._crawling: dict[str, _Watched] = {}  # crawl phases in progress, by entry ID
         self._stream_backoff = Backoff()
         self._task_backoff = Backoff()
         self._paused_until = 0.0
@@ -231,8 +292,10 @@ class CrawlWorker:
                 "lease_seconds": config.lease_seconds,
                 "task_deadline_seconds": config.task_deadline,
                 "reclaim_min_idle_seconds": config.reclaim_min_idle,
+                "max_attempts": config.max_attempts,
             },
         )
+        watcher = asyncio.create_task(self._watch_cancellations())
         cursor = "0-0"
         next_reclaim = self._clock()  # look for abandoned messages at once
         next_stats = self._clock() + _STATS_INTERVAL_SECONDS
@@ -262,6 +325,7 @@ class CrawlWorker:
                     )
         finally:
             await self._drain(force)
+            await cancel_and_wait(watcher)
         logger.info(
             "Crawler worker stopped",
             extra={
@@ -320,7 +384,24 @@ class CrawlWorker:
                     "message_ids": reclaimed.deleted[:20],
                 },
             )
+        counts: dict[str, int] = {}
         if reclaimed.deliveries:
+            try:
+                counts = await self._stream.delivery_counts(
+                    [item.entry_id for item in reclaimed.deliveries]
+                )
+            except Exception as exc:
+                # The XAUTOCLAIM already made these messages ours (and reset their idle time):
+                # handle them now, as first deliveries, rather than hide them for another
+                # reclaim idle time (Phase 6 independent review).
+                logger.warning(
+                    "Could not read the delivery counts of reclaimed messages",
+                    extra={
+                        "event": "task.delivery_counts_failed",
+                        "count": len(reclaimed.deliveries),
+                        "error_type": error_type(exc),
+                    },
+                )
             logger.info(
                 "Took over messages idle in the consumer group",
                 extra={
@@ -330,14 +411,23 @@ class CrawlWorker:
                     "message_ids": [item.entry_id for item in reclaimed.deliveries][:20],
                 },
             )
-        self._start(reclaimed.deliveries, reclaimed=True)
+        self._start(reclaimed.deliveries, reclaimed=True, delivery_counts=counts)
         return reclaimed.next_start
 
-    def _start(self, deliveries: Iterable[Delivery], *, reclaimed: bool) -> None:
+    def _start(
+        self,
+        deliveries: Iterable[Delivery],
+        *,
+        reclaimed: bool,
+        delivery_counts: Mapping[str, int] | None = None,
+    ) -> None:
         for delivery in deliveries:
             if delivery.entry_id in self._tasks:  # this worker is processing it already
                 continue
-            task = asyncio.create_task(self._handle(delivery, reclaimed=reclaimed))
+            count = (delivery_counts or {}).get(delivery.entry_id, 1)
+            task = asyncio.create_task(
+                self._handle(delivery, reclaimed=reclaimed, deliveries=count)
+            )
             self._tasks[delivery.entry_id] = task
             task.add_done_callback(partial(self._finished, delivery.entry_id))
 
@@ -401,6 +491,33 @@ class CrawlWorker:
                 task.cancel()
             await asyncio.gather(*unfinished, return_exceptions=True)
 
+    async def _watch_cancellations(self) -> None:
+        """Stop the crawl phases of tasks whose job is being cancelled."""
+        while True:
+            await asyncio.sleep(self._config.cancel_check_interval)
+            watched = list(self._crawling.values())
+            if not watched:
+                continue
+            try:
+                async with self._database.session() as session:
+                    stopped = await jobs_being_cancelled(
+                        session, list({item.job_id for item in watched})
+                    )
+            except Exception as exc:  # the next check tries again
+                logger.debug(
+                    "Could not check for cancelled jobs",
+                    extra={"event": "worker.cancel_check_failed", "error_type": error_type(exc)},
+                )
+                continue
+            for item in watched:
+                if item.job_id in stopped and not item.task.done():
+                    item.stopped_for_cancellation = True
+                    item.task.cancel()
+                    logger.info(
+                        "Stopping a task: its job is being cancelled",
+                        extra={"event": "task.stopping_cancelled", "job_id": str(item.job_id)},
+                    )
+
     def _log_stats(self) -> None:
         logger.info(
             "Worker statistics",
@@ -414,7 +531,7 @@ class CrawlWorker:
 
     # --- One message ---------------------------------------------------------------------------
 
-    async def _handle(self, delivery: Delivery, *, reclaimed: bool) -> None:
+    async def _handle(self, delivery: Delivery, *, reclaimed: bool, deliveries: int = 1) -> None:
         """Handle one message, settle it (ack, dead-letter or keep), and log one line."""
         started = self._clock()
         context: dict[str, str | int] = {
@@ -427,22 +544,14 @@ class CrawlWorker:
             context["url_id"] = str(delivery.task.url_id)
         task_context_var.set(context)  # this asyncio task's own copy of the context
         try:
-            handled = await self._process(delivery)
+            handled = await self._handle_with_local_retries(delivery, deliveries)
         except asyncio.CancelledError:
             logger.warning(
                 "Task cancelled; its message stays pending",
                 extra={"event": "task.cancelled", "reclaimed": reclaimed},
             )
             raise
-        except Exception as exc:  # the outcome is uncertain: never acknowledge
-            handled = Handled(Disposition.KEEP, "error")
-            self._pause(self._task_backoff, "task", exc)
-        else:
-            if self._task_backoff.reset():
-                logger.info(
-                    "Tasks succeed again", extra={"event": "worker.recovered", "source": "task"}
-                )
-        settled = await self._settle(delivery, handled)
+        settled = await self._settle(delivery, handled, deliveries)
         self.handled[handled.reason] += 1
         extra: dict[str, object] = {
             "event": "task.handled",
@@ -450,6 +559,7 @@ class CrawlWorker:
             "reason": handled.reason,
             "settled": settled,
             "reclaimed": reclaimed,
+            "deliveries": deliveries,
             "duration_ms": round((self._clock() - started) * 1000),
         }
         if handled.result is not None:
@@ -461,11 +571,45 @@ class CrawlWorker:
         quiet = handled.disposition is not Disposition.KEEP or handled.reason == "leased"
         logger.log(logging.INFO if quiet else logging.WARNING, "Message handled", extra=extra)
 
-    async def _process(self, delivery: Delivery) -> Handled:
+    async def _handle_with_local_retries(self, delivery: Delivery, deliveries: int) -> Handled:
+        """``_process``, tried again after a transient error that happened before the claim.
+
+        Only within half the reclaim idle time: the message is not acknowledged meanwhile, so
+        after that time ``XAUTOCLAIM`` may hand it out again (and count another delivery).
+        """
+        give_up_at = self._clock() + self._config.reclaim_min_idle / 2
+        for local_try in range(_LOCAL_RETRIES + 1):
+            progress = _Progress()
+            try:
+                handled = await self._process(delivery, deliveries, progress)
+            except Exception as exc:  # the outcome may be uncertain: never acknowledge
+                self._pause(self._task_backoff, "task", exc)
+                wait = max(0.0, self._paused_until - self._clock())
+                if (
+                    progress.claimed
+                    or not is_transient(exc)
+                    or local_try == _LOCAL_RETRIES
+                    or self._clock() + wait >= give_up_at
+                ):
+                    return Handled(Disposition.KEEP, "error")
+                await asyncio.sleep(wait)
+                continue
+            if self._task_backoff.reset():
+                logger.info(
+                    "Tasks succeed again", extra={"event": "worker.recovered", "source": "task"}
+                )
+            return handled
+        raise AssertionError("unreachable")  # pragma: no cover - the loop always returns
+
+    async def _process(self, delivery: Delivery, deliveries: int, progress: _Progress) -> Handled:
         task = delivery.task
         if task is None:
             return Handled(Disposition.DEAD_LETTER, "malformed")
         config = self._config
+        if deliveries > config.max_deliveries:
+            poisoned = await self._quarantine(task, deliveries)
+            if poisoned is not None:
+                return poisoned
         for _ in range(_CLAIM_ROUNDS):
             async with self._database.session() as session:
                 lease = await claim_url(
@@ -477,7 +621,8 @@ class CrawlWorker:
                     job_id=task.job_id,
                 )
             if lease is not None:
-                return await self._crawl(lease)
+                progress.claimed = True
+                return await self._crawl(lease, delivery.entry_id)
             async with self._database.session() as session:
                 status = await inspect_url(session, task.url_id)
             verdict = judge_unclaimed(status, task, max_attempts=config.max_attempts)
@@ -491,7 +636,36 @@ class CrawlWorker:
                         return Handled(Disposition.ACK, EXHAUSTED_OUTCOME)
         return Handled(Disposition.KEEP, "claim_contended")
 
-    async def _crawl(self, lease: Lease) -> Handled:
+    async def _quarantine(self, task: CrawlTask, deliveries: int) -> Handled | None:
+        """A message delivered too often. Only a URL that can never be claimed again (queued,
+        its attempts used up) is failed as ``max_deliveries_exceeded``, and the message
+        dead-lettered. A claimable URL, or an expired lease, returns None: it is claimed or
+        recovered as usual, because only a claim counts an attempt and ``attempt_count`` bounds
+        the work. Deliveries also grow while PostgreSQL is down (every ``XAUTOCLAIM`` counts
+        one), and an outage must not fail URLs that were never tried (Phase 6 independent
+        review). A URL that needs nothing, or has a live lease, is settled by the usual rules."""
+        async with self._database.session() as session:
+            status = await inspect_url(session, task.url_id)
+        config = self._config
+        verdict = judge_unclaimed(status, task, max_attempts=config.max_attempts)
+        if not isinstance(verdict, Handled):
+            return None  # claimable, or an expired last attempt to recover
+        if verdict.reason != "attempts_exhausted":
+            return verdict  # finished, not running, pending, unknown, mismatched, or leased
+        async with self._database.session() as session:
+            failed = await quarantine_url(
+                session,
+                task.url_id,
+                job_id=task.job_id,
+                owner=self.name,
+                deliveries=deliveries,
+                max_attempts=config.max_attempts,
+            )
+        if failed:
+            return Handled(Disposition.DEAD_LETTER, MAX_DELIVERIES_OUTCOME)
+        return Handled(Disposition.KEEP, "quarantine_refused")  # it changed meanwhile
+
+    async def _crawl(self, lease: Lease, entry_id: str) -> Handled:
         """The claimed URL: crawl it under the task deadline, then record the fenced result."""
         config = self._config
         task_context_var.set(
@@ -502,23 +676,72 @@ class CrawlWorker:
                 "attempt": lease.attempt,
             }
         )
-        result = await crawl_within(self._context, lease, deadline=config.task_deadline)
+        watched = _Watched(lease.job_id, asyncio.create_task(self._crawl_phase(lease)))
+        self._crawling[entry_id] = watched
+        try:
+            result = await watched.task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if not watched.stopped_for_cancellation or (current and current.cancelling()):
+                raise  # this whole handler is being cancelled (shutdown)
+            return await self._record_cancelled(lease)
+        finally:
+            self._crawling.pop(entry_id, None)
+        decision = config.retry_policy.decide(result, attempt=lease.attempt)
         async with self._database.session() as session:
             recorded = await record_result(
-                session, lease, result, max_redirect_hops=config.max_redirect_hops
+                session,
+                lease,
+                result,
+                max_redirect_hops=config.max_redirect_hops,
+                retry_delay=decision.delay,
             )
         if recorded.status is RecordStatus.RECORDED:
             return Handled(Disposition.ACK, "completed", lease, result)
+        if recorded.status is RecordStatus.RETRY_SCHEDULED:
+            return Handled(Disposition.ACK, "retry_scheduled", lease, result)
         # Fenced: another claim took the URL over. Its message is not ours to acknowledge.
         return Handled(Disposition.KEEP, "fenced", lease, result)
 
-    async def _settle(self, delivery: Delivery, handled: Handled) -> bool:
+    async def _crawl_phase(self, lease: Lease) -> UrlResult:
+        """``crawl_url`` under the task deadline; a transient infrastructure error (Redis, in
+        the politeness gate or the robots.txt cache) becomes a retryable failed attempt."""
+        try:
+            return await crawl_within(self._context, lease, deadline=self._config.task_deadline)
+        except Exception as exc:
+            if not is_transient(exc):
+                raise
+            logger.warning(
+                "Infrastructure error during a task; it counts as a failed attempt",
+                extra={"event": "task.infrastructure_error", "error_type": error_type(exc)},
+            )
+            return UrlResult(
+                UrlState.FAILED,
+                INFRASTRUCTURE_ERROR,
+                error=f"{error_type(exc)} in the crawler's own infrastructure during the task",
+            )
+
+    async def _record_cancelled(self, lease: Lease) -> Handled:
+        """The task was stopped because its job is being cancelled: record that, fenced."""
+        async with self._database.session() as session:
+            cancelled = await cancel_claimed_url(session, lease)
+        if cancelled:
+            return Handled(Disposition.ACK, "cancelled", lease)
+        return Handled(Disposition.KEEP, "fenced", lease)  # the lease was taken over
+
+    async def _settle(self, delivery: Delivery, handled: Handled, deliveries: int) -> bool:
         """Acknowledge or dead-letter the message as decided; False if it stays pending."""
         try:
             if handled.disposition is Disposition.ACK:
                 await self._stream.ack(delivery.entry_id)
             elif handled.disposition is Disposition.DEAD_LETTER:
-                await self._stream.dead_letter(delivery, delivery.error or handled.reason)
+                await self._stream.dead_letter(
+                    delivery,
+                    delivery.error or handled.reason,
+                    kind=handled.reason,
+                    consumer=self.name,
+                    deliveries=deliveries,
+                )
             else:
                 return False
         except Exception as exc:
