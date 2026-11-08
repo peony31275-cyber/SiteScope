@@ -26,6 +26,23 @@ OPENAPI_TAGS = [
     {"name": "service", "description": "Service index and infrastructure liveness probe."},
     {"name": "health", "description": "Versioned health endpoints."},
     {"name": "crawls", "description": "Create, inspect and list crawl jobs."},
+    {
+        "name": "analysis",
+        "description": "Read-only analysis of one crawl job, from its stored results in "
+        "PostgreSQL; nothing is fetched again. Terms: a *URL* is *discovered* when the job "
+        "admitted it or a stored page links to it (internally); *admitted* URLs are crawled "
+        "(or skipped) by the job. A *page* is a fetched HTML document (2xx) the job stored. A "
+        "*link* is one stored link from a page to a target URL. A *broken link* is an internal "
+        "link whose target, after its redirects, answered 404 or 410 during the crawl; a link "
+        "is *unverified* when no HTTP response decides it (never requested, or no response). "
+        "A *document* is a page's search-index entry (none for `noindex` pages). Details: "
+        "ADR-0019.",
+    },
+    {
+        "name": "search",
+        "description": "Full-text search of one crawl job's indexed pages (PostgreSQL full-text "
+        "search, ranked with `ts_rank`).",
+    },
 ]
 
 

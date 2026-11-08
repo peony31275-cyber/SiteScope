@@ -68,6 +68,8 @@ Every error response has the media type `application/problem+json`. For example:
 | 422 | `validation_failed` | The request failed validation: its shape (schema), or a server-side rule such as an unapproved crawl target. `errors` lists each field. |
 | 500 | `internal_error` | An unexpected error. Details appear only in the server logs, never in the response. |
 | 503 | `dependency_unavailable` | PostgreSQL or Redis is unreachable, or rejected the connection. Sent with `Retry-After: 5`. Ordinary SQL errors are never reported this way. |
+| 503 | `search_timeout` | A search took longer than `SITESCOPE_SEARCH_TIMEOUT_SECONDS` (5 s by default) and was stopped (Phase 8). A PostgreSQL connection that times out is `dependency_unavailable` instead. |
+| 503 | `analysis_timeout` | An analysis request took longer than `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS` (10 s by default) and was stopped (Phase 8). A PostgreSQL connection that times out is `dependency_unavailable` instead. |
 | other | status name in `snake_case` | For example, 403 → `forbidden` |
 
 ### Validation errors
@@ -81,7 +83,10 @@ one `errors` entry per field. `loc` names the field as FastAPI does (`["body", "
 | `invalid_url` | `seed_url` | Not an acceptable absolute http(s) URL; `msg` says why (architecture section 8.1) |
 | `target_not_allowed` | `seed_url` | Not an approved crawl target on this server: host, scheme or port (section 8.2) |
 | `limit_exceeded` | `max_depth`, `max_pages` | Above this server's configured limit |
-| `invalid_cursor` | `cursor` | Not a cursor returned by this API |
+| `invalid_cursor` | `cursor` | Not a cursor this listing returned (an altered cursor, or one of another listing) |
+| `empty_query` | `q` | Nothing left of the search query after removing whitespace and invisible characters (Phase 8) |
+| `query_too_long` | `q` | More than 256 characters after normalization (Phase 8) |
+| `page_out_of_range` | `page` | `(page - 1) * page_size` beyond 1000, the deepest offset a search serves (Phase 8) |
 
 Schema violations use Pydantic's types, such as `missing`, `int_type`, `greater_than_equal` or
 `extra_forbidden`. A request can fail several rules at once, and all of them are reported:
@@ -113,15 +118,31 @@ Rules for code that produces errors:
 
 List endpoints use cursor (keyset) pagination:
 
-- `limit`: items per page, 1–100, default 20.
-- `cursor`: optional; the `next_cursor` value of the previous page. Cursors are opaque. Clients
-  must not build or edit them, and an invalid cursor is rejected with `invalid_cursor`.
+- `limit`: items per page. Crawl jobs: 1–100, default 20. The analysis listings (pages, links,
+  broken links; Phase 8): 1–200, default 50.
+- `cursor`: optional; the `next_cursor` value of the previous page of the same listing, with the
+  same filters. Cursors are opaque. Clients must not build or edit them, and an invalid cursor
+  (altered, or another listing's) is rejected with `invalid_cursor`. A cursor holds the sort key
+  of the last item; for the analysis listings that includes URLs the client has already
+  received, so a cursor can be several kilobytes long (at most 8,192 characters).
 - The response is `{"items": [...], "next_cursor": "..."}`. `next_cursor` is `null` on the last
   page.
-- The order is total and stable (crawl jobs: newest first, ties broken by ID). A walk through
-  the pages never returns an item twice, and returns every item that existed when the walk
-  began. Items created meanwhile do not shift later pages; they normally sort before the first
-  page.
+- The order is total and stable: crawl jobs newest first (ties by ID); pages by BFS depth, then
+  URL; links by source page URL, position on the page, then target URL; broken links by target
+  URL, then source page URL. URLs compare byte by byte. A walk through the pages never returns an
+  item twice, and returns every item that existed when the walk began. Items created meanwhile
+  do not shift later pages; while a crawl is still running, new items may sort before or after
+  the cursor. A filter on a value that changes while the crawl or indexing runs
+  (`classification`, `verified`, `index_status`, ...) is applied to each page when it is read:
+  an item that changes during a walk can enter or leave the filter.
+
+**Search is the exception** (Phase 8). Its results are ranked by relevance, so it pages with
+`page` (1-based) and `page_size` (1–50, default 10), and serves results up to offset 1000:
+any page with `(page - 1) * page_size` above 1000 is refused with `page_out_of_range`, together
+with a query error if the query is invalid too (every match is ranked before a page is cut, so
+deeper pages would cost as much as the whole result set). A page beyond
+the last result is empty, with the real `total`. Pages are consistent while the index does not
+change; a search during indexing may find more on a later request.
 
 ## Crawl jobs
 
@@ -178,7 +199,9 @@ job summary:
   are kept.
 
 The job detail adds `progress`, counted from the job's URL rows when the request is served:
-`urls_total`, `urls_finished`, and `urls_by_state` with a count for each of the seven URL states.
+`urls_total`, `urls_finished`, `urls_by_state` with a count for each of the seven URL states, and
+(since Phase 8) `pages_stored`, the HTML pages stored. `status`, `started_at` and `finished_at`
+describe the crawl only; its indexing has its own status and end, below.
 
 Since Phase 7 it also adds `indexing`, counted from the job's search documents in the same
 statement:
@@ -202,7 +225,165 @@ statement:
   its `status` is `completed` and its indexing `status` is `indexed`.
 - `completed_at`: when the indexing of the finished job was found complete; `null` until then.
 
-Search itself has no HTTP endpoint before Phase 8.
+## Search (Phase 8)
+
+`GET /api/v1/search?job_id=<uuid>&q=<query>[&page=1][&page_size=10]` searches the indexed pages
+of one crawl job with the Phase 7 search service (PostgreSQL full-text search, architecture
+section 13). Errors: `404` (unknown job), `422` (the validation types above, plus schema rules
+such as `uuid_parsing` or `missing`), `503` (`search_timeout`, `dependency_unavailable`).
+
+- `q` uses web-search syntax: words (all must match), `"quoted phrases"`, `or`, and `-word` to
+  exclude a word. The operators of PostgreSQL's own query syntax (`&`, `|`, `!`, `<->`, `:*`) are
+  plain text; no input is a syntax error. Words match by their English stem (`crawling` finds
+  `crawled`), and English stop words are ignored.
+- A query with no searchable term (only stop words, or only excluded words) is valid: the response
+  has `"searchable": false`, `total` 0 and no results.
+- Only pages whose current content is indexed are found (the visibility rule of ADR-0018). Pages
+  not indexed yet, `noindex` pages and pages of other jobs are never returned, and nothing falls
+  back to unindexed text. `indexing` (the job's indexing progress, in the same snapshot) tells
+  whether more pages may become searchable.
+- Results are ordered by `score` (`ts_rank`), then URL, then page ID. A `score` is only meaningful
+  within one search.
+- `snippet` is plain text, never HTML. `highlights` are `[start, end)` ranges of Unicode code
+  points in `snippet` (in JavaScript, index `Array.from(snippet)`, not the string).
+- The query is never logged: request logs record the path without the query string.
+
+```json
+{
+  "query": "consumer groups",
+  "job_id": "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b",
+  "searchable": true,
+  "total": 1,
+  "page": 1,
+  "page_size": 10,
+  "results": [
+    {
+      "page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+      "url": "https://docs.example.com/streams.html",
+      "title": "Redis Streams",
+      "snippet": "Consumer groups let several workers share one stream",
+      "highlights": [{"start": 0, "end": 8}, {"start": 9, "end": 15}],
+      "score": 0.6079271,
+      "crawled_at": "2026-11-07T10:15:02.418Z",
+      "indexed_at": "2026-11-07T10:15:03.977Z"
+    }
+  ],
+  "indexing": {
+    "status": "indexed",
+    "documents_total": 11,
+    "documents_by_status": {"pending": 0, "queued": 0, "indexed": 11, "failed": 0},
+    "active": 0,
+    "completed_at": "2026-11-07T10:15:05.120Z"
+  }
+}
+```
+
+## Website analysis (Phase 8)
+
+Read-only endpoints under `/api/v1/crawls/{job_id}`. They read the job's stored crawl results in
+PostgreSQL and never send a request to a crawl target (ADR-0019). Each response comes from one
+read-only REPEATABLE READ transaction, so its lists and counts agree with each other. Every
+endpoint answers `404` for an unknown job, `422` for invalid parameters, and `503` with
+`analysis_timeout` (or `dependency_unavailable`).
+
+| Endpoint | Returns | Parameters |
+|---|---|---|
+| `GET .../pages` | the job's stored pages, by depth then URL; never their bodies | `limit`, `cursor`, `depth`, `index_status` |
+| `GET .../links` | the job's stored links, with their classification | `limit`, `cursor`, `source_page_id`, `internal`, `classification`, `verified`, `redirected` |
+| `GET .../broken-links` | the confirmed broken links, with `total` | `limit`, `cursor` |
+| `GET .../link-graph` | the internal link graph | `max_nodes` (1–2000, default 500), `max_edges` (0–10000, default 2000) |
+| `GET .../stats` | crawl, HTTP status, depth, indexing and link statistics | none |
+
+### Terms
+
+| Term | Meaning |
+|---|---|
+| discovered URL | a URL the job knows: admitted, or the target of an internal link on a stored page (`urls_discovered`) |
+| admitted URL | a URL the crawl took on: a `crawl_urls` row (`urls_admitted`, the job's `admitted_count`) |
+| page | a fetched 2xx HTML response the job stored; redirects, errors, other content types and skipped URLs have no page |
+| link | one stored link from a page to a target URL; repeated links to one target on a page are stored once, at their first position |
+| internal link | a link whose target is in the job's scope (its hosts, and an approved crawl target); external links are recorded, never crawled |
+| document | a page's search-index entry; `noindex` pages have none |
+| verified link | a link an HTTP response classifies: `ok`, `broken`, `server_error`, `http_error`, `redirect_error` |
+| unverified link | every other link: never requested, or no response |
+| broken link | an internal link whose target, after its redirects, answered 404 or 410 during the crawl |
+
+### Link classification
+
+Each link gets exactly one class from the stored crawl result of its target in the same job. A
+target that redirected is judged where its redirect chain ends, following the job's own crawl
+results (never fetched again). A URL waiting for a retry keeps its last attempt's status, which
+decides nothing until its result is final.
+
+| Class | Verified | When |
+|---|---|---|
+| `ok` | yes | the final response was 2xx (also a 2xx that was not HTML, too large, or not parsed) |
+| `broken` | yes | the final response was 404 or 410 |
+| `server_error` | yes | the final response was 5xx, 408 or 429, after the crawl's retries: possibly transient |
+| `http_error` | yes | any other final status, such as 401 or 403: refused, not proven missing |
+| `redirect_error` | yes | a redirect loop, more than 20 redirects, or a 3xx without a usable `Location` |
+| `out_of_scope` | no | an external link, a target skipped as not approved or as a blocked destination, or a redirect that leaves the job's hosts |
+| `not_followed` | no | never admitted: the link is `rel="nofollow"`, or its page is `nofollow` |
+| `beyond_limits` | no | never admitted (the target, or the end of its redirects): one level beyond `max_depth`, or the page budget was used up |
+| `not_crawled` | no | not requested (yet): pending, queued, in progress or cancelled, or never admitted for a reason the stored results do not record |
+| `robots_blocked` | no | robots.txt disallowed the target, or could not be fetched |
+| `unreachable` | no | the request ended without a response: DNS, connection, TLS or protocol errors, timeouts, attempts used up |
+
+The links listing gives each report of a link checker: `classification=broken` (or the
+broken-links endpoint), `redirected=true` (targets that answered with a 3xx; their chain's end is
+in `final_url`), `verified=false` (unchecked: never requested, or no response) and
+`internal=false` (external links, never requested).
+
+**Confirmed broken links** are exactly the `broken` class: one item per stored link (source page,
+target URL), ordered by target URL, then source page URL. A page that links twice to a missing URL
+is one item; a missing URL linked from three pages is three items. A 5xx, a 401 or 403, a target
+the crawl never requested, and a request without a response are never reported as broken; the
+links listing reports them by class.
+
+```json
+{
+  "total": 1,
+  "items": [
+    {
+      "source_page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+      "source_url": "https://docs.example.com/about.html",
+      "anchor_text": "Our old team page",
+      "position": 4,
+      "target_url": "https://docs.example.com/missing.html",
+      "status": 404,
+      "final_url": null,
+      "redirect_hops": 0,
+      "target_http_status": 404,
+      "checked_at": "2026-11-07T10:15:04.551Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+### Link graph
+
+Nodes are every admitted URL and every target of an internal link, in BFS order (depth, then URL;
+never-admitted targets last). `kind` is `page` (a stored page), `crawl_url` (admitted, without a
+page) or `link_target` (never admitted, never requested). Edges are the stored internal links
+between returned nodes; `source` and `target` are node `id`s. Redirects are not edges.
+`in_degree` and `out_degree` count every stored internal link, also when nodes or edges were cut;
+`truncated` is true when the graph was cut at `max_nodes` or `max_edges`. Only links on stored
+pages are known, so an `in_degree` of 0 never proves that nothing links to a URL.
+
+### Statistics
+
+- `crawl`: `urls_discovered`, `urls_admitted`, `urls_by_state`, `pages_stored`, `current_depth`,
+  `max_depth`, `max_pages`.
+- `http_status`: the final status of every URL whose request ended (state `fetched` or `failed`),
+  each counted once with its own status: 1xx (rare), 2xx, 3xx (redirects), 4xx, 5xx, and
+  `no_response`. The six numbers add up to those URLs.
+- `depths`: per BFS depth, the admitted URLs, those in state `fetched`, and the stored pages.
+- `indexing`: as in the job detail.
+- `links`: all links, internal and external links, distinct internal targets, `broken`,
+  `verified`, `unverified`, and the count of each class.
+- `most_linked`: the 10 URLs with the most stored internal links to them (one per linking page),
+  most first, then by URL.
 
 ## Health endpoints
 

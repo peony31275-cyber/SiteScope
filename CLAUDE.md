@@ -16,7 +16,7 @@ React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
   -> Redis stream "sitescope:crawl" -> crawler workers (asyncio + HTTPX + BeautifulSoup)
   -> PostgreSQL (pages, links, search_documents) -> index dispatcher
   -> Redis stream "sitescope:index" -> indexer workers
-  -> PostgreSQL full-text index (tsvector + GIN) -> search service (HTTP API in Phase 8)
+  -> PostgreSQL full-text index (tsvector + GIN) -> search and website-analysis APIs (Phase 8)
 ```
 
 - Design: [docs/architecture.md](docs/architecture.md)
@@ -142,6 +142,13 @@ explanations for the project owner in Chinese.
     - Search returns only documents with `indexed_content_version = pages.content_version`.
     - Indexing never changes a job's crawl status; `indexing_completed_at` is set only when the
       job is finished and none of its documents is `pending` or `queued`.
+13. **Analysis reports only what the crawl observed** (ADR-0019).
+    - Search and analysis read PostgreSQL only, one job at a time, in one read-only REPEATABLE
+      READ transaction with a time limit. They never request a crawl target and never write.
+    - A link is *broken* only if its target, after its redirects through the job's own crawl
+      results, answered 404 or 410. A target never requested, or without a final response, is
+      unverified: never reported as broken or as working. A non-terminal URL's status (a retry
+      in waiting) decides nothing.
 
 ## Code conventions
 
@@ -156,7 +163,9 @@ explanations for the project owner in Chinese.
   - `crawler` has no database imports (it uses Redis only for politeness and the robots.txt
     cache), and `queue` has no domain logic. `services` and `core.config` may use the pure
     functions of `crawler` (URL normalization, scope); `services` may use `indexing`, which is
-    pure too (Phase 7: document rules, query handling).
+    pure too (Phase 7: document rules, query handling). `api` may use `indexing`'s query rules
+    (bounds, normalization) to validate its parameters (Phase 8).
+  - Analytical SQL lives in `services` (`services/site_analysis.py`), never in route handlers.
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
   fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
   when measurements show a need. HTML parsing is such work: call `parse_html` with
@@ -260,7 +269,8 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
                   policy; Phase 7: shared consumer loop, indexer); queue/ scheduler/ (Phase 5:
                   Redis Streams, scheduler, status; Phase 7: index dispatcher, search command);
                   services/crawl_cancellation.py (Phase 6); services/search_index.py and
-                  search.py, indexing/ (Phase 7)
+                  search.py, indexing/ (Phase 7); api/v1/search.py and analysis.py,
+                  services/site_analysis.py (Phase 8: search and website-analysis APIs)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes)
@@ -268,7 +278,7 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
   .env.example    configuration template; copy to backend/.env (git-ignored)
 frontend/         React + TypeScript dashboard (Phase 9; currently empty)
 demo-site/        controlled static website: the approved demo crawl target
-benchmarks/       reproducible benchmark scripts and raw results
+benchmarks/       reproducible benchmark scripts and raw results (crawl, indexing, analysis)
 docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/
 ```
 

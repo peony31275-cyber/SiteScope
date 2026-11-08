@@ -1,0 +1,1277 @@
+##### 1000 pages: {'crawl_urls': 1100, 'pages': 1000, 'page_links': 50000}
+
+=== pages: first 50
+Limit  (cost=171.13..171.26 rows=51 width=148) (actual time=1.095..1.102 rows=51.00 loops=1)
+  Buffers: shared hit=70
+  ->  Sort  (cost=171.13..173.63 rows=1000 width=148) (actual time=1.095..1.098 rows=51.00 loops=1)
+        Sort Key: u.depth, p.normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 38kB
+        Buffers: shared hit=70
+        ->  Hash Join  (cost=87.00..137.77 rows=1000 width=148) (actual time=0.402..0.887 rows=1000.00 loops=1)
+              Hash Cond: (p.crawl_url_id = u.id)
+              Buffers: shared hit=70
+              ->  Hash Left Join  (cost=35.50..83.64 rows=1000 width=154) (actual time=0.184..0.518 rows=1000.00 loops=1)
+                    Hash Cond: (p.id = d.page_id)
+                    Buffers: shared hit=46
+                    ->  Seq Scan on pages p  (cost=0.00..45.50 rows=1000 width=138) (actual time=0.005..0.184 rows=1000.00 loops=1)
+                          Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                          Buffers: shared hit=33
+                    ->  Hash  (cost=23.00..23.00 rows=1000 width=32) (actual time=0.176..0.177 rows=1000.00 loops=1)
+                          Buckets: 1024  Batches: 1  Memory Usage: 63kB
+                          Buffers: shared hit=13
+                          ->  Seq Scan on search_documents d  (cost=0.00..23.00 rows=1000 width=32) (actual time=0.003..0.080 rows=1000.00 loops=1)
+                                Buffers: shared hit=13
+              ->  Hash  (cost=37.75..37.75 rows=1100 width=34) (actual time=0.215..0.216 rows=1100.00 loops=1)
+                    Buckets: 2048  Batches: 1  Memory Usage: 87kB
+                    Buffers: shared hit=24
+                    ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=34) (actual time=0.003..0.114 rows=1100.00 loops=1)
+                          Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                          Buffers: shared hit=24
+Planning:
+  Buffers: shared hit=25
+Planning Time: 0.305 ms
+Execution Time: 1.123 ms
+
+=== links: first 50
+Limit  (cost=8873.53..8877.42 rows=51 width=179) (actual time=78.127..78.163 rows=51.00 loops=1)
+  Buffers: shared hit=923
+  CTE chain
+    ->  Recursive Union  (cost=0.00..2882.10 rows=1110 width=143) (actual time=0.004..0.566 rows=1120.00 loops=1)
+          Storage: Memory  Maximum Storage: 219kB
+          Buffers: shared hit=84
+          ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=135) (actual time=0.003..0.224 rows=1100.00 loops=1)
+                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                Buffers: shared hit=24
+          ->  Nested Loop  (cost=0.28..283.32 rows=1 width=143) (actual time=0.035..0.063 rows=10.00 loops=2)
+                Buffers: shared hit=60
+                ->  WorkTable Scan on chain c  (cost=0.00..275.00 rows=1 width=100) (actual time=0.029..0.032 rows=10.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 550
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.28..8.31 rows=1 width=75) (actual time=0.002..0.002 rows=1.00 loops=20)
+                      Index Cond: ((job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 20
+                      Buffers: shared hit=60
+  CTE final
+    ->  Unique  (cost=95.00..100.55 rows=200 width=175) (actual time=1.351..1.515 rows=1100.00 loops=1)
+          Buffers: shared hit=84
+          ->  Sort  (cost=95.00..97.77 rows=1110 width=175) (actual time=1.350..1.390 rows=1120.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 172kB
+                Buffers: shared hit=84
+                ->  CTE Scan on chain  (cost=0.00..38.85 rows=1110 width=175) (actual time=0.005..0.969 rows=1120.00 loops=1)
+                      Storage: Memory  Maximum Storage: 203kB
+                      Buffers: shared hit=84
+  ->  Result  (cost=5890.88..9703.38 rows=50000 width=179) (actual time=78.126..78.153 rows=51.00 loops=1)
+        Buffers: shared hit=923
+        ->  Sort  (cost=5890.88..6015.88 rows=50000 width=328) (actual time=78.120..78.128 rows=51.00 loops=1)
+              Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+              Sort Method: top-N heapsort  Memory: 38kB
+              Buffers: shared hit=923
+              ->  Hash Left Join  (cost=241.65..4222.78 rows=50000 width=328) (actual time=3.080..63.317 rows=50000.00 loops=1)
+                    Hash Cond: (l.target_normalized_url = f.start_url)
+                    Buffers: shared hit=923
+                    ->  Hash Left Join  (cost=235.15..2666.23 rows=50000 width=151) (actual time=1.210..41.671 rows=50000.00 loops=1)
+                          Hash Cond: ((t.id = tp.crawl_url_id) AND (t.job_id = tp.job_id))
+                          Buffers: shared hit=839
+                          ->  Hash Left Join  (cost=174.65..2342.68 rows=50000 width=167) (actual time=1.018..30.529 rows=50000.00 loops=1)
+                                Hash Cond: (l.target_normalized_url = t.normalized_url)
+                                Buffers: shared hit=806
+                                ->  Hash Join  (cost=123.15..2159.65 rows=50000 width=142) (actual time=0.755..19.154 rows=50000.00 loops=1)
+                                      Hash Cond: (l.source_page_id = sp.id)
+                                      Buffers: shared hit=782
+                                      ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=50000 width=69) (actual time=0.006..8.721 rows=50000.00 loops=1)
+                                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                            Buffers: shared hit=724
+                                      ->  Hash  (cost=110.65..110.65 rows=1000 width=121) (actual time=0.747..0.749 rows=1000.00 loops=1)
+                                            Buckets: 1024  Batches: 1  Memory Usage: 161kB
+                                            Buffers: shared hit=58
+                                            ->  Hash Join  (cost=51.50..110.65 rows=1000 width=121) (actual time=0.211..0.598 rows=1000.00 loops=1)
+                                                  Hash Cond: (sp.crawl_url_id = su.id)
+                                                  Buffers: shared hit=58
+                                                  ->  Nested Loop  (cost=0.00..56.51 rows=1000 width=135) (actual time=0.006..0.230 rows=1000.00 loops=1)
+                                                        Buffers: shared hit=34
+                                                        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=63) (actual time=0.003..0.003 rows=1.00 loops=1)
+                                                              Filter: (id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                              Buffers: shared hit=1
+                                                        ->  Seq Scan on pages sp  (cost=0.00..45.50 rows=1000 width=72) (actual time=0.002..0.139 rows=1000.00 loops=1)
+                                                              Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                              Buffers: shared hit=33
+                                                  ->  Hash  (cost=37.75..37.75 rows=1100 width=34) (actual time=0.203..0.203 rows=1100.00 loops=1)
+                                                        Buckets: 2048  Batches: 1  Memory Usage: 87kB
+                                                        Buffers: shared hit=24
+                                                        ->  Seq Scan on crawl_urls su  (cost=0.00..37.75 rows=1100 width=34) (actual time=0.003..0.095 rows=1100.00 loops=1)
+                                                              Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                              Buffers: shared hit=24
+                                ->  Hash  (cost=37.75..37.75 rows=1100 width=65) (actual time=0.261..0.261 rows=1100.00 loops=1)
+                                      Buckets: 2048  Batches: 1  Memory Usage: 122kB
+                                      Buffers: shared hit=24
+                                      ->  Seq Scan on crawl_urls t  (cost=0.00..37.75 rows=1100 width=65) (actual time=0.004..0.115 rows=1100.00 loops=1)
+                                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                            Buffers: shared hit=24
+                          ->  Hash  (cost=45.50..45.50 rows=1000 width=48) (actual time=0.189..0.190 rows=1000.00 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 87kB
+                                Buffers: shared hit=33
+                                ->  Seq Scan on pages tp  (cost=0.00..45.50 rows=1000 width=48) (actual time=0.002..0.081 rows=1000.00 loops=1)
+                                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=33
+                    ->  Hash  (cost=4.00..4.00 rows=200 width=175) (actual time=1.865..1.866 rows=1100.00 loops=1)
+                          Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 154kB
+                          Buffers: shared hit=84
+                          ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=1.352..1.662 rows=1100.00 loops=1)
+                                Storage: Memory  Maximum Storage: 146kB
+                                Buffers: shared hit=84
+Planning:
+  Buffers: shared hit=50
+Planning Time: 2.314 ms
+Execution Time: 78.246 ms
+
+=== links: one source page
+Limit  (cost=3167.39..3171.20 rows=50 width=179) (actual time=2.512..2.553 rows=50.00 loops=1)
+  Buffers: shared hit=245
+  CTE chain
+    ->  Recursive Union  (cost=0.00..2882.10 rows=1110 width=143) (actual time=0.005..0.628 rows=1120.00 loops=1)
+          Storage: Memory  Maximum Storage: 219kB
+          Buffers: shared hit=84
+          ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=135) (actual time=0.004..0.283 rows=1100.00 loops=1)
+                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                Buffers: shared hit=24
+          ->  Nested Loop  (cost=0.28..283.32 rows=1 width=143) (actual time=0.039..0.067 rows=10.00 loops=2)
+                Buffers: shared hit=60
+                ->  WorkTable Scan on chain c  (cost=0.00..275.00 rows=1 width=100) (actual time=0.032..0.034 rows=10.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 550
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.28..8.31 rows=1 width=75) (actual time=0.002..0.002 rows=1.00 loops=20)
+                      Index Cond: ((job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 20
+                      Buffers: shared hit=60
+  CTE final
+    ->  Unique  (cost=95.00..100.55 rows=200 width=175) (actual time=1.546..1.718 rows=1100.00 loops=1)
+          Buffers: shared hit=84
+          ->  Sort  (cost=95.00..97.77 rows=1110 width=175) (actual time=1.545..1.586 rows=1120.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 172kB
+                Buffers: shared hit=84
+                ->  CTE Scan on chain  (cost=0.00..38.85 rows=1110 width=175) (actual time=0.007..1.129 rows=1120.00 loops=1)
+                      Storage: Memory  Maximum Storage: 203kB
+                      Buffers: shared hit=84
+  ->  Result  (cost=184.75..188.56 rows=50 width=179) (actual time=2.511..2.548 rows=50.00 loops=1)
+        Buffers: shared hit=245
+        ->  Sort  (cost=184.75..184.87 rows=50 width=328) (actual time=2.507..2.512 rows=50.00 loops=1)
+              Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+              Sort Method: quicksort  Memory: 37kB
+              Buffers: shared hit=245
+              ->  Hash Left Join  (cost=101.37..183.34 rows=50 width=328) (actual time=2.176..2.471 rows=50.00 loops=1)
+                    Hash Cond: (l.target_normalized_url = f.start_url)
+                    Buffers: shared hit=245
+                    ->  Nested Loop Left Join  (cost=94.87..175.29 rows=50 width=151) (actual time=0.069..0.339 rows=50.00 loops=1)
+                          Join Filter: (tp.job_id = t.job_id)
+                          Buffers: shared hit=161
+                          ->  Nested Loop  (cost=94.59..152.82 rows=50 width=167) (actual time=0.064..0.256 rows=50.00 loops=1)
+                                Buffers: shared hit=35
+                                ->  Nested Loop  (cost=0.55..17.63 rows=1 width=121) (actual time=0.022..0.025 rows=1.00 loops=1)
+                                      Buffers: shared hit=7
+                                      ->  Nested Loop  (cost=0.55..16.61 rows=1 width=58) (actual time=0.015..0.016 rows=1.00 loops=1)
+                                            Buffers: shared hit=6
+                                            ->  Index Scan using uq_pages_id_job_id on pages sp  (cost=0.28..8.29 rows=1 width=72) (actual time=0.009..0.010 rows=1.00 loops=1)
+                                                  Index Cond: ((id = '01a1b916-e2e3-7ae6-a8f3-d72da1130d96'::uuid) AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                                                  Index Searches: 1
+                                                  Buffers: shared hit=3
+                                            ->  Index Scan using uq_crawl_urls_id_job_id on crawl_urls su  (cost=0.28..8.30 rows=1 width=34) (actual time=0.003..0.004 rows=1.00 loops=1)
+                                                  Index Cond: ((id = sp.crawl_url_id) AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                                                  Index Searches: 1
+                                                  Buffers: shared hit=3
+                                      ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=63) (actual time=0.007..0.007 rows=1.00 loops=1)
+                                            Filter: (id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                            Buffers: shared hit=1
+                                ->  Hash Right Join  (cost=94.04..134.69 rows=50 width=110) (actual time=0.041..0.223 rows=50.00 loops=1)
+                                      Hash Cond: (t.normalized_url = l.target_normalized_url)
+                                      Buffers: shared hit=28
+                                      ->  Seq Scan on crawl_urls t  (cost=0.00..37.75 rows=1100 width=65) (actual time=0.003..0.091 rows=1100.00 loops=1)
+                                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                            Buffers: shared hit=24
+                                      ->  Hash  (cost=93.42..93.42 rows=50 width=69) (actual time=0.032..0.032 rows=50.00 loops=1)
+                                            Buckets: 1024  Batches: 1  Memory Usage: 14kB
+                                            Buffers: shared hit=4
+                                            ->  Index Scan using pk_page_links on page_links l  (cost=0.41..93.42 rows=50 width=69) (actual time=0.009..0.023 rows=50.00 loops=1)
+                                                  Index Cond: (source_page_id = '01a1b916-e2e3-7ae6-a8f3-d72da1130d96'::uuid)
+                                                  Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                  Index Searches: 1
+                                                  Buffers: shared hit=4
+                          ->  Index Scan using uq_pages_crawl_url_id on pages tp  (cost=0.28..0.44 rows=1 width=48) (actual time=0.001..0.001 rows=0.80 loops=50)
+                                Index Cond: (crawl_url_id = t.id)
+                                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                Index Searches: 43
+                                Buffers: shared hit=126
+                    ->  Hash  (cost=4.00..4.00 rows=200 width=175) (actual time=2.101..2.101 rows=1100.00 loops=1)
+                          Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 154kB
+                          Buffers: shared hit=84
+                          ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=1.547..1.878 rows=1100.00 loops=1)
+                                Storage: Memory  Maximum Storage: 146kB
+                                Buffers: shared hit=84
+Planning:
+  Buffers: shared hit=105
+Planning Time: 2.249 ms
+Execution Time: 2.644 ms
+
+=== broken links: first 50
+Nested Loop Left Join  (cost=5598.14..5598.78 rows=51 width=254) (actual time=54.146..54.167 rows=51.00 loops=1)
+  Buffers: shared hit=923
+  CTE chain
+    ->  Recursive Union  (cost=0.00..2882.10 rows=1110 width=143) (actual time=0.006..0.595 rows=1120.00 loops=1)
+          Storage: Memory  Maximum Storage: 219kB
+          Buffers: shared hit=84
+          ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=135) (actual time=0.005..0.249 rows=1100.00 loops=1)
+                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                Buffers: shared hit=24
+          ->  Nested Loop  (cost=0.28..283.32 rows=1 width=143) (actual time=0.038..0.064 rows=10.00 loops=2)
+                Buffers: shared hit=60
+                ->  WorkTable Scan on chain c  (cost=0.00..275.00 rows=1 width=100) (actual time=0.031..0.033 rows=10.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 550
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.28..8.31 rows=1 width=75) (actual time=0.002..0.002 rows=1.00 loops=20)
+                      Index Cond: ((job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 20
+                      Buffers: shared hit=60
+  CTE final
+    ->  Unique  (cost=95.00..100.55 rows=200 width=175) (actual time=1.429..1.622 rows=1100.00 loops=1)
+          Buffers: shared hit=84
+          ->  Sort  (cost=95.00..97.77 rows=1110 width=175) (actual time=1.429..1.469 rows=1120.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 172kB
+                Buffers: shared hit=84
+                ->  CTE Scan on chain  (cost=0.00..38.85 rows=1110 width=175) (actual time=0.008..1.028 rows=1120.00 loops=1)
+                      Storage: Memory  Maximum Storage: 203kB
+                      Buffers: shared hit=84
+  CTE broken
+    ->  Hash Left Join  (cost=228.00..2596.53 rows=250 width=179) (actual time=3.107..52.789 rows=2011.00 loops=1)
+          Hash Cond: ((t.id = tp.crawl_url_id) AND (t.job_id = tp.job_id))
+          Buffers: shared hit=923
+          ->  Hash Left Join  (cost=167.50..2518.78 rows=250 width=342) (actual time=2.868..51.364 rows=2011.00 loops=1)
+                Hash Cond: (l.target_normalized_url = t.normalized_url)
+                Buffers: shared hit=890
+                ->  Hash Join  (cost=116.00..2466.62 rows=250 width=317) (actual time=2.583..50.534 rows=2011.00 loops=1)
+                      Hash Cond: (sp.crawl_url_id = su.id)
+                      Join Filter: (CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.loops THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END = 'broken'::text)
+                      Rows Removed by Join Filter: 47989
+                      Buffers: shared hit=866
+                      ->  Hash Left Join  (cost=64.50..2283.87 rows=50000 width=347) (actual time=2.342..38.246 rows=50000.00 loops=1)
+                            Hash Cond: (l.target_normalized_url = f.start_url)
+                            Buffers: shared hit=842
+                            ->  Nested Loop  (cost=58.00..2039.82 rows=50000 width=172) (actual time=0.306..23.686 rows=50000.00 loops=1)
+                                  Buffers: shared hit=758
+                                  ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=63) (actual time=0.003..0.004 rows=1.00 loops=1)
+                                        Filter: (id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                        Buffers: shared hit=1
+                                  ->  Hash Join  (cost=58.00..1538.81 rows=50000 width=125) (actual time=0.302..18.345 rows=50000.00 loops=1)
+                                        Hash Cond: (l.source_page_id = sp.id)
+                                        Buffers: shared hit=757
+                                        ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=50000 width=69) (actual time=0.003..9.553 rows=50000.00 loops=1)
+                                              Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                              Buffers: shared hit=724
+                                        ->  Hash  (cost=45.50..45.50 rows=1000 width=72) (actual time=0.296..0.296 rows=1000.00 loops=1)
+                                              Buckets: 1024  Batches: 1  Memory Usage: 111kB
+                                              Buffers: shared hit=33
+                                              ->  Seq Scan on pages sp  (cost=0.00..45.50 rows=1000 width=72) (actual time=0.003..0.160 rows=1000.00 loops=1)
+                                                    Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                    Buffers: shared hit=33
+                            ->  Hash  (cost=4.00..4.00 rows=200 width=175) (actual time=2.032..2.032 rows=1100.00 loops=1)
+                                  Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 154kB
+                                  Buffers: shared hit=84
+                                  ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=1.430..1.788 rows=1100.00 loops=1)
+                                        Storage: Memory  Maximum Storage: 146kB
+                                        Buffers: shared hit=84
+                      ->  Hash  (cost=37.75..37.75 rows=1100 width=34) (actual time=0.228..0.229 rows=1100.00 loops=1)
+                            Buckets: 2048  Batches: 1  Memory Usage: 87kB
+                            Buffers: shared hit=24
+                            ->  Seq Scan on crawl_urls su  (cost=0.00..37.75 rows=1100 width=34) (actual time=0.007..0.118 rows=1100.00 loops=1)
+                                  Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                  Buffers: shared hit=24
+                ->  Hash  (cost=37.75..37.75 rows=1100 width=65) (actual time=0.283..0.283 rows=1100.00 loops=1)
+                      Buckets: 2048  Batches: 1  Memory Usage: 122kB
+                      Buffers: shared hit=24
+                      ->  Seq Scan on crawl_urls t  (cost=0.00..37.75 rows=1100 width=65) (actual time=0.005..0.127 rows=1100.00 loops=1)
+                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                            Buffers: shared hit=24
+          ->  Hash  (cost=45.50..45.50 rows=1000 width=48) (actual time=0.232..0.233 rows=1000.00 loops=1)
+                Buckets: 1024  Batches: 1  Memory Usage: 87kB
+                Buffers: shared hit=33
+                ->  Seq Scan on pages tp  (cost=0.00..45.50 rows=1000 width=48) (actual time=0.003..0.098 rows=1000.00 loops=1)
+                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                      Buffers: shared hit=33
+  ->  Aggregate  (cost=5.62..5.63 rows=1 width=8) (actual time=53.857..53.857 rows=1.00 loops=1)
+        Buffers: shared hit=923
+        ->  CTE Scan on broken  (cost=0.00..5.00 rows=250 width=0) (actual time=3.109..53.702 rows=2011.00 loops=1)
+              Storage: Memory  Maximum Storage: 314kB
+              Buffers: shared hit=923
+  ->  Limit  (cost=13.34..13.47 rows=51 width=246) (actual time=0.285..0.291 rows=51.00 loops=1)
+        ->  Sort  (cost=13.34..13.97 rows=250 width=246) (actual time=0.285..0.287 rows=51.00 loops=1)
+              Sort Key: broken_1.target_url COLLATE "C", broken_1.source_url COLLATE "C"
+              Sort Method: top-N heapsort  Memory: 48kB
+              ->  CTE Scan on broken broken_1  (cost=0.00..5.00 rows=250 width=246) (actual time=0.000..0.094 rows=2011.00 loops=1)
+                    Storage: Memory  Maximum Storage: 314kB
+Planning:
+  Buffers: shared hit=50
+Planning Time: 1.803 ms
+Execution Time: 54.286 ms
+
+=== statistics: link classes
+HashAggregate  (cost=7511.64..7587.64 rows=1600 width=40) (actual time=35.515..35.525 rows=7.00 loops=1)
+  Group Key: CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.loops THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END
+  Batches: 1  Memory Usage: 65kB
+  Buffers: shared hit=866
+  CTE chain
+    ->  Recursive Union  (cost=0.00..2882.10 rows=1110 width=143) (actual time=0.004..0.696 rows=1120.00 loops=1)
+          Storage: Memory  Maximum Storage: 219kB
+          Buffers: shared hit=84
+          ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=135) (actual time=0.003..0.269 rows=1100.00 loops=1)
+                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                Buffers: shared hit=24
+          ->  Nested Loop  (cost=0.28..283.32 rows=1 width=143) (actual time=0.036..0.076 rows=10.00 loops=2)
+                Buffers: shared hit=60
+                ->  WorkTable Scan on chain c  (cost=0.00..275.00 rows=1 width=100) (actual time=0.029..0.031 rows=10.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 550
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.28..8.31 rows=1 width=75) (actual time=0.002..0.002 rows=1.00 loops=20)
+                      Index Cond: ((job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 20
+                      Buffers: shared hit=60
+  CTE final
+    ->  Unique  (cost=95.00..100.55 rows=200 width=175) (actual time=1.494..1.652 rows=1100.00 loops=1)
+          Buffers: shared hit=84
+          ->  Sort  (cost=95.00..97.77 rows=1110 width=175) (actual time=1.493..1.532 rows=1120.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 172kB
+                Buffers: shared hit=84
+                ->  CTE Scan on chain  (cost=0.00..38.85 rows=1110 width=175) (actual time=0.006..1.085 rows=1120.00 loops=1)
+                      Storage: Memory  Maximum Storage: 203kB
+                      Buffers: shared hit=84
+  ->  Hash Left Join  (cost=129.65..4279.00 rows=50000 width=32) (actual time=2.668..29.796 rows=50000.00 loops=1)
+        Hash Cond: (l.target_normalized_url = f.start_url)
+        Buffers: shared hit=866
+        ->  Hash Join  (cost=123.15..2159.65 rows=50000 width=76) (actual time=0.703..14.498 rows=50000.00 loops=1)
+              Hash Cond: (l.source_page_id = sp.id)
+              Buffers: shared hit=782
+              ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=50000 width=58) (actual time=0.006..6.155 rows=50000.00 loops=1)
+                    Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                    Buffers: shared hit=724
+              ->  Hash  (cost=110.65..110.65 rows=1000 width=66) (actual time=0.695..0.697 rows=1000.00 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 107kB
+                    Buffers: shared hit=58
+                    ->  Hash Join  (cost=51.50..110.65 rows=1000 width=66) (actual time=0.217..0.573 rows=1000.00 loops=1)
+                          Hash Cond: (sp.crawl_url_id = su.id)
+                          Buffers: shared hit=58
+                          ->  Nested Loop  (cost=0.00..56.51 rows=1000 width=80) (actual time=0.006..0.231 rows=1000.00 loops=1)
+                                Buffers: shared hit=34
+                                ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=63) (actual time=0.002..0.003 rows=1.00 loops=1)
+                                      Filter: (id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=1
+                                ->  Seq Scan on pages sp  (cost=0.00..45.50 rows=1000 width=49) (actual time=0.003..0.142 rows=1000.00 loops=1)
+                                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=33
+                          ->  Hash  (cost=37.75..37.75 rows=1100 width=34) (actual time=0.208..0.208 rows=1100.00 loops=1)
+                                Buckets: 2048  Batches: 1  Memory Usage: 87kB
+                                Buffers: shared hit=24
+                                ->  Seq Scan on crawl_urls su  (cost=0.00..37.75 rows=1100 width=34) (actual time=0.003..0.106 rows=1100.00 loops=1)
+                                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=24
+        ->  Hash  (cost=4.00..4.00 rows=200 width=131) (actual time=1.960..1.961 rows=1100.00 loops=1)
+              Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 103kB
+              Buffers: shared hit=84
+              ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=131) (actual time=1.495..1.792 rows=1100.00 loops=1)
+                    Storage: Memory  Maximum Storage: 146kB
+                    Buffers: shared hit=84
+Planning:
+  Buffers: shared hit=50
+Planning Time: 0.887 ms
+Execution Time: 35.589 ms
+
+=== statistics: link totals
+Aggregate  (cost=6124.54..6124.55 rows=1 width=40) (actual time=31.187..31.189 rows=1.00 loops=1)
+  Buffers: shared hit=50242
+  InitPlan 1
+    ->  Aggregate  (cost=28.15..28.16 rows=1 width=8) (actual time=0.099..0.099 rows=1.00 loops=1)
+          Buffers: shared hit=2
+          ->  Index Only Scan using ix_pages_job_id on pages  (cost=0.15..25.65 rows=1000 width=0) (actual time=0.011..0.057 rows=1000.00 loops=1)
+                Index Cond: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                Heap Fetches: 0
+                Index Searches: 1
+                Buffers: shared hit=2
+  InitPlan 2
+    ->  Aggregate  (cost=2842.14..2842.15 rows=1 width=8) (actual time=12.562..12.563 rows=1.00 loops=1)
+          Buffers: shared hit=748
+          ->  HashAggregate  (cost=1750.60..2235.73 rows=48513 width=32) (actual time=12.353..12.511 rows=1200.00 loops=1)
+                Group Key: crawl_urls.normalized_url
+                Batches: 1  Memory Usage: 1113kB
+                Buffers: shared hit=748
+                ->  Append  (cost=0.00..1629.32 rows=48513 width=32) (actual time=0.010..6.645 rows=48511.00 loops=1)
+                      Buffers: shared hit=748
+                      ->  Seq Scan on crawl_urls  (cost=0.00..37.75 rows=1100 width=24) (actual time=0.009..0.104 rows=1100.00 loops=1)
+                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                            Buffers: shared hit=24
+                      ->  Seq Scan on page_links page_links_1  (cost=0.00..1349.00 rows=47413 width=24) (actual time=0.003..3.718 rows=47411.00 loops=1)
+                            Filter: (is_internal AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                            Rows Removed by Filter: 2589
+                            Buffers: shared hit=724
+  ->  Index Scan using ix_page_links_job_id_target on page_links  (cost=0.29..2879.23 rows=50000 width=25) (actual time=0.016..15.012 rows=50000.00 loops=1)
+        Index Cond: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+        Index Searches: 1
+        Buffers: shared hit=49492
+Planning:
+  Buffers: shared hit=3
+Planning Time: 0.210 ms
+Execution Time: 31.281 ms
+
+=== statistics: most linked
+Limit  (cost=3689.48..3689.50 rows=10 width=48) (actual time=28.134..28.138 rows=10.00 loops=1)
+  Buffers: shared hit=781
+  ->  Sort  (cost=3689.48..3808.01 rows=47413 width=48) (actual time=28.132..28.136 rows=10.00 loops=1)
+        Sort Key: (count(*)) DESC, l.target_normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 26kB
+        Buffers: shared hit=781
+        ->  HashAggregate  (cost=2190.77..2664.90 rows=47413 width=48) (actual time=27.804..28.001 rows=1200.00 loops=1)
+              Group Key: l.target_normalized_url, p.id
+              Batches: 1  Memory Usage: 1177kB
+              Buffers: shared hit=781
+              ->  Hash Left Join  (cost=112.00..1835.17 rows=47413 width=40) (actual time=0.478..20.097 rows=47411.00 loops=1)
+                    Hash Cond: ((u.id = p.crawl_url_id) AND (u.job_id = p.job_id))
+                    Buffers: shared hit=781
+                    ->  Hash Left Join  (cost=51.50..1525.23 rows=47413 width=56) (actual time=0.239..12.747 rows=47411.00 loops=1)
+                          Hash Cond: (l.target_normalized_url = u.normalized_url)
+                          Buffers: shared hit=748
+                          ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=47413 width=40) (actual time=0.005..5.046 rows=47411.00 loops=1)
+                                Filter: (is_internal AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                                Rows Removed by Filter: 2589
+                                Buffers: shared hit=724
+                          ->  Hash  (cost=37.75..37.75 rows=1100 width=56) (actual time=0.231..0.231 rows=1100.00 loops=1)
+                                Buckets: 2048  Batches: 1  Memory Usage: 111kB
+                                Buffers: shared hit=24
+                                ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=56) (actual time=0.003..0.101 rows=1100.00 loops=1)
+                                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=24
+                    ->  Hash  (cost=45.50..45.50 rows=1000 width=48) (actual time=0.236..0.237 rows=1000.00 loops=1)
+                          Buckets: 1024  Batches: 1  Memory Usage: 87kB
+                          Buffers: shared hit=33
+                          ->  Seq Scan on pages p  (cost=0.00..45.50 rows=1000 width=48) (actual time=0.003..0.094 rows=1000.00 loops=1)
+                                Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                Buffers: shared hit=33
+Planning:
+  Buffers: shared hit=18
+Planning Time: 0.300 ms
+Execution Time: 28.211 ms
+
+=== statistics: depths
+Sort  (cost=112.48..112.49 rows=4 width=26) (actual time=0.767..0.768 rows=4.00 loops=1)
+  Sort Key: u.depth
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=57
+  ->  HashAggregate  (cost=112.40..112.44 rows=4 width=26) (actual time=0.762..0.764 rows=4.00 loops=1)
+        Group Key: u.depth
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=57
+        ->  Hash Left Join  (cost=58.00..98.65 rows=1100 width=25) (actual time=0.264..0.561 rows=1100.00 loops=1)
+              Hash Cond: (u.id = p.crawl_url_id)
+              Buffers: shared hit=57
+              ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=41) (actual time=0.008..0.116 rows=1100.00 loops=1)
+                    Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                    Buffers: shared hit=24
+              ->  Hash  (cost=45.50..45.50 rows=1000 width=48) (actual time=0.252..0.253 rows=1000.00 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 87kB
+                    Buffers: shared hit=33
+                    ->  Seq Scan on pages p  (cost=0.00..45.50 rows=1000 width=48) (actual time=0.004..0.124 rows=1000.00 loops=1)
+                          Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                          Buffers: shared hit=33
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.279 ms
+Execution Time: 0.798 ms
+
+=== link graph: nodes (500)
+Limit  (cost=11249.03..11250.28 rows=500 width=111) (actual time=62.287..62.348 rows=500.00 loops=1)
+  Buffers: shared hit=838, temp read=762 written=381
+  CTE links
+    ->  Hash Join  (cost=58.00..1531.98 rows=47413 width=52) (actual time=0.208..12.882 rows=47411.00 loops=1)
+          Hash Cond: (l.source_page_id = sp.id)
+          Buffers: shared hit=757
+          ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=47413 width=61) (actual time=0.006..6.240 rows=47411.00 loops=1)
+                Filter: (is_internal AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                Rows Removed by Filter: 2589
+                Buffers: shared hit=724
+          ->  Hash  (cost=45.50..45.50 rows=1000 width=55) (actual time=0.200..0.200 rows=1000.00 loops=1)
+                Buckets: 1024  Batches: 1  Memory Usage: 94kB
+                Buffers: shared hit=33
+                ->  Seq Scan on pages sp  (cost=0.00..45.50 rows=1000 width=55) (actual time=0.003..0.095 rows=1000.00 loops=1)
+                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                      Buffers: shared hit=33
+  ->  Sort  (cost=9717.05..9838.34 rows=48513 width=111) (actual time=62.285..62.310 rows=500.00 loops=1)
+        Sort Key: u.depth, crawl_urls.normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 138kB
+        Buffers: shared hit=838, temp read=762 written=381
+        ->  WindowAgg  (cost=7178.37..7299.70 rows=48513 width=111) (actual time=61.575..61.808 rows=1200.00 loops=1)
+              Window: w1 AS ()
+              Storage: Memory  Maximum Storage: 154kB
+              Buffers: shared hit=838, temp read=762 written=381
+              ->  Hash Left Join  (cost=4988.59..6572.01 rows=48513 width=103) (actual time=59.782..61.290 rows=1200.00 loops=1)
+                    Hash Cond: (crawl_urls.normalized_url = i.url)
+                    Buffers: shared hit=838, temp read=762 written=381
+                    ->  Hash Left Join  (cost=3738.72..5194.52 rows=48513 width=95) (actual time=48.875..50.160 rows=1200.00 loops=1)
+                          Hash Cond: ((u.id = p.crawl_url_id) AND (u.job_id = p.job_id))
+                          Buffers: shared hit=838, temp read=381 written=381
+                          ->  Hash Left Join  (cost=3678.22..4878.79 rows=48513 width=83) (actual time=48.616..49.583 rows=1200.00 loops=1)
+                                Hash Cond: (crawl_urls.normalized_url = u.normalized_url)
+                                Buffers: shared hit=805, temp read=381 written=381
+                                ->  Hash Right Join  (cost=3626.72..4699.46 rows=48513 width=40) (actual time=48.268..48.922 rows=1200.00 loops=1)
+                                      Hash Cond: (links.source_url = crawl_urls.normalized_url)
+                                      Buffers: shared hit=781, temp read=381 written=381
+                                      ->  HashAggregate  (cost=1185.33..1659.45 rows=47413 width=40) (actual time=9.737..10.011 rows=1000.00 loops=1)
+                                            Group Key: links.source_url
+                                            Batches: 1  Memory Usage: 1113kB
+                                            Buffers: temp read=381 written=1
+                                            ->  CTE Scan on links  (cost=0.00..948.26 rows=47413 width=32) (actual time=0.015..3.460 rows=47411.00 loops=1)
+                                                  Storage: Disk  Maximum Storage: 4097kB
+                                                  Buffers: temp read=381 written=1
+                                      ->  Hash  (cost=1834.99..1834.99 rows=48513 width=32) (actual time=38.494..38.496 rows=1200.00 loops=1)
+                                            Buckets: 65536  Batches: 1  Memory Usage: 579kB
+                                            Buffers: shared hit=781, temp written=380
+                                            ->  HashAggregate  (cost=1349.86..1834.99 rows=48513 width=32) (actual time=38.052..38.240 rows=1200.00 loops=1)
+                                                  Group Key: crawl_urls.normalized_url
+                                                  Batches: 1  Memory Usage: 1113kB
+                                                  Buffers: shared hit=781, temp written=380
+                                                  ->  Append  (cost=0.00..1228.58 rows=48513 width=32) (actual time=0.006..31.255 rows=48511.00 loops=1)
+                                                        Buffers: shared hit=781, temp written=380
+                                                        ->  Seq Scan on crawl_urls  (cost=0.00..37.75 rows=1100 width=24) (actual time=0.006..0.114 rows=1100.00 loops=1)
+                                                              Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                                              Buffers: shared hit=24
+                                                        ->  CTE Scan on links links_1  (cost=0.00..948.26 rows=47413 width=32) (actual time=0.209..27.806 rows=47411.00 loops=1)
+                                                              Storage: Disk  Maximum Storage: 4097kB
+                                                              Buffers: shared hit=757, temp written=380
+                                ->  Hash  (cost=37.75..37.75 rows=1100 width=67) (actual time=0.344..0.344 rows=1100.00 loops=1)
+                                      Buckets: 2048  Batches: 1  Memory Usage: 124kB
+                                      Buffers: shared hit=24
+                                      ->  Seq Scan on crawl_urls u  (cost=0.00..37.75 rows=1100 width=67) (actual time=0.012..0.174 rows=1100.00 loops=1)
+                                            Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                            Buffers: shared hit=24
+                          ->  Hash  (cost=45.50..45.50 rows=1000 width=76) (actual time=0.255..0.256 rows=1000.00 loops=1)
+                                Buckets: 1024  Batches: 1  Memory Usage: 115kB
+                                Buffers: shared hit=33
+                                ->  Seq Scan on pages p  (cost=0.00..45.50 rows=1000 width=76) (actual time=0.005..0.124 rows=1000.00 loops=1)
+                                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                                      Buffers: shared hit=33
+                    ->  Hash  (cost=1225.04..1225.04 rows=1986 width=40) (actual time=10.903..10.903 rows=1200.00 loops=1)
+                          Buckets: 2048  Batches: 1  Memory Usage: 92kB
+                          Buffers: temp read=381
+                          ->  Subquery Scan on i  (cost=1185.33..1225.04 rows=1986 width=40) (actual time=10.536..10.744 rows=1200.00 loops=1)
+                                Buffers: temp read=381
+                                ->  HashAggregate  (cost=1185.33..1205.18 rows=1986 width=40) (actual time=10.535..10.653 rows=1200.00 loops=1)
+                                      Group Key: links_2.target_url
+                                      Batches: 1  Memory Usage: 217kB
+                                      Buffers: temp read=381
+                                      ->  CTE Scan on links links_2  (cost=0.00..948.26 rows=47413 width=32) (actual time=0.005..3.642 rows=47411.00 loops=1)
+                                            Storage: Disk  Maximum Storage: 4097kB
+                                            Buffers: temp read=381
+Planning:
+  Buffers: shared hit=41
+Planning Time: 0.585 ms
+Execution Time: 63.017 ms
+
+=== link graph: edges (2000)
+Limit  (cost=4028.41..4028.74 rows=134 width=77) (actual time=38.007..38.209 rows=2000.00 loops=1)
+  Buffers: shared hit=757, temp read=381 written=381
+  CTE links
+    ->  Hash Join  (cost=58.00..1531.98 rows=47413 width=52) (actual time=0.239..14.052 rows=47411.00 loops=1)
+          Hash Cond: (l.source_page_id = sp.id)
+          Buffers: shared hit=757
+          ->  Seq Scan on page_links l  (cost=0.00..1349.00 rows=47413 width=61) (actual time=0.009..6.336 rows=47411.00 loops=1)
+                Filter: (is_internal AND (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid))
+                Rows Removed by Filter: 2589
+                Buffers: shared hit=724
+          ->  Hash  (cost=45.50..45.50 rows=1000 width=55) (actual time=0.228..0.228 rows=1000.00 loops=1)
+                Buckets: 1024  Batches: 1  Memory Usage: 94kB
+                Buffers: shared hit=33
+                ->  Seq Scan on pages sp  (cost=0.00..45.50 rows=1000 width=55) (actual time=0.003..0.113 rows=1000.00 loops=1)
+                      Filter: (job_id = '01a1b916-e287-725c-80b6-2c0a569a0e55'::uuid)
+                      Buffers: shared hit=33
+  InitPlan 2
+    ->  Aggregate  (cost=1066.79..1066.80 rows=1 width=8) (actual time=29.587..29.587 rows=1.00 loops=1)
+          Buffers: shared hit=722, temp written=380
+          ->  CTE Scan on links links_1  (cost=0.00..948.26 rows=47413 width=0) (actual time=0.000..27.215 rows=47411.00 loops=1)
+                Storage: Disk  Maximum Storage: 4097kB
+                Buffers: shared hit=722, temp written=380
+  ->  Sort  (cost=1429.62..1429.96 rows=134 width=77) (actual time=38.005..38.077 rows=2000.00 loops=1)
+        Sort Key: links.source_url COLLATE "C", links."position", links.target_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 597kB
+        Buffers: shared hit=757, temp read=381 written=381
+        ->  CTE Scan on links  (cost=2.50..1424.89 rows=134 width=77) (actual time=29.856..35.440 rows=8101.00 loops=1)
+              Filter: ((source_url = ANY ('{https://bench.test/,https://bench.test/down-2,https://bench.test/down-6,https://bench.test/down-9,https://bench.test/missing-12,https://bench.test/missing-13,https://bench.test/missing-16,https://bench.test/missing-17,https://bench.test/missing-21,https://bench.test/missing-29,https://bench.test/missing-31,https://bench.test/missing-33,https://bench.test/missing-34,https://bench.test/missing-35,https://bench.test/missing-36,https://bench.test/missing-37,https://bench.test/missing-39,https://bench.test/missing-44,https://bench.test/missing-46,https://bench.test/missing-6,https://bench.test/missing-7,https://bench.test/old-10,https://bench.test/old-12,https://bench.test/old-13,https://bench.test/old-15,https://bench.test/old-16,https://bench.test/old-19,https://bench.test/old-4,https://bench.test/old-6,https://bench.test/old-8,https://bench.test/old-9,https://bench.test/p1,https://bench.test/p10,https://bench.test/p2,https://bench.test/p3,https://bench.test/p4,https://bench.test/p5,https://bench.test/p6,https://bench.test/p7,https://bench.test/p8,https://bench.test/p9,https://bench.test/private-0,https://bench.test/private-3,https://bench.test/private-6,https://bench.test/private-8,https://bench.test/slow-1,https://bench.test/slow-2,https://bench.test/slow-3,https://bench.test/slow-5,https://bench.test/slow-6,https://bench.test/slow-7,https://bench.test/down-4,https://bench.test/down-5,https://bench.test/down-7,https://bench.test/down-8,https://bench.test/missing-0,https://bench.test/missing-14,https://bench.test/missing-15,https://bench.test/missing-2,https://bench.test/missing-23,https://bench.test/missing-24,https://bench.test/missing-3,https://bench.test/missing-40,https://bench.test/missing-41,https://bench.test/missing-42,https://bench.test/missing-48,https://bench.test/missing-49,https://bench.test/missing-9,https://bench.test/old-1,https://bench.test/old-11,https://bench.test/old-17,https://bench.test/old-18,https://bench.test/old-2,https://bench.test/old-5,https://bench.test/old-7,https://bench.test/p100,https://bench.test/p101,https://bench.test/p102,https://bench.test/p103,https://bench.test/p104,https://bench.test/p105,https://bench.test/p106,https://bench.test/p107,https://bench.test/p108,https://bench.test/p109,https://bench.test/p11,https://bench.test/p110,https://bench.test/p12,https://bench.test/p13,https://bench.test/p14,https://bench.test/p15,https://bench.test/p16,https://bench.test/p17,https://bench.test/p18,https://bench.test/p19,https://bench.test/p20,https://bench.test/p21,https://bench.test/p22,https://bench.test/p23,https://bench.test/p24,https://bench.test/p25,https://bench.test/p26,https://bench.test/p27,https://bench.test/p28,https://bench.test/p29,https://bench.test/p30,https://bench.test/p31,https://bench.test/p32,https://bench.test/p33,https://bench.test/p34,https://bench.test/p35,https://bench.test/p36,https://bench.test/p37,https://bench.test/p38,https://bench.test/p39,https://bench.test/p40,https://bench.test/p41,https://bench.test/p42,https://bench.test/p43,https://bench.test/p44,https://bench.test/p45,https://bench.test/p46,https://bench.test/p47,https://bench.test/p48,https://bench.test/p49,https://bench.test/p50,https://bench.test/p51,https://bench.test/p52,https://bench.test/p53,https://bench.test/p54,https://bench.test/p55,https://bench.test/p56,https://bench.test/p57,https://bench.test/p58,https://bench.test/p59,https://bench.test/p60,https://bench.test/p61,https://bench.test/p62,https://bench.test/p63,https://bench.test/p64,https://bench.test/p65,https://bench.test/p66,https://bench.test/p67,https://bench.test/p68,https://bench.test/p69,https://bench.test/p70,https://bench.test/p71,https://bench.test/p72,https://bench.test/p73,https://bench.test/p74,https://bench.test/p75,https://bench.test/p76,https://bench.test/p77,https://bench.test/p78,https://bench.test/p79,https://bench.test/p80,https://bench.test/p81,https://bench.test/p82,https://bench.test/p83,https://bench.test/p84,https://bench.test/p85,https://bench.test/p86,https://bench.test/p87,https://bench.test/p88,https://bench.test/p89,https://bench.test/p90,https://bench.test/p91,https://bench.test/p92,https://bench.test/p93,https://bench.test/p94,https://bench.test/p95,https://bench.test/p96,https://bench.test/p97,https://bench.test/p98,https://bench.test/p99,https://bench.test/private-4,https://bench.test/private-9,https://bench.test/slow-0,https://bench.test/slow-8,https://bench.test/slow-9,https://bench.test/down-0,https://bench.test/down-1,https://bench.test/down-3,https://bench.test/missing-1,https://bench.test/missing-10,https://bench.test/missing-11,https://bench.test/missing-18,https://bench.test/missing-19,https://bench.test/missing-20,https://bench.test/missing-22,https://bench.test/missing-25,https://bench.test/missing-26,https://bench.test/missing-27,https://bench.test/missing-28,https://bench.test/missing-30,https://bench.test/missing-32,https://bench.test/missing-38,https://bench.test/missing-4,https://bench.test/missing-43,https://bench.test/missing-45,https://bench.test/missing-47,https://bench.test/missing-5,https://bench.test/missing-8,https://bench.test/old-0,https://bench.test/old-14,https://bench.test/old-3,https://bench.test/p111,https://bench.test/p112,https://bench.test/p113,https://bench.test/p114,https://bench.test/p115,https://bench.test/p116,https://bench.test/p117,https://bench.test/p118,https://bench.test/p119,https://bench.test/p120,https://bench.test/p121,https://bench.test/p122,https://bench.test/p123,https://bench.test/p124,https://bench.test/p125,https://bench.test/p126,https://bench.test/p127,https://bench.test/p128,https://bench.test/p129,https://bench.test/p130,https://bench.test/p131,https://bench.test/p132,https://bench.test/p133,https://bench.test/p134,https://bench.test/p135,https://bench.test/p136,https://bench.test/p137,https://bench.test/p138,https://bench.test/p139,https://bench.test/p140,https://bench.test/p141,https://bench.test/p142,https://bench.test/p143,https://bench.test/p144,https://bench.test/p145,https://bench.test/p146,https://bench.test/p147,https://bench.test/p148,https://bench.test/p149,https://bench.test/p150,https://bench.test/p151,https://bench.test/p152,https://bench.test/p153,https://bench.test/p154,https://bench.test/p155,https://bench.test/p156,https://bench.test/p157,https://bench.test/p158,https://bench.test/p159,https://bench.test/p160,https://bench.test/p161,https://bench.test/p162,https://bench.test/p163,https://bench.test/p164,https://bench.test/p165,https://bench.test/p166,https://bench.test/p167,https://bench.test/p168,https://bench.test/p169,https://bench.test/p170,https://bench.test/p171,https://bench.test/p172,https://bench.test/p173,https://bench.test/p174,https://bench.test/p175,https://bench.test/p176,https://bench.test/p177,https://bench.test/p178,https://bench.test/p179,https://bench.test/p180,https://bench.test/p181,https://bench.test/p182,https://bench.test/p183,https://bench.test/p184,https://bench.test/p185,https://bench.test/p186,https://bench.test/p187,https://bench.test/p188,https://bench.test/p189,https://bench.test/p190,https://bench.test/p191,https://bench.test/p192,https://bench.test/p193,https://bench.test/p194,https://bench.test/p195,https://bench.test/p196,https://bench.test/p197,https://bench.test/p198,https://bench.test/p199,https://bench.test/p200,https://bench.test/p201,https://bench.test/p202,https://bench.test/p203,https://bench.test/p204,https://bench.test/p205,https://bench.test/p206,https://bench.test/p207,https://bench.test/p208,https://bench.test/p209,https://bench.test/p210,https://bench.test/p211,https://bench.test/p212,https://bench.test/p213,https://bench.test/p214,https://bench.test/p215,https://bench.test/p216,https://bench.test/p217,https://bench.test/p218,https://bench.test/p219,https://bench.test/p220,https://bench.test/p221,https://bench.test/p222,https://bench.test/p223,https://bench.test/p224,https://bench.test/p225,https://bench.test/p226,https://bench.test/p227,https://bench.test/p228,https://bench.test/p229,https://bench.test/p230,https://bench.test/p231,https://bench.test/p232,https://bench.test/p233,https://bench.test/p234,https://bench.test/p235,https://bench.test/p236,https://bench.test/p237,https://bench.test/p238,https://bench.test/p239,https://bench.test/p240,https://bench.test/p241,https://bench.test/p242,https://bench.test/p243,https://bench.test/p244,https://bench.test/p245,https://bench.test/p246,https://bench.test/p247,https://bench.test/p248,https://bench.test/p249,https://bench.test/p250,https://bench.test/p251,https://bench.test/p252,https://bench.test/p253,https://bench.test/p254,https://bench.test/p255,https://bench.test/p256,https://bench.test/p257,https://bench.test/p258,https://bench.test/p259,https://bench.test/p260,https://bench.test/p261,https://bench.test/p262,https://bench.test/p263,https://bench.test/p264,https://bench.test/p265,https://bench.test/p266,https://bench.test/p267,https://bench.test/p268,https://bench.test/p269,https://bench.test/p270,https://bench.test/p271,https://bench.test/p272,https://bench.test/p273,https://bench.test/p274,https://bench.test/p275,https://bench.test/p276,https://bench.test/p277,https://bench.test/p278,https://bench.test/p279,https://bench.test/p280,https://bench.test/p281,https://bench.test/p282,https://bench.test/p283,https://bench.test/p284,https://bench.test/p285,https://bench.test/p286,https://bench.test/p287,https://bench.test/p288,https://bench.test/p289,https://bench.test/p290,https://bench.test/p291,https://bench.test/p292,https://bench.test/p293,https://bench.test/p294,https://bench.test/p295,https://bench.test/p296,https://bench.test/p297,https://bench.test/p298,https://bench.test/p299,https://bench.test/p300,https://bench.test/p301,https://bench.test/p302,https://bench.test/p303,https://bench.test/p304,https://bench.test/p305,https://bench.test/p306,https://bench.test/p307,https://bench.test/p308,https://bench.test/p309,https://bench.test/p310,https://bench.test/p311,https://bench.test/p312,https://bench.test/p313,https://bench.test/p314,https://bench.test/p315,https://bench.test/p316,https://bench.test/p317,https://bench.test/p318,https://bench.test/p319,https://bench.test/p320,https://bench.test/p321,https://bench.test/p322,https://bench.test/p323,https://bench.test/p324,https://bench.test/p325,https://bench.test/p326,https://bench.test/p327,https://bench.test/p328,https://bench.test/p329,https://bench.test/p330,https://bench.test/p331,https://bench.test/p332,https://bench.test/p333,https://bench.test/p334,https://bench.test/p335,https://bench.test/p336,https://bench.test/p337,https://bench.test/p338,https://bench.test/p339,https://bench.test/p340,https://bench.test/p341,https://bench.test/p342,https://bench.test/p343,https://bench.test/p344,https://bench.test/p345,https://bench.test/p346,https://bench.test/p347,https://bench.test/p348,https://bench.test/p349,https://bench.test/p350,https://bench.test/p351,https://bench.test/p352,https://bench.test/p353,https://bench.test/p354,https://bench.test/p355,https://bench.test/p356,https://bench.test/p357,https://bench.test/p358,https://bench.test/p359,https://bench.test/p360,https://bench.test/p361,https://bench.test/p362,https://bench.test/p363,https://bench.test/p364,https://bench.test/p365,https://bench.test/p366,https://bench.test/p367,https://bench.test/p368,https://bench.test/p369,https://bench.test/p370,https://bench.test/p371,https://bench.test/p372,https://bench.test/p373,https://bench.test/p374,https://bench.test/p375,https://bench.test/p376,https://bench.test/p377,https://bench.test/p378,https://bench.test/p379,https://bench.test/p380,https://bench.test/p381,https://bench.test/p382,https://bench.test/p383,https://bench.test/p384,https://bench.test/p385,https://bench.test/p386,https://bench.test/p387,https://bench.test/p388,https://bench.test/p389,https://bench.test/p390,https://bench.test/p391,https://bench.test/p392,https://bench.test/p393,https://bench.test/p394,https://bench.test/p395,https://bench.test/p396,https://bench.test/p397,https://bench.test/p398,https://bench.test/p399,https://bench.test/p400,https://bench.test/p401,https://bench.test/p402,https://bench.test/p403,https://bench.test/p404}'::text[])) AND (target_url = ANY ('{https://bench.test/,https://bench.test/down-2,https://bench.test/down-6,https://bench.test/down-9,https://bench.test/missing-12,https://bench.test/missing-13,https://bench.test/missing-16,https://bench.test/missing-17,https://bench.test/missing-21,https://bench.test/missing-29,https://bench.test/missing-31,https://bench.test/missing-33,https://bench.test/missing-34,https://bench.test/missing-35,https://bench.test/missing-36,https://bench.test/missing-37,https://bench.test/missing-39,https://bench.test/missing-44,https://bench.test/missing-46,https://bench.test/missing-6,https://bench.test/missing-7,https://bench.test/old-10,https://bench.test/old-12,https://bench.test/old-13,https://bench.test/old-15,https://bench.test/old-16,https://bench.test/old-19,https://bench.test/old-4,https://bench.test/old-6,https://bench.test/old-8,https://bench.test/old-9,https://bench.test/p1,https://bench.test/p10,https://bench.test/p2,https://bench.test/p3,https://bench.test/p4,https://bench.test/p5,https://bench.test/p6,https://bench.test/p7,https://bench.test/p8,https://bench.test/p9,https://bench.test/private-0,https://bench.test/private-3,https://bench.test/private-6,https://bench.test/private-8,https://bench.test/slow-1,https://bench.test/slow-2,https://bench.test/slow-3,https://bench.test/slow-5,https://bench.test/slow-6,https://bench.test/slow-7,https://bench.test/down-4,https://bench.test/down-5,https://bench.test/down-7,https://bench.test/down-8,https://bench.test/missing-0,https://bench.test/missing-14,https://bench.test/missing-15,https://bench.test/missing-2,https://bench.test/missing-23,https://bench.test/missing-24,https://bench.test/missing-3,https://bench.test/missing-40,https://bench.test/missing-41,https://bench.test/missing-42,https://bench.test/missing-48,https://bench.test/missing-49,https://bench.test/missing-9,https://bench.test/old-1,https://bench.test/old-11,https://bench.test/old-17,https://bench.test/old-18,https://bench.test/old-2,https://bench.test/old-5,https://bench.test/old-7,https://bench.test/p100,https://bench.test/p101,https://bench.test/p102,https://bench.test/p103,https://bench.test/p104,https://bench.test/p105,https://bench.test/p106,https://bench.test/p107,https://bench.test/p108,https://bench.test/p109,https://bench.test/p11,https://bench.test/p110,https://bench.test/p12,https://bench.test/p13,https://bench.test/p14,https://bench.test/p15,https://bench.test/p16,https://bench.test/p17,https://bench.test/p18,https://bench.test/p19,https://bench.test/p20,https://bench.test/p21,https://bench.test/p22,https://bench.test/p23,https://bench.test/p24,https://bench.test/p25,https://bench.test/p26,https://bench.test/p27,https://bench.test/p28,https://bench.test/p29,https://bench.test/p30,https://bench.test/p31,https://bench.test/p32,https://bench.test/p33,https://bench.test/p34,https://bench.test/p35,https://bench.test/p36,https://bench.test/p37,https://bench.test/p38,https://bench.test/p39,https://bench.test/p40,https://bench.test/p41,https://bench.test/p42,https://bench.test/p43,https://bench.test/p44,https://bench.test/p45,https://bench.test/p46,https://bench.test/p47,https://bench.test/p48,https://bench.test/p49,https://bench.test/p50,https://bench.test/p51,https://bench.test/p52,https://bench.test/p53,https://bench.test/p54,https://bench.test/p55,https://bench.test/p56,https://bench.test/p57,https://bench.test/p58,https://bench.test/p59,https://bench.test/p60,https://bench.test/p61,https://bench.test/p62,https://bench.test/p63,https://bench.test/p64,https://bench.test/p65,https://bench.test/p66,https://bench.test/p67,https://bench.test/p68,https://bench.test/p69,https://bench.test/p70,https://bench.test/p71,https://bench.test/p72,https://bench.test/p73,https://bench.test/p74,https://bench.test/p75,https://bench.test/p76,https://bench.test/p77,https://bench.test/p78,https://bench.test/p79,https://bench.test/p80,https://bench.test/p81,https://bench.test/p82,https://bench.test/p83,https://bench.test/p84,https://bench.test/p85,https://bench.test/p86,https://bench.test/p87,https://bench.test/p88,https://bench.test/p89,https://bench.test/p90,https://bench.test/p91,https://bench.test/p92,https://bench.test/p93,https://bench.test/p94,https://bench.test/p95,https://bench.test/p96,https://bench.test/p97,https://bench.test/p98,https://bench.test/p99,https://bench.test/private-4,https://bench.test/private-9,https://bench.test/slow-0,https://bench.test/slow-8,https://bench.test/slow-9,https://bench.test/down-0,https://bench.test/down-1,https://bench.test/down-3,https://bench.test/missing-1,https://bench.test/missing-10,https://bench.test/missing-11,https://bench.test/missing-18,https://bench.test/missing-19,https://bench.test/missing-20,https://bench.test/missing-22,https://bench.test/missing-25,https://bench.test/missing-26,https://bench.test/missing-27,https://bench.test/missing-28,https://bench.test/missing-30,https://bench.test/missing-32,https://bench.test/missing-38,https://bench.test/missing-4,https://bench.test/missing-43,https://bench.test/missing-45,https://bench.test/missing-47,https://bench.test/missing-5,https://bench.test/missing-8,https://bench.test/old-0,https://bench.test/old-14,https://bench.test/old-3,https://bench.test/p111,https://bench.test/p112,https://bench.test/p113,https://bench.test/p114,https://bench.test/p115,https://bench.test/p116,https://bench.test/p117,https://bench.test/p118,https://bench.test/p119,https://bench.test/p120,https://bench.test/p121,https://bench.test/p122,https://bench.test/p123,https://bench.test/p124,https://bench.test/p125,https://bench.test/p126,https://bench.test/p127,https://bench.test/p128,https://bench.test/p129,https://bench.test/p130,https://bench.test/p131,https://bench.test/p132,https://bench.test/p133,https://bench.test/p134,https://bench.test/p135,https://bench.test/p136,https://bench.test/p137,https://bench.test/p138,https://bench.test/p139,https://bench.test/p140,https://bench.test/p141,https://bench.test/p142,https://bench.test/p143,https://bench.test/p144,https://bench.test/p145,https://bench.test/p146,https://bench.test/p147,https://bench.test/p148,https://bench.test/p149,https://bench.test/p150,https://bench.test/p151,https://bench.test/p152,https://bench.test/p153,https://bench.test/p154,https://bench.test/p155,https://bench.test/p156,https://bench.test/p157,https://bench.test/p158,https://bench.test/p159,https://bench.test/p160,https://bench.test/p161,https://bench.test/p162,https://bench.test/p163,https://bench.test/p164,https://bench.test/p165,https://bench.test/p166,https://bench.test/p167,https://bench.test/p168,https://bench.test/p169,https://bench.test/p170,https://bench.test/p171,https://bench.test/p172,https://bench.test/p173,https://bench.test/p174,https://bench.test/p175,https://bench.test/p176,https://bench.test/p177,https://bench.test/p178,https://bench.test/p179,https://bench.test/p180,https://bench.test/p181,https://bench.test/p182,https://bench.test/p183,https://bench.test/p184,https://bench.test/p185,https://bench.test/p186,https://bench.test/p187,https://bench.test/p188,https://bench.test/p189,https://bench.test/p190,https://bench.test/p191,https://bench.test/p192,https://bench.test/p193,https://bench.test/p194,https://bench.test/p195,https://bench.test/p196,https://bench.test/p197,https://bench.test/p198,https://bench.test/p199,https://bench.test/p200,https://bench.test/p201,https://bench.test/p202,https://bench.test/p203,https://bench.test/p204,https://bench.test/p205,https://bench.test/p206,https://bench.test/p207,https://bench.test/p208,https://bench.test/p209,https://bench.test/p210,https://bench.test/p211,https://bench.test/p212,https://bench.test/p213,https://bench.test/p214,https://bench.test/p215,https://bench.test/p216,https://bench.test/p217,https://bench.test/p218,https://bench.test/p219,https://bench.test/p220,https://bench.test/p221,https://bench.test/p222,https://bench.test/p223,https://bench.test/p224,https://bench.test/p225,https://bench.test/p226,https://bench.test/p227,https://bench.test/p228,https://bench.test/p229,https://bench.test/p230,https://bench.test/p231,https://bench.test/p232,https://bench.test/p233,https://bench.test/p234,https://bench.test/p235,https://bench.test/p236,https://bench.test/p237,https://bench.test/p238,https://bench.test/p239,https://bench.test/p240,https://bench.test/p241,https://bench.test/p242,https://bench.test/p243,https://bench.test/p244,https://bench.test/p245,https://bench.test/p246,https://bench.test/p247,https://bench.test/p248,https://bench.test/p249,https://bench.test/p250,https://bench.test/p251,https://bench.test/p252,https://bench.test/p253,https://bench.test/p254,https://bench.test/p255,https://bench.test/p256,https://bench.test/p257,https://bench.test/p258,https://bench.test/p259,https://bench.test/p260,https://bench.test/p261,https://bench.test/p262,https://bench.test/p263,https://bench.test/p264,https://bench.test/p265,https://bench.test/p266,https://bench.test/p267,https://bench.test/p268,https://bench.test/p269,https://bench.test/p270,https://bench.test/p271,https://bench.test/p272,https://bench.test/p273,https://bench.test/p274,https://bench.test/p275,https://bench.test/p276,https://bench.test/p277,https://bench.test/p278,https://bench.test/p279,https://bench.test/p280,https://bench.test/p281,https://bench.test/p282,https://bench.test/p283,https://bench.test/p284,https://bench.test/p285,https://bench.test/p286,https://bench.test/p287,https://bench.test/p288,https://bench.test/p289,https://bench.test/p290,https://bench.test/p291,https://bench.test/p292,https://bench.test/p293,https://bench.test/p294,https://bench.test/p295,https://bench.test/p296,https://bench.test/p297,https://bench.test/p298,https://bench.test/p299,https://bench.test/p300,https://bench.test/p301,https://bench.test/p302,https://bench.test/p303,https://bench.test/p304,https://bench.test/p305,https://bench.test/p306,https://bench.test/p307,https://bench.test/p308,https://bench.test/p309,https://bench.test/p310,https://bench.test/p311,https://bench.test/p312,https://bench.test/p313,https://bench.test/p314,https://bench.test/p315,https://bench.test/p316,https://bench.test/p317,https://bench.test/p318,https://bench.test/p319,https://bench.test/p320,https://bench.test/p321,https://bench.test/p322,https://bench.test/p323,https://bench.test/p324,https://bench.test/p325,https://bench.test/p326,https://bench.test/p327,https://bench.test/p328,https://bench.test/p329,https://bench.test/p330,https://bench.test/p331,https://bench.test/p332,https://bench.test/p333,https://bench.test/p334,https://bench.test/p335,https://bench.test/p336,https://bench.test/p337,https://bench.test/p338,https://bench.test/p339,https://bench.test/p340,https://bench.test/p341,https://bench.test/p342,https://bench.test/p343,https://bench.test/p344,https://bench.test/p345,https://bench.test/p346,https://bench.test/p347,https://bench.test/p348,https://bench.test/p349,https://bench.test/p350,https://bench.test/p351,https://bench.test/p352,https://bench.test/p353,https://bench.test/p354,https://bench.test/p355,https://bench.test/p356,https://bench.test/p357,https://bench.test/p358,https://bench.test/p359,https://bench.test/p360,https://bench.test/p361,https://bench.test/p362,https://bench.test/p363,https://bench.test/p364,https://bench.test/p365,https://bench.test/p366,https://bench.test/p367,https://bench.test/p368,https://bench.test/p369,https://bench.test/p370,https://bench.test/p371,https://bench.test/p372,https://bench.test/p373,https://bench.test/p374,https://bench.test/p375,https://bench.test/p376,https://bench.test/p377,https://bench.test/p378,https://bench.test/p379,https://bench.test/p380,https://bench.test/p381,https://bench.test/p382,https://bench.test/p383,https://bench.test/p384,https://bench.test/p385,https://bench.test/p386,https://bench.test/p387,https://bench.test/p388,https://bench.test/p389,https://bench.test/p390,https://bench.test/p391,https://bench.test/p392,https://bench.test/p393,https://bench.test/p394,https://bench.test/p395,https://bench.test/p396,https://bench.test/p397,https://bench.test/p398,https://bench.test/p399,https://bench.test/p400,https://bench.test/p401,https://bench.test/p402,https://bench.test/p403,https://bench.test/p404}'::text[])))
+              Rows Removed by Filter: 39310
+              Storage: Disk  Maximum Storage: 4097kB
+              Buffers: shared hit=757, temp read=381 written=381
+Planning:
+  Buffers: shared hit=14
+Planning Time: 1.764 ms
+Execution Time: 38.768 ms
+
+##### 10000 pages: {'crawl_urls': 11000, 'pages': 10000, 'page_links': 500000}
+
+=== pages: first 50
+Limit  (cost=1778.18..1778.31 rows=51 width=150) (actual time=11.594..11.601 rows=51.00 loops=1)
+  Buffers: shared hit=751
+  ->  Sort  (cost=1778.18..1800.91 rows=9091 width=150) (actual time=11.592..11.595 rows=51.00 loops=1)
+        Sort Key: u.depth, p.normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 39kB
+        Buffers: shared hit=751
+        ->  Hash Left Join  (cost=932.25..1474.89 rows=9091 width=150) (actual time=4.192..9.620 rows=10000.00 loops=1)
+              Hash Cond: (p.id = d.page_id)
+              Buffers: shared hit=751
+              ->  Hash Join  (cost=548.75..1067.51 rows=9091 width=110) (actual time=2.180..5.997 rows=10000.00 loops=1)
+                    Hash Cond: (p.crawl_url_id = u.id)
+                    Buffers: shared hit=615
+                    ->  Seq Scan on pages p  (cost=0.00..492.50 rows=10000 width=140) (actual time=0.064..2.124 rows=10000.00 loops=1)
+                          Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                          Rows Removed by Filter: 1000
+                          Buffers: shared hit=355
+                    ->  Hash  (cost=411.25..411.25 rows=11000 width=34) (actual time=2.105..2.105 rows=11000.00 loops=1)
+                          Buckets: 16384  Batches: 1  Memory Usage: 837kB
+                          Buffers: shared hit=260
+                          ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=34) (actual time=0.063..1.073 rows=11000.00 loops=1)
+                                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                Rows Removed by Filter: 1100
+                                Buffers: shared hit=260
+              ->  Hash  (cost=246.00..246.00 rows=11000 width=32) (actual time=2.000..2.000 rows=11000.00 loops=1)
+                    Buckets: 16384  Batches: 1  Memory Usage: 730kB
+                    Buffers: shared hit=136
+                    ->  Seq Scan on search_documents d  (cost=0.00..246.00 rows=11000 width=32) (actual time=0.005..0.838 rows=11000.00 loops=1)
+                          Buffers: shared hit=136
+Planning:
+  Buffers: shared hit=26
+Planning Time: 0.327 ms
+Execution Time: 11.627 ms
+
+=== links: first 50
+Limit  (cost=70838.20..71123.68 rows=51 width=181) (actual time=227.071..307.008 rows=51.00 loops=1)
+  Buffers: shared hit=11526, temp read=1474 written=6838
+  CTE chain
+    ->  Recursive Union  (cost=0.00..28275.27 rows=11030 width=145) (actual time=0.094..7.156 rows=11200.00 loops=1)
+          Storage: Memory  Maximum Storage: 2013kB
+          Buffers: shared hit=1060
+          ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=138) (actual time=0.092..3.261 rows=11000.00 loops=1)
+                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                Rows Removed by Filter: 1100
+                Buffers: shared hit=260
+          ->  Nested Loop  (cost=0.41..2775.37 rows=3 width=145) (actual time=0.365..0.757 rows=100.00 loops=2)
+                Buffers: shared hit=800
+                ->  WorkTable Scan on chain c  (cost=0.00..2750.00 rows=3 width=100) (actual time=0.349..0.373 rows=100.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 5500
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..8.44 rows=1 width=77) (actual time=0.003..0.003 rows=1.00 loops=200)
+                      Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 200
+                      Buffers: shared hit=800
+  CTE final
+    ->  Unique  (cost=1126.67..1181.82 rows=200 width=175) (actual time=16.764..18.576 rows=11000.00 loops=1)
+          Buffers: shared hit=1060
+          ->  Sort  (cost=1126.67..1154.24 rows=11030 width=175) (actual time=16.762..17.202 rows=11200.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 1626kB
+                Buffers: shared hit=1060
+                ->  CTE Scan on chain  (cost=0.00..386.05 rows=11030 width=175) (actual time=0.098..11.892 rows=11200.00 loops=1)
+                      Storage: Memory  Maximum Storage: 1997kB
+                      Buffers: shared hit=1060
+  ->  Nested Loop Left Join  (cost=41381.11..2588798.90 rows=455084 width=181) (actual time=227.069..306.984 rows=51.00 loops=1)
+        Join Filter: (f.start_url = l.target_normalized_url)
+        Rows Removed by Join Filter: 550382
+        Buffers: shared hit=11526, temp read=1474 written=6838
+        ->  Nested Loop  (cost=41381.11..511907.30 rows=455084 width=153) (actual time=207.887..221.092 rows=51.00 loops=1)
+              Buffers: shared hit=10466, temp read=1474 written=6838
+              ->  Nested Loop Left Join  (cost=41381.11..506217.72 rows=455084 width=122) (actual time=207.869..221.023 rows=51.00 loops=1)
+                    Buffers: shared hit=10465, temp read=1474 written=6838
+                    ->  Gather Merge  (cost=41380.41..94382.45 rows=455084 width=97) (actual time=207.812..220.156 rows=51.00 loops=1)
+                          Workers Planned: 2
+                          Workers Launched: 2
+                          Buffers: shared hit=10136, temp read=1474 written=6838
+                          ->  Sort  (cost=40380.39..40854.44 rows=189618 width=97) (actual time=191.841..191.916 rows=356.00 loops=3)
+                                Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+                                Sort Method: external merge  Disk: 19936kB
+                                Buffers: shared hit=10136, temp read=1474 written=6838
+                                Worker 0:  Sort Method: external merge  Disk: 17160kB
+                                Worker 1:  Sort Method: external merge  Disk: 17480kB
+                                ->  Hash Join  (cost=1166.25..13387.28 rows=189618 width=97) (actual time=6.822..80.963 rows=166666.67 loops=3)
+                                      Hash Cond: (sp.crawl_url_id = su.id)
+                                      Buffers: shared hit=10106
+                                      ->  Hash Join  (cost=617.50..12290.82 rows=208580 width=127) (actual time=4.167..53.487 rows=166666.67 loops=3)
+                                            Hash Cond: (l.source_page_id = sp.id)
+                                            Buffers: shared hit=9326
+                                            ->  Parallel Seq Scan on page_links l  (cost=0.00..11125.58 rows=208580 width=70) (actual time=0.825..23.583 rows=166666.67 loops=3)
+                                                  Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                  Rows Removed by Filter: 16667
+                                                  Buffers: shared hit=8261
+                                            ->  Hash  (cost=492.50..492.50 rows=10000 width=73) (actual time=3.282..3.284 rows=10000.00 loops=3)
+                                                  Buckets: 16384  Batches: 1  Memory Usage: 1163kB
+                                                  Buffers: shared hit=1065
+                                                  ->  Seq Scan on pages sp  (cost=0.00..492.50 rows=10000 width=73) (actual time=0.096..1.672 rows=10000.00 loops=3)
+                                                        Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                        Rows Removed by Filter: 1000
+                                                        Buffers: shared hit=1065
+                                      ->  Hash  (cost=411.25..411.25 rows=11000 width=34) (actual time=2.594..2.596 rows=11000.00 loops=3)
+                                            Buckets: 16384  Batches: 1  Memory Usage: 837kB
+                                            Buffers: shared hit=780
+                                            ->  Seq Scan on crawl_urls su  (cost=0.00..411.25 rows=11000 width=34) (actual time=0.089..1.210 rows=11000.00 loops=3)
+                                                  Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                  Rows Removed by Filter: 1100
+                                                  Buffers: shared hit=780
+                    ->  Nested Loop Left Join  (cost=0.70..0.89 rows=1 width=66) (actual time=0.015..0.016 rows=0.88 loops=51)
+                          Buffers: shared hit=329
+                          ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls t  (cost=0.41..0.43 rows=1 width=66) (actual time=0.009..0.010 rows=0.88 loops=51)
+                                Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = l.target_normalized_url))
+                                Index Searches: 51
+                                Buffers: shared hit=198
+                          ->  Index Scan using uq_pages_crawl_url_id on pages tp  (cost=0.29..0.45 rows=1 width=48) (actual time=0.004..0.004 rows=0.91 loops=45)
+                                Index Cond: (crawl_url_id = t.id)
+                                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                Index Searches: 45
+                                Buffers: shared hit=131
+              ->  Materialize  (cost=0.00..1.03 rows=1 width=63) (actual time=0.000..0.001 rows=1.00 loops=51)
+                    Storage: Memory  Maximum Storage: 17kB
+                    Buffers: shared hit=1
+                    ->  Seq Scan on crawl_jobs j  (cost=0.00..1.02 rows=1 width=63) (actual time=0.013..0.015 rows=1.00 loops=1)
+                          Filter: (id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                          Rows Removed by Filter: 1
+                          Buffers: shared hit=1
+        ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=0.329..0.966 rows=10792.69 loops=51)
+              Storage: Memory  Maximum Storage: 1430kB
+              Buffers: shared hit=1060
+Planning:
+  Buffers: shared hit=52
+Planning Time: 2.657 ms
+Execution Time: 309.943 ms
+
+=== links: one source page
+Limit  (cost=29950.08..29953.28 rows=42 width=181) (actual time=26.297..26.330 rows=50.00 loops=1)
+  Buffers: shared hit=1409 read=4
+  CTE chain
+    ->  Recursive Union  (cost=0.00..28275.27 rows=11030 width=145) (actual time=0.087..7.505 rows=11200.00 loops=1)
+          Storage: Memory  Maximum Storage: 2013kB
+          Buffers: shared hit=1060
+          ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=138) (actual time=0.085..3.447 rows=11000.00 loops=1)
+                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                Rows Removed by Filter: 1100
+                Buffers: shared hit=260
+          ->  Nested Loop  (cost=0.41..2775.37 rows=3 width=145) (actual time=0.359..0.764 rows=100.00 loops=2)
+                Buffers: shared hit=800
+                ->  WorkTable Scan on chain c  (cost=0.00..2750.00 rows=3 width=100) (actual time=0.339..0.362 rows=100.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 5500
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..8.44 rows=1 width=77) (actual time=0.003..0.003 rows=1.00 loops=200)
+                      Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 200
+                      Buffers: shared hit=800
+  CTE final
+    ->  Unique  (cost=1126.67..1181.82 rows=200 width=175) (actual time=18.827..21.919 rows=11000.00 loops=1)
+          Buffers: shared hit=1060
+          ->  Sort  (cost=1126.67..1154.24 rows=11030 width=175) (actual time=18.822..19.547 rows=11200.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 1626kB
+                Buffers: shared hit=1060
+                ->  CTE Scan on chain  (cost=0.00..386.05 rows=11030 width=175) (actual time=0.090..12.506 rows=11200.00 loops=1)
+                      Storage: Memory  Maximum Storage: 1997kB
+                      Buffers: shared hit=1060
+  ->  Result  (cost=492.98..496.19 rows=42 width=181) (actual time=26.295..26.319 rows=50.00 loops=1)
+        Buffers: shared hit=1409 read=4
+        ->  Sort  (cost=492.98..493.09 rows=42 width=330) (actual time=26.287..26.293 rows=50.00 loops=1)
+              Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+              Sort Method: quicksort  Memory: 37kB
+              Buffers: shared hit=1409 read=4
+              ->  Merge Right Join  (cost=1.69..491.85 rows=42 width=330) (actual time=19.317..26.217 rows=50.00 loops=1)
+                    Merge Cond: (f.start_url = l.target_normalized_url)
+                    Buffers: shared hit=1409 read=4
+                    ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=18.830..23.815 rows=11000.00 loops=1)
+                          Storage: Memory  Maximum Storage: 1430kB
+                          Buffers: shared hit=1060
+                    ->  Materialize  (cost=1.69..486.13 rows=42 width=153) (actual time=0.290..1.020 rows=50.00 loops=1)
+                          Storage: Memory  Maximum Storage: 17kB
+                          Buffers: shared hit=349 read=4
+                          ->  Nested Loop Left Join  (cost=1.69..486.03 rows=42 width=153) (actual time=0.280..0.966 rows=50.00 loops=1)
+                                Buffers: shared hit=349 read=4
+                                ->  Nested Loop  (cost=1.00..141.38 rows=42 width=144) (actual time=0.250..0.345 rows=50.00 loops=1)
+                                      Buffers: shared hit=26 read=4
+                                      ->  Index Scan using pk_page_links on page_links l  (cost=0.42..123.16 rows=46 width=70) (actual time=0.173..0.228 rows=50.00 loops=1)
+                                            Index Cond: (source_page_id = '01a1b917-1f43-77b5-b8fa-143335349ee3'::uuid)
+                                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                            Index Searches: 1
+                                            Buffers: shared hit=20 read=2
+                                      ->  Materialize  (cost=0.57..17.65 rows=1 width=122) (actual time=0.002..0.002 rows=1.00 loops=50)
+                                            Storage: Memory  Maximum Storage: 17kB
+                                            Buffers: shared hit=6 read=2
+                                            ->  Nested Loop  (cost=0.57..17.65 rows=1 width=122) (actual time=0.068..0.072 rows=1.00 loops=1)
+                                                  Buffers: shared hit=6 read=2
+                                                  ->  Nested Loop  (cost=0.57..16.61 rows=1 width=59) (actual time=0.052..0.054 rows=1.00 loops=1)
+                                                        Buffers: shared hit=5 read=2
+                                                        ->  Index Scan using uq_pages_id_job_id on pages sp  (cost=0.29..8.30 rows=1 width=73) (actual time=0.027..0.027 rows=1.00 loops=1)
+                                                              Index Cond: ((id = '01a1b917-1f43-77b5-b8fa-143335349ee3'::uuid) AND (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid))
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=2 read=1
+                                                        ->  Index Scan using uq_crawl_urls_id_job_id on crawl_urls su  (cost=0.29..8.30 rows=1 width=34) (actual time=0.020..0.020 rows=1.00 loops=1)
+                                                              Index Cond: ((id = sp.crawl_url_id) AND (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid))
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=3 read=1
+                                                  ->  Seq Scan on crawl_jobs j  (cost=0.00..1.02 rows=1 width=63) (actual time=0.014..0.014 rows=1.00 loops=1)
+                                                        Filter: (id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                        Rows Removed by Filter: 1
+                                                        Buffers: shared hit=1
+                                ->  Nested Loop Left Join  (cost=0.70..8.20 rows=1 width=66) (actual time=0.011..0.012 rows=0.88 loops=50)
+                                      Buffers: shared hit=323
+                                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls t  (cost=0.41..7.73 rows=1 width=66) (actual time=0.006..0.007 rows=0.88 loops=50)
+                                            Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = l.target_normalized_url))
+                                            Index Searches: 50
+                                            Buffers: shared hit=194
+                                      ->  Index Scan using uq_pages_crawl_url_id on pages tp  (cost=0.29..0.45 rows=1 width=48) (actual time=0.004..0.004 rows=0.93 loops=44)
+                                            Index Cond: (crawl_url_id = t.id)
+                                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                            Index Searches: 44
+                                            Buffers: shared hit=129
+Planning:
+  Buffers: shared hit=38
+Planning Time: 2.118 ms
+Execution Time: 26.441 ms
+
+=== broken links: first 50
+Nested Loop Left Join  (cost=55449.51..55450.16 rows=51 width=254) (actual time=404.327..404.354 rows=51.00 loops=1)
+  Buffers: shared hit=10552
+  CTE chain
+    ->  Recursive Union  (cost=0.00..28275.27 rows=11030 width=145) (actual time=0.084..6.897 rows=11200.00 loops=1)
+          Storage: Memory  Maximum Storage: 2013kB
+          Buffers: shared hit=1060
+          ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=138) (actual time=0.082..3.029 rows=11000.00 loops=1)
+                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                Rows Removed by Filter: 1100
+                Buffers: shared hit=260
+          ->  Nested Loop  (cost=0.41..2775.37 rows=3 width=145) (actual time=0.364..0.774 rows=100.00 loops=2)
+                Buffers: shared hit=800
+                ->  WorkTable Scan on chain c  (cost=0.00..2750.00 rows=3 width=100) (actual time=0.349..0.372 rows=100.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 5500
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..8.44 rows=1 width=77) (actual time=0.003..0.003 rows=1.00 loops=200)
+                      Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 200
+                      Buffers: shared hit=800
+  CTE final
+    ->  Unique  (cost=1126.67..1181.82 rows=200 width=175) (actual time=16.313..18.187 rows=11000.00 loops=1)
+          Buffers: shared hit=1060
+          ->  Sort  (cost=1126.67..1154.24 rows=11030 width=175) (actual time=16.312..16.753 rows=11200.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 1626kB
+                Buffers: shared hit=1060
+                ->  CTE Scan on chain  (cost=0.00..386.05 rows=11030 width=175) (actual time=0.087..11.563 rows=11200.00 loops=1)
+                      Storage: Memory  Maximum Storage: 1997kB
+                      Buffers: shared hit=1060
+  CTE broken
+    ->  Hash Left Join  (cost=2470.83..25819.84 rows=2275 width=181) (actual time=41.607..390.397 rows=20079.00 loops=1)
+          Hash Cond: ((t.id = tp.crawl_url_id) AND (t.job_id = tp.job_id))
+          Buffers: shared hit=10552
+          ->  Hash Left Join  (cost=1828.33..25020.36 rows=2275 width=344) (actual time=38.634..373.690 rows=20079.00 loops=1)
+                Hash Cond: (l.target_normalized_url = t.normalized_url)
+                Buffers: shared hit=10197
+                ->  Hash Left Join  (cost=1279.58..24465.64 rows=2275 width=319) (actual time=35.280..363.384 rows=20079.00 loops=1)
+                      Hash Cond: (l.target_normalized_url = f.start_url)
+                      Filter: (CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.loops THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END = 'broken'::text)
+                      Rows Removed by Filter: 479921
+                      Buffers: shared hit=9937
+                      ->  Hash Join  (cost=1273.08..22423.47 rows=455084 width=144) (actual time=12.954..180.046 rows=500000.00 loops=1)
+                            Hash Cond: (l.source_page_id = sp.id)
+                            Buffers: shared hit=8877
+                            ->  Seq Scan on page_links l  (cost=0.00..15136.00 rows=500592 width=70) (actual time=2.637..73.660 rows=500000.00 loops=1)
+                                  Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                  Rows Removed by Filter: 50000
+                                  Buffers: shared hit=8261
+                            ->  Hash  (cost=1159.45..1159.45 rows=9091 width=122) (actual time=10.303..10.305 rows=10000.00 loops=1)
+                                  Buckets: 16384  Batches: 1  Memory Usage: 1661kB
+                                  Buffers: shared hit=616
+                                  ->  Nested Loop  (cost=548.75..1159.45 rows=9091 width=122) (actual time=2.710..8.214 rows=10000.00 loops=1)
+                                        Buffers: shared hit=616
+                                        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.02 rows=1 width=63) (actual time=0.009..0.010 rows=1.00 loops=1)
+                                              Filter: (id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                              Rows Removed by Filter: 1
+                                              Buffers: shared hit=1
+                                        ->  Hash Join  (cost=548.75..1067.51 rows=9091 width=59) (actual time=2.697..7.081 rows=10000.00 loops=1)
+                                              Hash Cond: (sp.crawl_url_id = su.id)
+                                              Buffers: shared hit=615
+                                              ->  Seq Scan on pages sp  (cost=0.00..492.50 rows=10000 width=73) (actual time=0.066..2.273 rows=10000.00 loops=1)
+                                                    Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                    Rows Removed by Filter: 1000
+                                                    Buffers: shared hit=355
+                                              ->  Hash  (cost=411.25..411.25 rows=11000 width=34) (actual time=2.618..2.618 rows=11000.00 loops=1)
+                                                    Buckets: 16384  Batches: 1  Memory Usage: 837kB
+                                                    Buffers: shared hit=260
+                                                    ->  Seq Scan on crawl_urls su  (cost=0.00..411.25 rows=11000 width=34) (actual time=0.071..1.276 rows=11000.00 loops=1)
+                                                          Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                          Rows Removed by Filter: 1100
+                                                          Buffers: shared hit=260
+                      ->  Hash  (cost=4.00..4.00 rows=200 width=175) (actual time=22.297..22.297 rows=11000.00 loops=1)
+                            Buckets: 16384 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 1521kB
+                            Buffers: shared hit=1060
+                            ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=175) (actual time=16.317..20.003 rows=11000.00 loops=1)
+                                  Storage: Memory  Maximum Storage: 1430kB
+                                  Buffers: shared hit=1060
+                ->  Hash  (cost=411.25..411.25 rows=11000 width=66) (actual time=3.342..3.342 rows=11000.00 loops=1)
+                      Buckets: 16384  Batches: 1  Memory Usage: 1194kB
+                      Buffers: shared hit=260
+                      ->  Seq Scan on crawl_urls t  (cost=0.00..411.25 rows=11000 width=66) (actual time=0.085..1.594 rows=11000.00 loops=1)
+                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                            Rows Removed by Filter: 1100
+                            Buffers: shared hit=260
+          ->  Hash  (cost=492.50..492.50 rows=10000 width=48) (actual time=2.938..2.939 rows=10000.00 loops=1)
+                Buckets: 16384  Batches: 1  Memory Usage: 910kB
+                Buffers: shared hit=355
+                ->  Seq Scan on pages tp  (cost=0.00..492.50 rows=10000 width=48) (actual time=0.070..1.200 rows=10000.00 loops=1)
+                      Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                      Rows Removed by Filter: 1000
+                      Buffers: shared hit=355
+  ->  Aggregate  (cost=51.19..51.20 rows=1 width=8) (actual time=401.593..401.593 rows=1.00 loops=1)
+        Buffers: shared hit=10552
+        ->  CTE Scan on broken  (cost=0.00..45.50 rows=2275 width=0) (actual time=41.610..400.186 rows=20079.00 loops=1)
+              Storage: Memory  Maximum Storage: 3186kB
+              Buffers: shared hit=10552
+  ->  Limit  (cost=121.40..121.53 rows=51 width=246) (actual time=2.728..2.734 rows=51.00 loops=1)
+        ->  Sort  (cost=121.40..127.09 rows=2275 width=246) (actual time=2.727..2.729 rows=51.00 loops=1)
+              Sort Key: broken_1.target_url COLLATE "C", broken_1.source_url COLLATE "C"
+              Sort Method: top-N heapsort  Memory: 47kB
+              ->  CTE Scan on broken broken_1  (cost=0.00..45.50 rows=2275 width=246) (actual time=0.001..1.190 rows=20079.00 loops=1)
+                    Storage: Memory  Maximum Storage: 3186kB
+Planning:
+  Buffers: shared hit=52
+Planning Time: 2.343 ms
+Execution Time: 404.507 ms
+
+=== statistics: link classes
+HashAggregate  (cost=73000.52..73095.52 rows=2000 width=40) (actual time=426.723..426.736 rows=7.00 loops=1)
+  Group Key: CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.loops THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END
+  Batches: 1  Memory Usage: 97kB
+  Buffers: shared hit=9937
+  CTE chain
+    ->  Recursive Union  (cost=0.00..28275.27 rows=11030 width=145) (actual time=0.080..6.430 rows=11200.00 loops=1)
+          Storage: Memory  Maximum Storage: 2013kB
+          Buffers: shared hit=1060
+          ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=138) (actual time=0.078..2.852 rows=11000.00 loops=1)
+                Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                Rows Removed by Filter: 1100
+                Buffers: shared hit=260
+          ->  Nested Loop  (cost=0.41..2775.37 rows=3 width=145) (actual time=0.328..0.716 rows=100.00 loops=2)
+                Buffers: shared hit=800
+                ->  WorkTable Scan on chain c  (cost=0.00..2750.00 rows=3 width=100) (actual time=0.313..0.336 rows=100.00 loops=2)
+                      Filter: ((state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 5500
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..8.44 rows=1 width=77) (actual time=0.003..0.003 rows=1.00 loops=200)
+                      Index Cond: ((job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid) AND (normalized_url = c.redirect_target))
+                      Filter: (normalized_url <> ALL (c.seen))
+                      Index Searches: 200
+                      Buffers: shared hit=800
+  CTE final
+    ->  Unique  (cost=1126.67..1181.82 rows=200 width=175) (actual time=15.153..16.975 rows=11000.00 loops=1)
+          Buffers: shared hit=1060
+          ->  Sort  (cost=1126.67..1154.24 rows=11030 width=175) (actual time=15.152..15.579 rows=11200.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 1626kB
+                Buffers: shared hit=1060
+                ->  CTE Scan on chain  (cost=0.00..386.05 rows=11030 width=175) (actual time=0.083..10.683 rows=11200.00 loops=1)
+                      Storage: Memory  Maximum Storage: 1997kB
+                      Buffers: shared hit=1060
+  ->  Hash Left Join  (cost=1279.58..41268.01 rows=455084 width=32) (actual time=31.380..360.779 rows=500000.00 loops=1)
+        Hash Cond: (l.target_normalized_url = f.start_url)
+        Buffers: shared hit=9937
+        ->  Hash Join  (cost=1273.08..22423.47 rows=455084 width=77) (actual time=10.896..173.011 rows=500000.00 loops=1)
+              Hash Cond: (l.source_page_id = sp.id)
+              Buffers: shared hit=8877
+              ->  Seq Scan on page_links l  (cost=0.00..15136.00 rows=500592 width=59) (actual time=2.332..75.344 rows=500000.00 loops=1)
+                    Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                    Rows Removed by Filter: 50000
+                    Buffers: shared hit=8261
+              ->  Hash  (cost=1159.45..1159.45 rows=9091 width=66) (actual time=8.551..8.554 rows=10000.00 loops=1)
+                    Buckets: 16384  Batches: 1  Memory Usage: 1115kB
+                    Buffers: shared hit=616
+                    ->  Nested Loop  (cost=548.75..1159.45 rows=9091 width=66) (actual time=2.437..6.928 rows=10000.00 loops=1)
+                          Buffers: shared hit=616
+                          ->  Seq Scan on crawl_jobs j  (cost=0.00..1.02 rows=1 width=63) (actual time=0.007..0.008 rows=1.00 loops=1)
+                                Filter: (id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                Rows Removed by Filter: 1
+                                Buffers: shared hit=1
+                          ->  Hash Join  (cost=548.75..1067.51 rows=9091 width=19) (actual time=2.427..6.039 rows=10000.00 loops=1)
+                                Hash Cond: (sp.crawl_url_id = su.id)
+                                Buffers: shared hit=615
+                                ->  Seq Scan on pages sp  (cost=0.00..492.50 rows=10000 width=49) (actual time=0.059..1.814 rows=10000.00 loops=1)
+                                      Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=355
+                                ->  Hash  (cost=411.25..411.25 rows=11000 width=34) (actual time=2.356..2.357 rows=11000.00 loops=1)
+                                      Buckets: 16384  Batches: 1  Memory Usage: 837kB
+                                      Buffers: shared hit=260
+                                      ->  Seq Scan on crawl_urls su  (cost=0.00..411.25 rows=11000 width=34) (actual time=0.066..1.159 rows=11000.00 loops=1)
+                                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                            Rows Removed by Filter: 1100
+                                            Buffers: shared hit=260
+        ->  Hash  (cost=4.00..4.00 rows=200 width=131) (actual time=20.472..20.472 rows=11000.00 loops=1)
+              Buckets: 16384 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 992kB
+              Buffers: shared hit=1060
+              ->  CTE Scan on final f  (cost=0.00..4.00 rows=200 width=131) (actual time=15.157..18.542 rows=11000.00 loops=1)
+                    Storage: Memory  Maximum Storage: 1430kB
+                    Buffers: shared hit=1060
+Planning:
+  Buffers: shared hit=36
+Planning Time: 1.107 ms
+Execution Time: 426.852 ms
+
+=== statistics: link totals
+Aggregate  (cost=77944.61..77944.62 rows=1 width=40) (actual time=673.034..673.037 rows=1.00 loops=1)
+  Buffers: shared hit=1000597
+  InitPlan 1
+    ->  Aggregate  (cost=240.28..240.29 rows=1 width=8) (actual time=0.983..0.984 rows=1.00 loops=1)
+          Buffers: shared hit=10
+          ->  Index Only Scan using ix_pages_job_id on pages  (cost=0.29..215.28 rows=10000 width=0) (actual time=0.019..0.532 rows=10000.00 loops=1)
+                Index Cond: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                Heap Fetches: 0
+                Index Searches: 1
+                Buffers: shared hit=10
+  InitPlan 2
+    ->  Aggregate  (cost=43461.21..43461.22 rows=1 width=8) (actual time=353.832..353.833 rows=1.00 loops=1)
+          Buffers: shared hit=500371
+          ->  Unique  (cost=0.84..37379.39 rows=486545 width=32) (actual time=0.024..353.023 rows=12000.00 loops=1)
+                Buffers: shared hit=500371
+                ->  Merge Append  (cost=0.84..36163.03 rows=486545 width=32) (actual time=0.023..323.490 rows=485958.00 loops=1)
+                      Sort Key: crawl_urls.normalized_url COLLATE "C"
+                      Buffers: shared hit=500371
+                      ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls  (cost=0.41..808.91 rows=11000 width=25) (actual time=0.010..1.450 rows=11000.00 loops=1)
+                            Index Cond: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                            Heap Fetches: 0
+                            Index Searches: 1
+                            Buffers: shared hit=155
+                      ->  Index Scan using ix_page_links_job_id_target on page_links page_links_1  (cost=0.42..30488.66 rows=475545 width=25) (actual time=0.011..282.050 rows=474958.00 loops=1)
+                            Index Cond: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                            Filter: is_internal
+                            Rows Removed by Filter: 25042
+                            Index Searches: 1
+                            Buffers: shared hit=500216
+  ->  Index Scan using ix_page_links_job_id_target on page_links  (cost=0.42..30488.66 rows=500592 width=26) (actual time=0.022..280.074 rows=500000.00 loops=1)
+        Index Cond: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+        Index Searches: 1
+        Buffers: shared hit=500216
+Planning:
+  Buffers: shared hit=3
+Planning Time: 0.233 ms
+Execution Time: 673.082 ms
+
+=== statistics: most linked
+Limit  (cost=76113.59..76113.61 rows=10 width=49) (actual time=567.844..567.855 rows=10.00 loops=1)
+  Buffers: shared hit=500831
+  ->  Sort  (cost=76113.59..77302.45 rows=475545 width=49) (actual time=567.841..567.850 rows=10.00 loops=1)
+        Sort Key: (count(*)) DESC, l.target_normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 26kB
+        Buffers: shared hit=500831
+        ->  GroupAggregate  (cost=1809.90..65837.23 rows=475545 width=49) (actual time=8.742..566.080 rows=12000.00 loops=1)
+              Group Key: l.target_normalized_url, p.id
+              Buffers: shared hit=500831
+              ->  Incremental Sort  (cost=1809.90..57515.20 rows=475545 width=41) (actual time=8.669..524.536 rows=474958.00 loops=1)
+                    Sort Key: l.target_normalized_url COLLATE "C", p.id
+                    Presorted Key: l.target_normalized_url
+                    Full-sort Groups: 10952  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+                    Pre-sorted Groups: 1405  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+                    Buffers: shared hit=500831
+                    ->  Merge Left Join  (cost=1806.32..39158.61 rows=475545 width=41) (actual time=8.599..422.474 rows=474958.00 loops=1)
+                          Merge Cond: (l.target_normalized_url = u.normalized_url)
+                          Buffers: shared hit=500831
+                          ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.42..30488.66 rows=475545 width=41) (actual time=0.013..312.964 rows=474958.00 loops=1)
+                                Index Cond: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                Filter: is_internal
+                                Rows Removed by Filter: 25042
+                                Index Searches: 1
+                                Buffers: shared hit=500216
+                          ->  Sort  (cost=1805.90..1833.40 rows=11000 width=57) (actual time=8.581..25.111 rows=439928.00 loops=1)
+                                Sort Key: u.normalized_url COLLATE "C"
+                                Sort Method: quicksort  Memory: 1220kB
+                                Buffers: shared hit=615
+                                ->  Hash Right Join  (cost=548.75..1067.51 rows=11000 width=57) (actual time=2.429..5.395 rows=11000.00 loops=1)
+                                      Hash Cond: (p.crawl_url_id = u.id)
+                                      Buffers: shared hit=615
+                                      ->  Seq Scan on pages p  (cost=0.00..492.50 rows=10000 width=48) (actual time=0.061..1.151 rows=10000.00 loops=1)
+                                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                            Rows Removed by Filter: 1000
+                                            Buffers: shared hit=355
+                                      ->  Hash  (cost=411.25..411.25 rows=11000 width=57) (actual time=2.356..2.359 rows=11000.00 loops=1)
+                                            Buckets: 16384  Batches: 1  Memory Usage: 1087kB
+                                            Buffers: shared hit=260
+                                            ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=57) (actual time=0.098..1.114 rows=11000.00 loops=1)
+                                                  Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                  Rows Removed by Filter: 1100
+                                                  Buffers: shared hit=260
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.442 ms
+Execution Time: 567.930 ms
+
+=== statistics: depths
+Sort  (cost=1205.12..1205.13 rows=5 width=26) (actual time=7.122..7.125 rows=5.00 loops=1)
+  Sort Key: u.depth
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=615
+  ->  HashAggregate  (cost=1205.01..1205.06 rows=5 width=26) (actual time=7.115..7.118 rows=5.00 loops=1)
+        Group Key: u.depth
+        Batches: 1  Memory Usage: 32kB
+        Buffers: shared hit=615
+        ->  Hash Right Join  (cost=548.75..1067.51 rows=11000 width=25) (actual time=2.453..5.486 rows=11000.00 loops=1)
+              Hash Cond: (p.crawl_url_id = u.id)
+              Buffers: shared hit=615
+              ->  Seq Scan on pages p  (cost=0.00..492.50 rows=10000 width=48) (actual time=0.058..1.120 rows=10000.00 loops=1)
+                    Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                    Rows Removed by Filter: 1000
+                    Buffers: shared hit=355
+              ->  Hash  (cost=411.25..411.25 rows=11000 width=41) (actual time=2.384..2.385 rows=11000.00 loops=1)
+                    Buckets: 16384  Batches: 1  Memory Usage: 923kB
+                    Buffers: shared hit=260
+                    ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=41) (actual time=0.072..1.195 rows=11000.00 loops=1)
+                          Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                          Rows Removed by Filter: 1100
+                          Buffers: shared hit=260
+Planning:
+  Buffers: shared hit=13
+Planning Time: 0.232 ms
+Execution Time: 7.166 ms
+
+=== link graph: nodes (500)
+Limit  (cost=211789.69..211790.94 rows=500 width=112) (actual time=608.333..608.391 rows=500.00 loops=1)
+  Buffers: shared hit=9491, temp read=7857 written=3990
+  CTE links
+    ->  Hash Join  (cost=617.50..17002.28 rows=475545 width=54) (actual time=4.281..113.184 rows=474958.00 loops=1)
+          Hash Cond: (l.source_page_id = sp.id)
+          Buffers: shared hit=8616
+          ->  Seq Scan on page_links l  (cost=0.00..15136.00 rows=475545 width=62) (actual time=2.306..52.791 rows=474958.00 loops=1)
+                Filter: (is_internal AND (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid))
+                Rows Removed by Filter: 75042
+                Buffers: shared hit=8261
+          ->  Hash  (cost=492.50..492.50 rows=10000 width=56) (actual time=1.956..1.957 rows=10000.00 loops=1)
+                Buckets: 16384  Batches: 1  Memory Usage: 997kB
+                Buffers: shared hit=355
+                ->  Seq Scan on pages sp  (cost=0.00..492.50 rows=10000 width=56) (actual time=0.075..0.941 rows=10000.00 loops=1)
+                      Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                      Rows Removed by Filter: 1000
+                      Buffers: shared hit=355
+  ->  Sort  (cost=194787.40..196003.76 rows=486545 width=112) (actual time=585.379..585.403 rows=500.00 loops=1)
+        Sort Key: u.depth, crawl_urls.normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 137kB
+        Buffers: shared hit=9491, temp read=7857 written=3990
+        ->  WindowAgg  (cost=169326.95..170543.39 rows=486545 width=112) (actual time=581.140..582.906 rows=12000.00 loops=1)
+              Window: w1 AS ()
+              Storage: Memory  Maximum Storage: 1514kB
+              Buffers: shared hit=9491, temp read=7857 written=3990
+              ->  Hash Left Join  (cost=131770.49..163245.21 rows=486545 width=104) (actual time=560.013..578.608 rows=12000.00 loops=1)
+                    Hash Cond: (crawl_urls.normalized_url = i.url)
+                    Buffers: shared hit=9491, temp read=7857 written=3990
+                    ->  Hash Left Join  (cost=119432.45..149629.61 rows=486545 width=96) (actual time=453.005..468.442 rows=12000.00 loops=1)
+                          Hash Cond: ((u.id = p.crawl_url_id) AND (u.job_id = p.job_id))
+                          Buffers: shared hit=9491, temp read=3990 written=3990
+                          ->  Hash Left Join  (cost=118789.95..146432.33 rows=486545 width=83) (actual time=450.702..462.557 rows=12000.00 loops=1)
+                                Hash Cond: (crawl_urls.normalized_url = u.normalized_url)
+                                Buffers: shared hit=9136, temp read=3990 written=3990
+                                ->  Hash Right Join  (cost=118241.20..144605.91 rows=486545 width=40) (actual time=447.626..455.920 rows=12000.00 loops=1)
+                                      Hash Cond: (o.url = crawl_urls.normalized_url)
+                                      Buffers: shared hit=8876, temp read=3990 written=3990
+                                      ->  Subquery Scan on o  (cost=47405.89..62553.76 rows=432314 width=40) (actual time=86.788..89.245 rows=10000.00 loops=1)
+                                            Buffers: temp read=3867 written=1
+                                            ->  HashAggregate  (cost=47405.89..58230.62 rows=432314 width=40) (actual time=86.785..88.528 rows=10000.00 loops=1)
+                                                  Group Key: links.source_url
+                                                  Planned Partitions: 8  Batches: 1  Memory Usage: 1817kB
+                                                  Buffers: temp read=3867 written=1
+                                                  ->  CTE Scan on links  (cost=0.00..9510.90 rows=475545 width=32) (actual time=0.015..32.373 rows=474958.00 loops=1)
+                                                        Storage: Disk  Maximum Storage: 30933kB
+                                                        Buffers: temp read=3867 written=1
+                                      ->  Hash  (cost=61427.50..61427.50 rows=486545 width=32) (actual time=360.628..360.630 rows=12000.00 loops=1)
+                                            Buckets: 131072  Batches: 8  Memory Usage: 1111kB
+                                            Buffers: shared hit=8876, temp written=3921
+                                            ->  HashAggregate  (cost=49910.07..61427.50 rows=486545 width=32) (actual time=357.727..358.830 rows=12000.00 loops=1)
+                                                  Group Key: crawl_urls.normalized_url
+                                                  Planned Partitions: 8  Batches: 1  Memory Usage: 2841kB
+                                                  Buffers: shared hit=8876, temp written=3866
+                                                  ->  Append  (cost=0.00..12354.88 rows=486545 width=32) (actual time=0.088..272.591 rows=485958.00 loops=1)
+                                                        Buffers: shared hit=8876, temp written=3866
+                                                        ->  Seq Scan on crawl_urls  (cost=0.00..411.25 rows=11000 width=25) (actual time=0.087..0.973 rows=11000.00 loops=1)
+                                                              Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                                              Rows Removed by Filter: 1100
+                                                              Buffers: shared hit=260
+                                                        ->  CTE Scan on links links_1  (cost=0.00..9510.90 rows=475545 width=32) (actual time=4.285..242.544 rows=474958.00 loops=1)
+                                                              Storage: Disk  Maximum Storage: 30933kB
+                                                              Buffers: shared hit=8616, temp written=3866
+                                ->  Hash  (cost=411.25..411.25 rows=11000 width=68) (actual time=3.045..3.046 rows=11000.00 loops=1)
+                                      Buckets: 16384  Batches: 1  Memory Usage: 1216kB
+                                      Buffers: shared hit=260
+                                      ->  Seq Scan on crawl_urls u  (cost=0.00..411.25 rows=11000 width=68) (actual time=0.079..1.405 rows=11000.00 loops=1)
+                                            Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                            Rows Removed by Filter: 1100
+                                            Buffers: shared hit=260
+                          ->  Hash  (cost=492.50..492.50 rows=10000 width=77) (actual time=2.275..2.276 rows=10000.00 loops=1)
+                                Buckets: 16384  Batches: 1  Memory Usage: 1202kB
+                                Buffers: shared hit=355
+                                ->  Seq Scan on pages p  (cost=0.00..492.50 rows=10000 width=77) (actual time=0.061..1.081 rows=10000.00 loops=1)
+                                      Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                                      Rows Removed by Filter: 1000
+                                      Buffers: shared hit=355
+                    ->  Hash  (cost=12165.18..12165.18 rows=13828 width=40) (actual time=106.975..106.976 rows=12000.00 loops=1)
+                          Buckets: 16384  Batches: 1  Memory Usage: 897kB
+                          Buffers: temp read=3867
+                          ->  Subquery Scan on i  (cost=11888.62..12165.18 rows=13828 width=40) (actual time=103.580..105.383 rows=12000.00 loops=1)
+                                Buffers: temp read=3867
+                                ->  HashAggregate  (cost=11888.62..12026.90 rows=13828 width=40) (actual time=103.576..104.581 rows=12000.00 loops=1)
+                                      Group Key: links_2.target_url
+                                      Batches: 1  Memory Usage: 1049kB
+                                      Buffers: temp read=3867
+                                      ->  CTE Scan on links links_2  (cost=0.00..9510.90 rows=475545 width=32) (actual time=0.009..33.025 rows=474958.00 loops=1)
+                                            Storage: Disk  Maximum Storage: 30933kB
+                                            Buffers: temp read=3867
+Planning:
+  Buffers: shared hit=36
+Planning Time: 0.696 ms
+JIT:
+  Functions: 80
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 2.372 ms (Deform 1.023 ms), Inlining 0.000 ms, Optimization 1.231 ms, Emission 21.950 ms, Total 25.553 ms
+Execution Time: 614.883 ms
+
+=== link graph: edges (2000)
+Limit  (cost=41973.75..41973.97 rows=88 width=77) (actual time=288.323..288.336 rows=80.00 loops=1)
+  Buffers: shared hit=8616, temp read=3867 written=3867
+  CTE links
+    ->  Hash Join  (cost=617.50..17002.28 rows=475545 width=54) (actual time=4.777..115.218 rows=474958.00 loops=1)
+          Hash Cond: (l.source_page_id = sp.id)
+          Buffers: shared hit=8616
+          ->  Seq Scan on page_links l  (cost=0.00..15136.00 rows=475545 width=62) (actual time=2.569..54.141 rows=474958.00 loops=1)
+                Filter: (is_internal AND (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid))
+                Rows Removed by Filter: 75042
+                Buffers: shared hit=8261
+          ->  Hash  (cost=492.50..492.50 rows=10000 width=56) (actual time=2.195..2.197 rows=10000.00 loops=1)
+                Buckets: 16384  Batches: 1  Memory Usage: 997kB
+                Buffers: shared hit=355
+                ->  Seq Scan on pages sp  (cost=0.00..492.50 rows=10000 width=56) (actual time=0.057..1.062 rows=10000.00 loops=1)
+                      Filter: (job_id = '01a1b917-1c39-7474-8492-7bb82bfd8191'::uuid)
+                      Rows Removed by Filter: 1000
+                      Buffers: shared hit=355
+  InitPlan 2
+    ->  Aggregate  (cost=10699.76..10699.77 rows=1 width=8) (actual time=245.248..245.249 rows=1.00 loops=1)
+          Buffers: shared hit=7536, temp written=3866
+          ->  CTE Scan on links links_1  (cost=0.00..9510.90 rows=475545 width=0) (actual time=0.000..225.187 rows=474958.00 loops=1)
+                Storage: Disk  Maximum Storage: 30933kB
+                Buffers: shared hit=7536, temp written=3866
+  ->  Sort  (cost=14271.69..14271.91 rows=88 width=77) (actual time=288.321..288.325 rows=80.00 loops=1)
+        Sort Key: links.source_url COLLATE "C", links."position", links.target_url COLLATE "C"
+        Sort Method: quicksort  Memory: 35kB
+        Buffers: shared hit=8616, temp read=3867 written=3867
+        ->  CTE Scan on links  (cost=2.50..14268.85 rows=88 width=77) (actual time=250.065..288.285 rows=80.00 loops=1)
+              Filter: ((source_url = ANY ('{https://bench.test/,https://bench.test/down-1,https://bench.test/down-11,https://bench.test/down-16,https://bench.test/down-24,https://bench.test/down-25,https://bench.test/down-27,https://bench.test/down-3,https://bench.test/down-33,https://bench.test/down-35,https://bench.test/down-36,https://bench.test/down-38,https://bench.test/down-40,https://bench.test/down-43,https://bench.test/down-53,https://bench.test/down-57,https://bench.test/down-64,https://bench.test/down-69,https://bench.test/down-78,https://bench.test/down-80,https://bench.test/down-87,https://bench.test/down-91,https://bench.test/down-95,https://bench.test/missing-102,https://bench.test/missing-103,https://bench.test/missing-104,https://bench.test/missing-107,https://bench.test/missing-11,https://bench.test/missing-12,https://bench.test/missing-125,https://bench.test/missing-127,https://bench.test/missing-128,https://bench.test/missing-129,https://bench.test/missing-130,https://bench.test/missing-139,https://bench.test/missing-143,https://bench.test/missing-147,https://bench.test/missing-148,https://bench.test/missing-153,https://bench.test/missing-154,https://bench.test/missing-159,https://bench.test/missing-16,https://bench.test/missing-165,https://bench.test/missing-166,https://bench.test/missing-17,https://bench.test/missing-170,https://bench.test/missing-171,https://bench.test/missing-172,https://bench.test/missing-174,https://bench.test/missing-178,https://bench.test/missing-179,https://bench.test/missing-18,https://bench.test/missing-182,https://bench.test/missing-186,https://bench.test/missing-188,https://bench.test/missing-19,https://bench.test/missing-190,https://bench.test/missing-192,https://bench.test/missing-195,https://bench.test/missing-196,https://bench.test/missing-197,https://bench.test/missing-198,https://bench.test/missing-199,https://bench.test/missing-207,https://bench.test/missing-208,https://bench.test/missing-210,https://bench.test/missing-212,https://bench.test/missing-214,https://bench.test/missing-218,https://bench.test/missing-22,https://bench.test/missing-243,https://bench.test/missing-244,https://bench.test/missing-247,https://bench.test/missing-258,https://bench.test/missing-259,https://bench.test/missing-261,https://bench.test/missing-265,https://bench.test/missing-270,https://bench.test/missing-274,https://bench.test/missing-275,https://bench.test/missing-277,https://bench.test/missing-279,https://bench.test/missing-285,https://bench.test/missing-287,https://bench.test/missing-295,https://bench.test/missing-30,https://bench.test/missing-302,https://bench.test/missing-308,https://bench.test/missing-309,https://bench.test/missing-31,https://bench.test/missing-313,https://bench.test/missing-317,https://bench.test/missing-319,https://bench.test/missing-320,https://bench.test/missing-326,https://bench.test/missing-328,https://bench.test/missing-330,https://bench.test/missing-338,https://bench.test/missing-35,https://bench.test/missing-353,https://bench.test/missing-354,https://bench.test/missing-356,https://bench.test/missing-357,https://bench.test/missing-359,https://bench.test/missing-361,https://bench.test/missing-363,https://bench.test/missing-376,https://bench.test/missing-379,https://bench.test/missing-382,https://bench.test/missing-383,https://bench.test/missing-387,https://bench.test/missing-393,https://bench.test/missing-395,https://bench.test/missing-399,https://bench.test/missing-40,https://bench.test/missing-41,https://bench.test/missing-415,https://bench.test/missing-419,https://bench.test/missing-42,https://bench.test/missing-422,https://bench.test/missing-428,https://bench.test/missing-429,https://bench.test/missing-433,https://bench.test/missing-436,https://bench.test/missing-438,https://bench.test/missing-439,https://bench.test/missing-44,https://bench.test/missing-440,https://bench.test/missing-445,https://bench.test/missing-450,https://bench.test/missing-451,https://bench.test/missing-454,https://bench.test/missing-455,https://bench.test/missing-464,https://bench.test/missing-465,https://bench.test/missing-47,https://bench.test/missing-475,https://bench.test/missing-476,https://bench.test/missing-478,https://bench.test/missing-48,https://bench.test/missing-484,https://bench.test/missing-49,https://bench.test/missing-495,https://bench.test/missing-499,https://bench.test/missing-52,https://bench.test/missing-57,https://bench.test/missing-61,https://bench.test/missing-64,https://bench.test/missing-66,https://bench.test/missing-69,https://bench.test/missing-7,https://bench.test/missing-70,https://bench.test/missing-71,https://bench.test/missing-81,https://bench.test/missing-85,https://bench.test/missing-88,https://bench.test/missing-92,https://bench.test/missing-93,https://bench.test/missing-98,https://bench.test/old-105,https://bench.test/old-111,https://bench.test/old-114,https://bench.test/old-119,https://bench.test/old-12,https://bench.test/old-120,https://bench.test/old-121,https://bench.test/old-122,https://bench.test/old-131,https://bench.test/old-133,https://bench.test/old-134,https://bench.test/old-135,https://bench.test/old-137,https://bench.test/old-14,https://bench.test/old-144,https://bench.test/old-162,https://bench.test/old-164,https://bench.test/old-175,https://bench.test/old-18,https://bench.test/old-180,https://bench.test/old-186,https://bench.test/old-19,https://bench.test/old-191,https://bench.test/old-193,https://bench.test/old-194,https://bench.test/old-195,https://bench.test/old-20,https://bench.test/old-24,https://bench.test/old-32,https://bench.test/old-34,https://bench.test/old-36,https://bench.test/old-42,https://bench.test/old-44,https://bench.test/old-46,https://bench.test/old-47,https://bench.test/old-5,https://bench.test/old-64,https://bench.test/old-67,https://bench.test/old-7,https://bench.test/old-70,https://bench.test/old-76,https://bench.test/old-8,https://bench.test/old-85,https://bench.test/old-87,https://bench.test/old-9,https://bench.test/old-90,https://bench.test/old-92,https://bench.test/old-97,https://bench.test/p1,https://bench.test/p10,https://bench.test/p2,https://bench.test/p3,https://bench.test/p4,https://bench.test/p5,https://bench.test/p6,https://bench.test/p7,https://bench.test/p8,https://bench.test/p9,https://bench.test/private-1,https://bench.test/private-12,https://bench.test/private-17,https://bench.test/private-22,https://bench.test/private-23,https://bench.test/private-32,https://bench.test/private-36,https://bench.test/private-44,https://bench.test/private-51,https://bench.test/private-53,https://bench.test/private-55,https://bench.test/private-56,https://bench.test/private-57,https://bench.test/private-61,https://bench.test/private-68,https://bench.test/private-71,https://bench.test/private-74,https://bench.test/private-76,https://bench.test/private-78,https://bench.test/private-82,https://bench.test/private-86,https://bench.test/private-97,https://bench.test/private-99,https://bench.test/slow-0,https://bench.test/slow-1,https://bench.test/slow-10,https://bench.test/slow-16,https://bench.test/slow-21,https://bench.test/slow-24,https://bench.test/slow-32,https://bench.test/slow-33,https://bench.test/slow-37,https://bench.test/slow-47,https://bench.test/slow-48,https://bench.test/slow-52,https://bench.test/slow-54,https://bench.test/slow-60,https://bench.test/slow-62,https://bench.test/slow-66,https://bench.test/slow-68,https://bench.test/slow-73,https://bench.test/slow-79,https://bench.test/slow-8,https://bench.test/slow-80,https://bench.test/slow-81,https://bench.test/slow-83,https://bench.test/slow-85,https://bench.test/slow-89,https://bench.test/slow-92,https://bench.test/slow-99,https://bench.test/down-13,https://bench.test/down-14,https://bench.test/down-26,https://bench.test/down-28,https://bench.test/down-29,https://bench.test/down-30,https://bench.test/down-31,https://bench.test/down-37,https://bench.test/down-39,https://bench.test/down-4,https://bench.test/down-46,https://bench.test/down-47,https://bench.test/down-48,https://bench.test/down-5,https://bench.test/down-56,https://bench.test/down-60,https://bench.test/down-66,https://bench.test/down-70,https://bench.test/down-73,https://bench.test/down-75,https://bench.test/down-76,https://bench.test/down-77,https://bench.test/down-79,https://bench.test/down-81,https://bench.test/down-82,https://bench.test/down-93,https://bench.test/down-94,https://bench.test/down-97,https://bench.test/down-99,https://bench.test/missing-10,https://bench.test/missing-105,https://bench.test/missing-106,https://bench.test/missing-111,https://bench.test/missing-113,https://bench.test/missing-115,https://bench.test/missing-116,https://bench.test/missing-118,https://bench.test/missing-119,https://bench.test/missing-120,https://bench.test/missing-121,https://bench.test/missing-122,https://bench.test/missing-132,https://bench.test/missing-138,https://bench.test/missing-140,https://bench.test/missing-141,https://bench.test/missing-145,https://bench.test/missing-146,https://bench.test/missing-15,https://bench.test/missing-152,https://bench.test/missing-155,https://bench.test/missing-158,https://bench.test/missing-161,https://bench.test/missing-164,https://bench.test/missing-177,https://bench.test/missing-183,https://bench.test/missing-20,https://bench.test/missing-21,https://bench.test/missing-213,https://bench.test/missing-221,https://bench.test/missing-222,https://bench.test/missing-223,https://bench.test/missing-227,https://bench.test/missing-231,https://bench.test/missing-233,https://bench.test/missing-234,https://bench.test/missing-236,https://bench.test/missing-238,https://bench.test/missing-239,https://bench.test/missing-240,https://bench.test/missing-246,https://bench.test/missing-251,https://bench.test/missing-26,https://bench.test/missing-266,https://bench.test/missing-269,https://bench.test/missing-27,https://bench.test/missing-272,https://bench.test/missing-273,https://bench.test/missing-280,https://bench.test/missing-281,https://bench.test/missing-284,https://bench.test/missing-288,https://bench.test/missing-289,https://bench.test/missing-292,https://bench.test/missing-294,https://bench.test/missing-298,https://bench.test/missing-3,https://bench.test/missing-301,https://bench.test/missing-307,https://bench.test/missing-310,https://bench.test/missing-311,https://bench.test/missing-327,https://bench.test/missing-331,https://bench.test/missing-333,https://bench.test/missing-335,https://bench.test/missing-339,https://bench.test/missing-342,https://bench.test/missing-346,https://bench.test/missing-348,https://bench.test/missing-351,https://bench.test/missing-362,https://bench.test/missing-368,https://bench.test/missing-371,https://bench.test/missing-377,https://bench.test/missing-38,https://bench.test/missing-381,https://bench.test/missing-384,https://bench.test/missing-385,https://bench.test/missing-386,https://bench.test/missing-391,https://bench.test/missing-397,https://bench.test/missing-4,https://bench.test/missing-402,https://bench.test/missing-403,https://bench.test/missing-404,https://bench.test/missing-405,https://bench.test/missing-406,https://bench.test/missing-407,https://bench.test/missing-409,https://bench.test/missing-412,https://bench.test/missing-413,https://bench.test/missing-414,https://bench.test/missing-416,https://bench.test/missing-417,https://bench.test/missing-418,https://bench.test/missing-425,https://bench.test/missing-426,https://bench.test/missing-430,https://bench.test/missing-435,https://bench.test/missing-442,https://bench.test/missing-443,https://bench.test/missing-444,https://bench.test/missing-446,https://bench.test/missing-447,https://bench.test/missing-448,https://bench.test/missing-452,https://bench.test/missing-462,https://bench.test/missing-466,https://bench.test/missing-467,https://bench.test/missing-473,https://bench.test/missing-474,https://bench.test/missing-480,https://bench.test/missing-485,https://bench.test/missing-487,https://bench.test/missing-491,https://bench.test/missing-493,https://bench.test/missing-494,https://bench.test/missing-50,https://bench.test/missing-51,https://bench.test/missing-58,https://bench.test/missing-6,https://bench.test/missing-67,https://bench.test/missing-68,https://bench.test/missing-74,https://bench.test/missing-75,https://bench.test/missing-77,https://bench.test/missing-78,https://bench.test/missing-84,https://bench.test/missing-89,https://bench.test/missing-90,https://bench.test/missing-94,https://bench.test/missing-95,https://bench.test/old-1,https://bench.test/old-103,https://bench.test/old-109,https://bench.test/old-110,https://bench.test/old-113,https://bench.test/old-115,https://bench.test/old-123,https://bench.test/old-125,https://bench.test/old-129,https://bench.test/old-139,https://bench.test/old-147,https://bench.test/old-151,https://bench.test/old-153,https://bench.test/old-155,https://bench.test/old-156,https://bench.test/old-163,https://bench.test/old-165,https://bench.test/old-167,https://bench.test/old-171,https://bench.test/old-172,https://bench.test/old-173,https://bench.test/old-174,https://bench.test/old-176,https://bench.test/old-177,https://bench.test/old-178,https://bench.test/old-183,https://bench.test/old-184,https://bench.test/old-199,https://bench.test/old-21,https://bench.test/old-3,https://bench.test/old-33,https://bench.test/old-39,https://bench.test/old-4,https://bench.test/old-41,https://bench.test/old-43,https://bench.test/old-48,https://bench.test/old-50,https://bench.test/old-54,https://bench.test/old-55,https://bench.test/old-60,https://bench.test/old-61,https://bench.test/old-62,https://bench.test/old-63,https://bench.test/old-68,https://bench.test/old-71,https://bench.test/old-80,https://bench.test/old-81,https://bench.test/old-83,https://bench.test/old-91,https://bench.test/old-95,https://bench.test/p100,https://bench.test/p101,https://bench.test/p102,https://bench.test/p103,https://bench.test/p104,https://bench.test/p105,https://bench.test/p106,https://bench.test/p107,https://bench.test/p108,https://bench.test/p109,https://bench.test/p11,https://bench.test/p110,https://bench.test/p12,https://bench.test/p13,https://bench.test/p14,https://bench.test/p15,https://bench.test/p16,https://bench.test/p17,https://bench.test/p18,https://bench.test/p19,https://bench.test/p20,https://bench.test/p21}'::text[])) AND (target_url = ANY ('{https://bench.test/,https://bench.test/down-1,https://bench.test/down-11,https://bench.test/down-16,https://bench.test/down-24,https://bench.test/down-25,https://bench.test/down-27,https://bench.test/down-3,https://bench.test/down-33,https://bench.test/down-35,https://bench.test/down-36,https://bench.test/down-38,https://bench.test/down-40,https://bench.test/down-43,https://bench.test/down-53,https://bench.test/down-57,https://bench.test/down-64,https://bench.test/down-69,https://bench.test/down-78,https://bench.test/down-80,https://bench.test/down-87,https://bench.test/down-91,https://bench.test/down-95,https://bench.test/missing-102,https://bench.test/missing-103,https://bench.test/missing-104,https://bench.test/missing-107,https://bench.test/missing-11,https://bench.test/missing-12,https://bench.test/missing-125,https://bench.test/missing-127,https://bench.test/missing-128,https://bench.test/missing-129,https://bench.test/missing-130,https://bench.test/missing-139,https://bench.test/missing-143,https://bench.test/missing-147,https://bench.test/missing-148,https://bench.test/missing-153,https://bench.test/missing-154,https://bench.test/missing-159,https://bench.test/missing-16,https://bench.test/missing-165,https://bench.test/missing-166,https://bench.test/missing-17,https://bench.test/missing-170,https://bench.test/missing-171,https://bench.test/missing-172,https://bench.test/missing-174,https://bench.test/missing-178,https://bench.test/missing-179,https://bench.test/missing-18,https://bench.test/missing-182,https://bench.test/missing-186,https://bench.test/missing-188,https://bench.test/missing-19,https://bench.test/missing-190,https://bench.test/missing-192,https://bench.test/missing-195,https://bench.test/missing-196,https://bench.test/missing-197,https://bench.test/missing-198,https://bench.test/missing-199,https://bench.test/missing-207,https://bench.test/missing-208,https://bench.test/missing-210,https://bench.test/missing-212,https://bench.test/missing-214,https://bench.test/missing-218,https://bench.test/missing-22,https://bench.test/missing-243,https://bench.test/missing-244,https://bench.test/missing-247,https://bench.test/missing-258,https://bench.test/missing-259,https://bench.test/missing-261,https://bench.test/missing-265,https://bench.test/missing-270,https://bench.test/missing-274,https://bench.test/missing-275,https://bench.test/missing-277,https://bench.test/missing-279,https://bench.test/missing-285,https://bench.test/missing-287,https://bench.test/missing-295,https://bench.test/missing-30,https://bench.test/missing-302,https://bench.test/missing-308,https://bench.test/missing-309,https://bench.test/missing-31,https://bench.test/missing-313,https://bench.test/missing-317,https://bench.test/missing-319,https://bench.test/missing-320,https://bench.test/missing-326,https://bench.test/missing-328,https://bench.test/missing-330,https://bench.test/missing-338,https://bench.test/missing-35,https://bench.test/missing-353,https://bench.test/missing-354,https://bench.test/missing-356,https://bench.test/missing-357,https://bench.test/missing-359,https://bench.test/missing-361,https://bench.test/missing-363,https://bench.test/missing-376,https://bench.test/missing-379,https://bench.test/missing-382,https://bench.test/missing-383,https://bench.test/missing-387,https://bench.test/missing-393,https://bench.test/missing-395,https://bench.test/missing-399,https://bench.test/missing-40,https://bench.test/missing-41,https://bench.test/missing-415,https://bench.test/missing-419,https://bench.test/missing-42,https://bench.test/missing-422,https://bench.test/missing-428,https://bench.test/missing-429,https://bench.test/missing-433,https://bench.test/missing-436,https://bench.test/missing-438,https://bench.test/missing-439,https://bench.test/missing-44,https://bench.test/missing-440,https://bench.test/missing-445,https://bench.test/missing-450,https://bench.test/missing-451,https://bench.test/missing-454,https://bench.test/missing-455,https://bench.test/missing-464,https://bench.test/missing-465,https://bench.test/missing-47,https://bench.test/missing-475,https://bench.test/missing-476,https://bench.test/missing-478,https://bench.test/missing-48,https://bench.test/missing-484,https://bench.test/missing-49,https://bench.test/missing-495,https://bench.test/missing-499,https://bench.test/missing-52,https://bench.test/missing-57,https://bench.test/missing-61,https://bench.test/missing-64,https://bench.test/missing-66,https://bench.test/missing-69,https://bench.test/missing-7,https://bench.test/missing-70,https://bench.test/missing-71,https://bench.test/missing-81,https://bench.test/missing-85,https://bench.test/missing-88,https://bench.test/missing-92,https://bench.test/missing-93,https://bench.test/missing-98,https://bench.test/old-105,https://bench.test/old-111,https://bench.test/old-114,https://bench.test/old-119,https://bench.test/old-12,https://bench.test/old-120,https://bench.test/old-121,https://bench.test/old-122,https://bench.test/old-131,https://bench.test/old-133,https://bench.test/old-134,https://bench.test/old-135,https://bench.test/old-137,https://bench.test/old-14,https://bench.test/old-144,https://bench.test/old-162,https://bench.test/old-164,https://bench.test/old-175,https://bench.test/old-18,https://bench.test/old-180,https://bench.test/old-186,https://bench.test/old-19,https://bench.test/old-191,https://bench.test/old-193,https://bench.test/old-194,https://bench.test/old-195,https://bench.test/old-20,https://bench.test/old-24,https://bench.test/old-32,https://bench.test/old-34,https://bench.test/old-36,https://bench.test/old-42,https://bench.test/old-44,https://bench.test/old-46,https://bench.test/old-47,https://bench.test/old-5,https://bench.test/old-64,https://bench.test/old-67,https://bench.test/old-7,https://bench.test/old-70,https://bench.test/old-76,https://bench.test/old-8,https://bench.test/old-85,https://bench.test/old-87,https://bench.test/old-9,https://bench.test/old-90,https://bench.test/old-92,https://bench.test/old-97,https://bench.test/p1,https://bench.test/p10,https://bench.test/p2,https://bench.test/p3,https://bench.test/p4,https://bench.test/p5,https://bench.test/p6,https://bench.test/p7,https://bench.test/p8,https://bench.test/p9,https://bench.test/private-1,https://bench.test/private-12,https://bench.test/private-17,https://bench.test/private-22,https://bench.test/private-23,https://bench.test/private-32,https://bench.test/private-36,https://bench.test/private-44,https://bench.test/private-51,https://bench.test/private-53,https://bench.test/private-55,https://bench.test/private-56,https://bench.test/private-57,https://bench.test/private-61,https://bench.test/private-68,https://bench.test/private-71,https://bench.test/private-74,https://bench.test/private-76,https://bench.test/private-78,https://bench.test/private-82,https://bench.test/private-86,https://bench.test/private-97,https://bench.test/private-99,https://bench.test/slow-0,https://bench.test/slow-1,https://bench.test/slow-10,https://bench.test/slow-16,https://bench.test/slow-21,https://bench.test/slow-24,https://bench.test/slow-32,https://bench.test/slow-33,https://bench.test/slow-37,https://bench.test/slow-47,https://bench.test/slow-48,https://bench.test/slow-52,https://bench.test/slow-54,https://bench.test/slow-60,https://bench.test/slow-62,https://bench.test/slow-66,https://bench.test/slow-68,https://bench.test/slow-73,https://bench.test/slow-79,https://bench.test/slow-8,https://bench.test/slow-80,https://bench.test/slow-81,https://bench.test/slow-83,https://bench.test/slow-85,https://bench.test/slow-89,https://bench.test/slow-92,https://bench.test/slow-99,https://bench.test/down-13,https://bench.test/down-14,https://bench.test/down-26,https://bench.test/down-28,https://bench.test/down-29,https://bench.test/down-30,https://bench.test/down-31,https://bench.test/down-37,https://bench.test/down-39,https://bench.test/down-4,https://bench.test/down-46,https://bench.test/down-47,https://bench.test/down-48,https://bench.test/down-5,https://bench.test/down-56,https://bench.test/down-60,https://bench.test/down-66,https://bench.test/down-70,https://bench.test/down-73,https://bench.test/down-75,https://bench.test/down-76,https://bench.test/down-77,https://bench.test/down-79,https://bench.test/down-81,https://bench.test/down-82,https://bench.test/down-93,https://bench.test/down-94,https://bench.test/down-97,https://bench.test/down-99,https://bench.test/missing-10,https://bench.test/missing-105,https://bench.test/missing-106,https://bench.test/missing-111,https://bench.test/missing-113,https://bench.test/missing-115,https://bench.test/missing-116,https://bench.test/missing-118,https://bench.test/missing-119,https://bench.test/missing-120,https://bench.test/missing-121,https://bench.test/missing-122,https://bench.test/missing-132,https://bench.test/missing-138,https://bench.test/missing-140,https://bench.test/missing-141,https://bench.test/missing-145,https://bench.test/missing-146,https://bench.test/missing-15,https://bench.test/missing-152,https://bench.test/missing-155,https://bench.test/missing-158,https://bench.test/missing-161,https://bench.test/missing-164,https://bench.test/missing-177,https://bench.test/missing-183,https://bench.test/missing-20,https://bench.test/missing-21,https://bench.test/missing-213,https://bench.test/missing-221,https://bench.test/missing-222,https://bench.test/missing-223,https://bench.test/missing-227,https://bench.test/missing-231,https://bench.test/missing-233,https://bench.test/missing-234,https://bench.test/missing-236,https://bench.test/missing-238,https://bench.test/missing-239,https://bench.test/missing-240,https://bench.test/missing-246,https://bench.test/missing-251,https://bench.test/missing-26,https://bench.test/missing-266,https://bench.test/missing-269,https://bench.test/missing-27,https://bench.test/missing-272,https://bench.test/missing-273,https://bench.test/missing-280,https://bench.test/missing-281,https://bench.test/missing-284,https://bench.test/missing-288,https://bench.test/missing-289,https://bench.test/missing-292,https://bench.test/missing-294,https://bench.test/missing-298,https://bench.test/missing-3,https://bench.test/missing-301,https://bench.test/missing-307,https://bench.test/missing-310,https://bench.test/missing-311,https://bench.test/missing-327,https://bench.test/missing-331,https://bench.test/missing-333,https://bench.test/missing-335,https://bench.test/missing-339,https://bench.test/missing-342,https://bench.test/missing-346,https://bench.test/missing-348,https://bench.test/missing-351,https://bench.test/missing-362,https://bench.test/missing-368,https://bench.test/missing-371,https://bench.test/missing-377,https://bench.test/missing-38,https://bench.test/missing-381,https://bench.test/missing-384,https://bench.test/missing-385,https://bench.test/missing-386,https://bench.test/missing-391,https://bench.test/missing-397,https://bench.test/missing-4,https://bench.test/missing-402,https://bench.test/missing-403,https://bench.test/missing-404,https://bench.test/missing-405,https://bench.test/missing-406,https://bench.test/missing-407,https://bench.test/missing-409,https://bench.test/missing-412,https://bench.test/missing-413,https://bench.test/missing-414,https://bench.test/missing-416,https://bench.test/missing-417,https://bench.test/missing-418,https://bench.test/missing-425,https://bench.test/missing-426,https://bench.test/missing-430,https://bench.test/missing-435,https://bench.test/missing-442,https://bench.test/missing-443,https://bench.test/missing-444,https://bench.test/missing-446,https://bench.test/missing-447,https://bench.test/missing-448,https://bench.test/missing-452,https://bench.test/missing-462,https://bench.test/missing-466,https://bench.test/missing-467,https://bench.test/missing-473,https://bench.test/missing-474,https://bench.test/missing-480,https://bench.test/missing-485,https://bench.test/missing-487,https://bench.test/missing-491,https://bench.test/missing-493,https://bench.test/missing-494,https://bench.test/missing-50,https://bench.test/missing-51,https://bench.test/missing-58,https://bench.test/missing-6,https://bench.test/missing-67,https://bench.test/missing-68,https://bench.test/missing-74,https://bench.test/missing-75,https://bench.test/missing-77,https://bench.test/missing-78,https://bench.test/missing-84,https://bench.test/missing-89,https://bench.test/missing-90,https://bench.test/missing-94,https://bench.test/missing-95,https://bench.test/old-1,https://bench.test/old-103,https://bench.test/old-109,https://bench.test/old-110,https://bench.test/old-113,https://bench.test/old-115,https://bench.test/old-123,https://bench.test/old-125,https://bench.test/old-129,https://bench.test/old-139,https://bench.test/old-147,https://bench.test/old-151,https://bench.test/old-153,https://bench.test/old-155,https://bench.test/old-156,https://bench.test/old-163,https://bench.test/old-165,https://bench.test/old-167,https://bench.test/old-171,https://bench.test/old-172,https://bench.test/old-173,https://bench.test/old-174,https://bench.test/old-176,https://bench.test/old-177,https://bench.test/old-178,https://bench.test/old-183,https://bench.test/old-184,https://bench.test/old-199,https://bench.test/old-21,https://bench.test/old-3,https://bench.test/old-33,https://bench.test/old-39,https://bench.test/old-4,https://bench.test/old-41,https://bench.test/old-43,https://bench.test/old-48,https://bench.test/old-50,https://bench.test/old-54,https://bench.test/old-55,https://bench.test/old-60,https://bench.test/old-61,https://bench.test/old-62,https://bench.test/old-63,https://bench.test/old-68,https://bench.test/old-71,https://bench.test/old-80,https://bench.test/old-81,https://bench.test/old-83,https://bench.test/old-91,https://bench.test/old-95,https://bench.test/p100,https://bench.test/p101,https://bench.test/p102,https://bench.test/p103,https://bench.test/p104,https://bench.test/p105,https://bench.test/p106,https://bench.test/p107,https://bench.test/p108,https://bench.test/p109,https://bench.test/p11,https://bench.test/p110,https://bench.test/p12,https://bench.test/p13,https://bench.test/p14,https://bench.test/p15,https://bench.test/p16,https://bench.test/p17,https://bench.test/p18,https://bench.test/p19,https://bench.test/p20,https://bench.test/p21}'::text[])))
+              Rows Removed by Filter: 474878
+              Storage: Disk  Maximum Storage: 30933kB
+              Buffers: shared hit=8616, temp read=3867 written=3867
+Planning:
+  Buffers: shared hit=14
+Planning Time: 1.859 ms
+Execution Time: 292.479 ms

@@ -2,6 +2,7 @@
 
 import base64
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Self
 
@@ -10,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.errors import FieldViolation, InvalidInputError
 from app.db.models import JobStatus, UrlState
 from app.services.crawl_jobs import CrawlJobProgress, JobPosition
-from app.services.search_index import IndexingState
+from app.services.search_index import IndexingProgress, IndexingState
 
 # As submitted; the normalized URL must also fit in 2048 bytes (app/crawler/urls.py).
 SEED_URL_MAX_LENGTH = 4096
@@ -65,8 +66,9 @@ class CrawlJobSummary(BaseModel):
 
     id: uuid.UUID
     status: JobStatus = Field(
-        description="`queued` until the scheduler (Phase 5) starts the job; nothing is crawled "
-        "while a job is queued."
+        description="The crawl's status. `queued` until the scheduler starts the job; nothing "
+        "is crawled while a job is queued. `completed`, `failed` and `cancelled` end the crawl, "
+        "not its indexing: see `indexing.status` of the job detail."
     )
     seed_url: str = Field(description="The normalized seed URL.")
     allowed_hosts: list[str] = Field(description="Hosts this job may crawl (exact match).")
@@ -77,8 +79,11 @@ class CrawlJobSummary(BaseModel):
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
-    started_at: datetime | None
-    finished_at: datetime | None
+    started_at: datetime | None = Field(description="When the scheduler started the crawl.")
+    finished_at: datetime | None = Field(
+        description="When the crawl ended (completed, failed or cancelled). Indexing may still "
+        "be running then: its end is `indexing.completed_at` of the job detail."
+    )
     cancel_requested_at: datetime | None
 
 
@@ -93,6 +98,10 @@ class UrlStateCounts(BaseModel):
     skipped: int
     cancelled: int
 
+    @classmethod
+    def from_counts(cls, counts: Mapping[UrlState, int]) -> Self:
+        return cls(**{state.value: counts.get(state, 0) for state in UrlState})
+
 
 class CrawlProgress(BaseModel):
     """Progress counted from the job's URL rows when the request was served."""
@@ -100,6 +109,10 @@ class CrawlProgress(BaseModel):
     urls_total: int = Field(description="URL rows of the job; equals `admitted_count`.")
     urls_finished: int = Field(description="URLs in a terminal state.")
     urls_by_state: UrlStateCounts
+    pages_stored: int = Field(
+        description="HTML pages stored. Only a fetched 2xx HTML response stores a page; other "
+        "fetched URLs (redirects, HTTP errors, other content types) have none."
+    )
 
 
 class DocumentStatusCounts(BaseModel):
@@ -130,6 +143,21 @@ class CrawlIndexing(BaseModel):
         description="When the indexing of the finished job was found complete; null until then."
     )
 
+    @classmethod
+    def from_progress(cls, indexing: IndexingProgress) -> Self:
+        return cls(
+            status=indexing.state,
+            documents_total=indexing.documents,
+            documents_by_status=DocumentStatusCounts(
+                pending=indexing.pending,
+                queued=indexing.queued,
+                indexed=indexing.indexed,
+                failed=indexing.failed,
+            ),
+            active=indexing.active,
+            completed_at=indexing.completed_at,
+        )
+
 
 class CrawlJobDetail(CrawlJobSummary):
     """A crawl job with its progress and its indexing."""
@@ -140,27 +168,15 @@ class CrawlJobDetail(CrawlJobSummary):
     @classmethod
     def from_progress(cls, progress: CrawlJobProgress) -> Self:
         summary = CrawlJobSummary.model_validate(progress.job)
-        counts = {state.value: progress.urls_by_state[state] for state in UrlState}
-        indexing = progress.indexing
         return cls(
             **summary.model_dump(),
             progress=CrawlProgress(
                 urls_total=progress.urls_total,
                 urls_finished=progress.urls_finished,
-                urls_by_state=UrlStateCounts(**counts),
+                urls_by_state=UrlStateCounts.from_counts(progress.urls_by_state),
+                pages_stored=progress.pages_stored,
             ),
-            indexing=CrawlIndexing(
-                status=indexing.state,
-                documents_total=indexing.documents,
-                documents_by_status=DocumentStatusCounts(
-                    pending=indexing.pending,
-                    queued=indexing.queued,
-                    indexed=indexing.indexed,
-                    failed=indexing.failed,
-                ),
-                active=indexing.active,
-                completed_at=indexing.completed_at,
-            ),
+            indexing=CrawlIndexing.from_progress(progress.indexing),
         )
 
 

@@ -331,6 +331,7 @@ async def test_post_then_get_and_list_through_the_api(
             "skipped": 0,
             "cancelled": 0,
         },
+        "pages_stored": 0,
     }
     listing = crawl_client.get("/api/v1/crawls").json()
     assert [item["id"] for item in listing["items"]] == [body["id"]]

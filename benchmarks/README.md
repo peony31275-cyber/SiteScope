@@ -84,3 +84,44 @@ The development database is never touched.
 [`results/phase7-indexing.json`](results/phase7-indexing.json), the plans
 [`results/phase7-search-plans.txt`](results/phase7-search-plans.txt), and the raw output of the
 earlier runs [`results/phase7-indexing-earlier-runs.txt`](results/phase7-indexing-earlier-runs.txt).
+
+## `analysis.py` and `analysis_index_ab.py` (Phase 8)
+
+Latency and query plans of the website-analysis service (`app/services/site_analysis.py`), and
+the A/B of the two indexes of migration 0005.
+
+**Setup.** One job per size, built directly in PostgreSQL from a seeded generator (the same
+dataset in every run): 1,000 and 10,000 stored pages in BFS levels of branching 10, each with 50
+distinct links (80% to pages, 8% to non-page URLs, 7% to URLs never admitted, 5% external), plus
+non-page URLs: 404s (5% of the pages), redirects to pages (2%), 503s, read timeouts and
+robots.txt refusals (1% each). `VACUUM (ANALYZE)` after loading. No crawl runs; no HTTP server.
+
+**Measured.** Every analysis use case (pages and links listings with and without filters and
+deep cursors, broken links, the link graph at its default and maximum limits, statistics) runs 20
+times in a row on one database session, as the API calls it; every call's wall time is kept.
+Repeating calls on one connection exposes PostgreSQL's switch to generic plans after five
+executions of a prepared statement. `EXPLAIN (ANALYZE, BUFFERS)` of every analysis statement is
+saved. `analysis_index_ab.py` builds revision 0004 instead, loads the 10,000-page job once, and
+measures every case with the indexes of 0004, with each candidate index, and with those of 0004
+again.
+
+**Isolation.** A disposable database `<SITESCOPE_POSTGRES_DB>_test_bench` (created, migrated and
+dropped by the script). No Redis. The development database is never touched.
+
+**Run** from `backend\`, with PostgreSQL up:
+
+```powershell
+.\.venv\Scripts\python.exe ..\benchmarks\analysis.py --pages 1000 10000 `
+    --output ..\benchmarks\results\phase8-analysis.json `
+    --plans ..\benchmarks\results\phase8-analysis-plans.txt
+.\.venv\Scripts\python.exe ..\benchmarks\analysis_index_ab.py `
+    --output ..\benchmarks\results\phase8-index-ab.json
+```
+
+**Results.** See [`results/phase8-analysis.md`](results/phase8-analysis.md), the raw JSON
+[`results/phase8-analysis.json`](results/phase8-analysis.json) and
+[`results/phase8-index-ab.json`](results/phase8-index-ab.json), the plans
+[`results/phase8-analysis-plans.txt`](results/phase8-analysis-plans.txt), and the measurement
+before the optimizations
+[`results/phase8-analysis-baseline.json`](results/phase8-analysis-baseline.json) (its plans:
+[`results/phase8-analysis-baseline-plans.txt`](results/phase8-analysis-baseline-plans.txt)).

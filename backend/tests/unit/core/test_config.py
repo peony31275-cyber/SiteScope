@@ -751,3 +751,31 @@ def test_accepts_the_boundaries_of_the_index_rules(monkeypatch: pytest.MonkeyPat
     settings = Settings(_env_file=None)
 
     assert (settings.index_reclaim_min_idle_seconds, settings.index_concurrency) == (22, 10)
+
+
+# --- Website analysis (Phase 8) ------------------------------------------------------------------
+
+
+def test_phase_8_defaults() -> None:
+    assert Settings(_env_file=None).analysis_timeout_seconds == 10
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "61"])
+def test_rejects_an_invalid_analysis_timeout(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("SITESCOPE_ANALYSIS_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_postgresql_stops_an_analysis_before_the_client_gives_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SITESCOPE_ANALYSIS_TIMEOUT_SECONDS", "30")
+
+    with pytest.raises(
+        ValidationError, match="SITESCOPE_ANALYSIS_TIMEOUT_SECONDS must be shorter than"
+    ):
+        Settings(_env_file=None)
+    monkeypatch.setenv("SITESCOPE_ANALYSIS_TIMEOUT_SECONDS", "29.9")
+    assert Settings(_env_file=None).analysis_timeout_seconds == 29.9

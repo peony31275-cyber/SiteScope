@@ -27,8 +27,11 @@
 >   weighted vector inside PostgreSQL from the locked page, and never let an older index replace
 >   a newer one (migration `0004`); job indexing completion; an internal, read-only search
 >   service (sections 3, 4, 7, 9 to 11, 13, ADR-0018).
+> - Phase 8: the search and website-analysis REST APIs: `GET /api/v1/search`, and read-only pages,
+>   links (each classified), confirmed broken links, link graph and statistics of a job, computed
+>   from its stored crawl results (sections 3, 4, 13, ADR-0019).
 >
-> The search HTTP API, link analysis and the dashboard are not implemented yet.
+> The dashboard is not implemented yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -127,13 +130,13 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 | Component | Process / entrypoint | Responsibilities | Scaling |
 |---|---|---|---|
 | Dashboard | static SPA behind nginx | create and cancel jobs; show progress, pages, link reports, search | n/a |
-| API | `api`: `uvicorn app.main:app` | input validation, job commands, read models, search queries | stateless, N replicas |
+| API | `api`: `uvicorn app.main:app` | input validation, job commands, read models; since Phase 8 search and read-only website analysis (pages, links, broken links, link graph, statistics) | stateless, N replicas |
 | Scheduler (Phase 5) | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, reconciliation, stream maintenance | 1..N, no leader (ADR-0016) |
 | Index dispatcher (Phase 7) | `index-dispatcher`: `python -m app.scheduler.index_dispatcher` | publishes pending search documents, republishes lost index tasks, completes the indexing of finished jobs, maintains the index stream; starts no job | 1..N, no leader (ADR-0018) |
 | Crawler worker (Phase 5) | `crawler-worker`: `python -m app.workers.crawler` | consume the crawl stream, claim URL leases, fetch safely, parse, commit results (fenced), ack, adopt abandoned messages | N processes, each with bounded concurrency |
 | Local crawl driver (Phase 4) | `python -m app.workers.local_crawler <job-id>` | runs one job in one process: dispatch without a stream, claims, crawl tasks, fenced results, level advancement | development and tests only |
 | Diagnostics (Phase 5) | `python -m app.scheduler.status` | read-only JSON report: jobs, URL states, live leases per worker, stream and consumer-group statistics; since Phase 7 search documents by status, index attempts per indexer and the index stream | on demand |
-| Search command (Phase 7) | `python -m app.scheduler.search <job-id> "query"` | read-only search of one job's index, as JSON (the HTTP API is Phase 8) | on demand |
+| Search command (Phase 7) | `python -m app.scheduler.search <job-id> "query"` | read-only search of one job's index, as JSON (the same service as `GET /api/v1/search`) | on demand |
 | Indexer worker (Phase 7) | `indexer-worker`: `python -m app.workers.indexer` | consume the index stream, count each attempt in PostgreSQL, build the weighted `tsvector` inside PostgreSQL, ack after the commit | N processes, each with bounded concurrency |
 | PostgreSQL | service | durable state, constraints, row locks, full-text index | single instance |
 | Redis | service | streams and consumer groups, per-host rate-limit state, robots.txt cache | single instance, AOF on |
@@ -292,8 +295,9 @@ It never starts a job or touches crawl state, so it is safe to run where the sch
    sends `XACK`. Once a finished job has no `pending` or `queued` document, the dispatcher sets
    its `indexing_completed_at`.
 10. **Query.** The search service returns a job's indexed pages whose index matches their current
-   content, ranked, with snippets (Phase 7: an internal service and a read-only command; the HTTP
-   API, with progress, pages and link reports, follows in Phase 8).
+   content, ranked, with snippets (Phase 7: the service and a read-only command; Phase 8:
+   `GET /api/v1/search`). The analysis endpoints (Phase 8) report the job's pages, its classified
+   links, its confirmed broken links, its link graph and its statistics from the stored rows.
 
 ## 5. Data model (implemented in Phase 2B)
 
@@ -437,7 +441,8 @@ The partial indexes serve the planned access paths:
 | `ix_search_documents_pending`, `ix_search_documents_queued_since` | the index dispatcher and its reconciliation |
 | `ix_crawl_jobs_indexing_open (finished_at) WHERE finished_at IS NOT NULL AND indexing_completed_at IS NULL` | job indexing completion (`0004`) |
 | `ix_search_documents_search_vector` (GIN) | full-text search |
-| `ix_page_links_job_id_target (job_id, target_normalized_url)` | link analysis and BFS expansion |
+| `ix_page_links_job_id_target (job_id, target_normalized_url) INCLUDE (is_internal)` | link analysis: links to a URL, and index-only counts of a job's internal links (`0005`) |
+| `ix_pages_job_id_normalized_url (job_id, normalized_url)` | a job's pages; the links listing's order, by the linking page's URL (`0005`, replacing `ix_pages_job_id`) |
 | `ix_crawl_events_job_id_id (job_id, id)` | a job's events in order |
 
 ### 5.3 Why this schema supports the distributed worker architecture
@@ -1327,7 +1332,8 @@ rows are implemented by the safe fetcher and the parser (Phase 3), the politenes
 ## 13. Search, indexing, and link analysis
 
 Indexing and the search service are implemented in Phase 7 (ADR-0018, which amends ADR-0005);
-the HTTP search API is Phase 8.
+the HTTP search API and link analysis in Phase 8 (ADR-0019, which replaces this section's original
+definition of broken links).
 
 **Pipeline.** Result commit → `search_documents` row as `pending` (in the same transaction) → index
 dispatcher → `sitescope:index` → indexer → vector written with its content version, row `indexed`
@@ -1385,18 +1391,44 @@ configuration is used. Every match is ranked before a page is cut, so the cost o
 with its number of matches. Any ranking change, such as boosting pages by in-link count, must be
 justified by an evaluation rather than assumed.
 
-**Link analysis.** Computed in SQL over `page_links` joined to `crawl_urls` on
-`(job_id, normalized_url)`:
+**HTTP search API** (Phase 8). `GET /api/v1/search` maps `page` and `page_size` to the service's
+offset and limit (at most offset 1000 and 50 results, as above) and returns its results unchanged:
+the visibility rule, the ranking and the time limit are the service's. Details:
+[`api-conventions.md`](api-conventions.md), section "Search".
 
-- **Broken links:** internal links whose target `failed`, or was fetched with a status of 400 or higher.
-  Each is reported with its source page, anchor text, and status or error.
-- **Redirecting links:** targets that answered 3xx, together with their redirect target.
-- **Unchecked links:** internal targets that were never fetched, because they were beyond the depth or
-  budget, or robots.txt skipped them. They are reported separately and never counted as "OK".
-- **External links:** grouped by host. They are never fetched, since that would violate the allowlist, so
-  they are never classified as broken.
-- **Structure:** in-link and out-link counts per page, the depth distribution, the most-linked pages, and
-  pages reached through only one in-link.
+**Link analysis** (Phase 8, `backend/app/services/site_analysis.py`,
+[ADR-0019](adr/0019-website-analysis-from-stored-crawl-results.md)). Computed in SQL from the
+job's stored rows (`crawl_urls`, `pages`, `page_links`, `search_documents`); nothing is fetched
+again, and nothing is written. Each request is one read-only REPEATABLE READ transaction with a
+time limit (`SITESCOPE_ANALYSIS_TIMEOUT_SECONDS`, 10 s by default).
+
+- **Classification.** Every stored link gets one class from the crawl result of its target in the
+  same job (`page_links.target_normalized_url` = `crawl_urls.normalized_url`, within the job):
+  `ok`, `broken`, `server_error`, `http_error` and `redirect_error` are decided by an HTTP response
+  (*verified*); `out_of_scope`, `not_followed`, `beyond_limits`, `not_crawled`, `robots_blocked` and
+  `unreachable` are not (*unverified*). Only a terminal result decides: a URL waiting for a retry
+  keeps its last attempt's status.
+- **Redirects.** A target that redirected is judged where its chain ends: a recursive query follows
+  `redirect_target` through the job's own crawl URLs and stops at a URL already seen (a loop, class
+  `redirect_error`), after 20 redirects (also `redirect_error`; this bounds the query, since URLs
+  admitted through links can form chains of any length), or at a URL the job never admitted
+  (`out_of_scope` when it leaves the job's hosts, `beyond_limits` when the page budget was used
+  up, `not_crawled` otherwise).
+- **Broken links** are internal links whose target, after its redirects, answered 404 or 410: one
+  item per stored link. The original definition here ("failed, or a status of 400 or higher") was
+  replaced: 5xx, 408 and 429 may be transient, 401 and 403 are refusals, and a failed request has
+  no response (ADR-0019).
+- **External links** are recorded and never fetched (the allowlist), so they are `out_of_scope`,
+  never broken.
+- **Structure.** The link graph (nodes: admitted URLs and internal link targets; edges: stored
+  internal links; in- and out-degrees over every stored link; cut at `max_nodes` and `max_edges`),
+  the depth distribution, and the most-linked URLs. Only links on stored pages are known, so the
+  analysis never calls a page an orphan.
+- **Cost.** The statistics and the filtered links listings classify every link of the job, and
+  the broken links follow the redirect chains of every crawl URL; a page of the unfiltered links
+  listing classifies only its own links, and the pages listing reads one page of pages. The page
+  budget bounds the rest (`SITESCOPE_CRAWL_MAX_PAGES_LIMIT`); measurements:
+  `benchmarks/results/phase8-analysis.md`.
 
 ## 14. Observability and configuration
 
@@ -1523,9 +1555,10 @@ SITESCOPE/
 |   |-- app/
 |   |   |-- main.py              # FastAPI app factory, lifespan, routers, error handlers
 |   |   |-- core/                # settings, logging, domain errors
-|   |   |-- api/                 # routers (crawls since Phase 2C; search, links, system), schemas
+|   |   |-- api/                 # routers and schemas: crawls (Phase 2C); search and website
+|   |   |                        #   analysis (Phase 8)
 |   |   |-- services/            # use cases that own transactions: jobs, frontier, cancellation
-|   |   |                        #   (Phase 6), indexing, search, links
+|   |   |                        #   (Phase 6), indexing, search (Phase 7), site analysis (Phase 8)
 |   |   |-- db/                  # SQLAlchemy models, engine and session factory
 |   |   |-- queue/               # Phase 5: Redis Streams adapter, versioned message schema
 |   |   |-- scheduler/           # Phase 5: scheduler passes (activation, advancement, dispatch,
@@ -1613,7 +1646,7 @@ SITESCOPE/
 | Processes (Phase 6) | real processes with flaky local sites: retries and strict BFS, exhaustion, `Retry-After`, simultaneous failures, a scheduler restart during backoff, a worker killed during a retry, duplicates during backoff, a killed worker's politeness slot, cancellation with live workers and across a scheduler restart; `FLUSHALL` of a disposable Redis container mid-crawl | PostgreSQL, Docker (WSL), local servers |
 | Indexing and search (Phase 7) | the indexing outbox (dispatch inside the transaction, `SKIP LOCKED`, rollback after `XADD`); attempts and leases; the weighted vector, size limits and the fallback; stale-index prevention with every interleaving forced by row locks; triggers; job indexing completion and reindexing; reconciliation; the indexer's dispositions in-process (duplicates, dead letters, a lost `XACK`, an abandoned attempt, a poison document, a PostgreSQL outage); relevance, ties, paging, visibility, isolation, snippets and awkward queries | PostgreSQL, Redis |
 | Processes (Phase 7) | real scheduler, crawler worker, index dispatcher and indexer processes: crawl, persist, publish, index and search a local site; an indexer killed mid-attempt; an index dispatcher killed between `XADD` and commit; Redis and PostgreSQL cut off; a job cancelled during indexing; `FLUSHALL` of a disposable Redis container after the dispatch | PostgreSQL, Redis, Docker (WSL), local servers |
-| End-to-end | crawl a local fixture site over real HTTP, then check search results (Phase 7) and link reports (Phase 8) | full stack |
+| End-to-end | crawl a local fixture site over real HTTP, then check search results (Phase 7) and, through the HTTP API, the pages, links, broken links, link graph, statistics and search of the demo site (Phase 8, `tests/fault/test_api_end_to_end.py`) | full stack |
 | Frontend | components and the API client; type check; production build | Node.js |
 
 Tests that need unavailable services skip with an explicit reason. Benchmarks are kept separate from
@@ -1707,6 +1740,15 @@ the development Redis, whose test database 15 would not isolate it.
   reclaim idle time (60 s), a lost one after the reconcile time (5 minutes).
 - Cancelling a job does not stop the indexing of the pages it stored.
 - No incremental re-crawl; storage is duplicated across jobs.
+- Link analysis reflects the crawl when it ran: a target that answered 404 stays broken for that
+  job even if it recovers later, and an unverified link stays unverified (Phase 8). Reasons the
+  stored results do not record (the redirect hop limit, a redirect to a URL of the job's host
+  that is not an approved target, a job that ended before admitting a level) are reported as
+  `not_crawled`. A robots.txt that could not be fetched counts as `robots_blocked`.
+- The statistics, the broken links and the filtered links listings read every link or crawl URL
+  of their job, so their cost grows with the job (about 0.6 s for the statistics of a job with
+  500,000 links on the development machine); the link graph's response can reach about a megabyte
+  at its maximum limits; responses are not cached (Phase 8).
 - A client that retries job creation without an `Idempotency-Key` creates a second job; keys are
   remembered for 24 hours by default.
 
@@ -1732,3 +1774,4 @@ the development Redis, whose test database 15 would not isolate it.
 | [0016](adr/0016-distributed-execution-redis-streams.md) | Distributed execution over Redis Streams: publication, acknowledgment, recovery |
 | [0017](adr/0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation |
 | [0018](adr/0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes |
+| [0019](adr/0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs |

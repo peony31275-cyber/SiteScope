@@ -5,6 +5,7 @@ in the OpenAPI document, replacing FastAPI's default ``HTTPValidationError`` sch
 not match what the API returns.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
@@ -40,9 +41,19 @@ _DESCRIPTIONS = {
 }
 
 
-def problem_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
-    """The ``responses`` argument of a route that can answer with these problem statuses."""
+def problem_responses(
+    *statuses: int, descriptions: Mapping[int, str] | None = None
+) -> dict[int | str, dict[str, Any]]:
+    """The ``responses`` argument of a route that can answer with these problem statuses.
+
+    ``descriptions`` replaces the default description of a status, for a route whose problems
+    of that status have more causes (each with its ``code``).
+    """
+    custom = descriptions or {}
+    unknown = set(custom) - set(statuses)
+    if unknown:
+        raise ValueError(f"descriptions for undocumented statuses: {sorted(unknown)}")
     return {
-        status: {"model": ProblemDetails, "description": _DESCRIPTIONS[status]}
+        status: {"model": ProblemDetails, "description": custom.get(status, _DESCRIPTIONS[status])}
         for status in statuses
     }

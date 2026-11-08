@@ -382,7 +382,8 @@ class Page(Base):
             " AND char_length(extracted_text) <= 1000000",
             name="text_lengths",
         ),
-        Index("ix_pages_job_id", "job_id"),
+        # A job's pages, and the links listing's order (by the linking page's URL; Phase 8).
+        Index("ix_pages_job_id_normalized_url", "job_id", "normalized_url"),
     )
 
 
@@ -420,8 +421,14 @@ class PageLink(Base):
         CheckConstraint(
             "anchor_text IS NULL OR char_length(anchor_text) <= 500", name="anchor_text_length"
         ),
-        # Link analysis and BFS expansion: links pointing at a URL within a job.
-        Index("ix_page_links_job_id_target", "job_id", "target_normalized_url"),
+        # Link analysis: links pointing at a URL within a job. is_internal is included so that
+        # counting a job's internal links needs no heap visit (migration 0005, Phase 8).
+        Index(
+            "ix_page_links_job_id_target",
+            "job_id",
+            "target_normalized_url",
+            postgresql_include=["is_internal"],
+        ),
     )
 
 

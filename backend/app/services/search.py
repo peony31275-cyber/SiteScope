@@ -156,8 +156,9 @@ async def search_job(
         field = {"invalid_limit": "limit", "invalid_offset": "offset"}.get(exc.code, "q")
         raise InvalidInputError([FieldViolation(("query", field), exc.message, exc.code)]) from None
     params = {"config": TEXT_SEARCH_CONFIG, "query": normalized, "job_id": job_id}
+    deadline = asyncio.timeout(timeout_seconds)
     try:
-        async with asyncio.timeout(timeout_seconds), session.begin():
+        async with deadline, session.begin():
             await session.execute(_SNAPSHOT)
             await session.execute(
                 _STATEMENT_TIMEOUT, {"timeout": str(max(1, round(timeout_seconds * 1000)))}
@@ -181,7 +182,12 @@ async def search_job(
                 )
             ).all()
     except (DBAPIError, TimeoutError) as exc:
-        if isinstance(exc, TimeoutError) or sqlstate(exc) == QUERY_CANCELED:
+        # Only this search's own deadline, or PostgreSQL's statement timeout, is a search timeout;
+        # another TimeoutError (connecting to PostgreSQL) is an outage (Phase 8 review).
+        stopped = (
+            deadline.expired() if isinstance(exc, TimeoutError) else sqlstate(exc) == QUERY_CANCELED
+        )
+        if stopped:
             raise SearchTimeoutError(
                 f"The search took longer than {timeout_seconds:g} s and was stopped."
             ) from None

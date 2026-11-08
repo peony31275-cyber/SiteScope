@@ -18,7 +18,7 @@ from tests.integration import helpers
 
 pytestmark = pytest.mark.anyio
 
-REVISIONS = ["0001", "0002", "0003", "0004"]  # oldest first
+REVISIONS = ["0001", "0002", "0003", "0004", "0005"]  # oldest first
 HEAD = REVISIONS[-1]
 
 
@@ -178,6 +178,38 @@ async def test_0003_adds_the_robots_columns_with_defaults_for_existing_rows(
 
     flags = await query(empty_database, "SELECT robots_noindex OR robots_nofollow FROM pages")
     assert flags == [False]
+    assert await schema_differences(empty_database) == []
+
+
+async def analysis_indexes(settings: Settings) -> dict[str, str]:
+    rows = await query(
+        settings,
+        "SELECT indexname || ': ' || indexdef FROM pg_indexes"
+        r" WHERE tablename IN ('pages', 'page_links') AND indexname LIKE 'ix\_%' ORDER BY 1",
+    )
+    return dict(row.split(": ", 1) for row in rows)
+
+
+async def test_0005_replaces_two_indexes_by_wider_ones_and_back(
+    empty_database: Settings,
+) -> None:
+    """Migration 0005 (Phase 8) widens two indexes for the analysis queries; the number of
+    indexes does not change, and stepping down restores the 0004 definitions."""
+    await helpers.upgrade(empty_database, "0004")
+    before = await analysis_indexes(empty_database)
+
+    await helpers.upgrade(empty_database, "0005")
+    after = await analysis_indexes(empty_database)
+
+    assert set(before) == {"ix_pages_job_id", "ix_page_links_job_id_target"}
+    assert set(after) == {"ix_pages_job_id_normalized_url", "ix_page_links_job_id_target"}
+    assert after["ix_pages_job_id_normalized_url"].endswith("(job_id, normalized_url)")
+    assert after["ix_page_links_job_id_target"].endswith(
+        "(job_id, target_normalized_url) INCLUDE (is_internal)"
+    )
+    await helpers.downgrade(empty_database, "0004")
+    assert await analysis_indexes(empty_database) == before
+    await helpers.upgrade(empty_database, "head")
     assert await schema_differences(empty_database) == []
 
 

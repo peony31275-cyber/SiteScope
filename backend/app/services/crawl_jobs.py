@@ -65,6 +65,7 @@ from app.db.models import (
     CrawlUrl,
     IndexStatus,
     JobStatus,
+    Page,
     SearchDocument,
     UrlState,
 )
@@ -117,11 +118,13 @@ class SubmittedCrawlJob:
 
 @dataclass(frozen=True, slots=True)
 class CrawlJobProgress:
-    """A job, how many of its URLs are in each state, and its indexing, read in one snapshot."""
+    """A job, how many of its URLs are in each state, its stored pages, and its indexing, read
+    in one snapshot."""
 
     job: CrawlJob
     urls_by_state: dict[UrlState, int]
     indexing: IndexingProgress = field(default_factory=IndexingProgress)
+    pages_stored: int = 0  # HTML pages stored (outcome html_stored)
 
     @property
     def urls_total(self) -> int:
@@ -267,8 +270,8 @@ async def expire_idempotency_keys(session: AsyncSession, *, ttl: int, limit: int
 
 
 async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobProgress:
-    """Return a job with its URL counts per state and its indexing progress, or raise
-    ``NotFoundError``."""
+    """Return a job with its URL counts per state, its stored pages and its indexing progress,
+    all from one statement (one snapshot), or raise ``NotFoundError``."""
     counts = (
         select(
             *(
@@ -297,11 +300,17 @@ async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobPro
         .where(SearchDocument.job_id == CrawlJob.id)
         .lateral("document_counts")
     )
+    pages = (
+        select(func.count().label("pages_stored"))
+        .where(Page.job_id == CrawlJob.id)
+        .lateral("page_counts")
+    )
     statement = (
-        select(CrawlJob, *counts.c, *documents.c)
+        select(CrawlJob, *counts.c, *documents.c, *pages.c)
         .select_from(CrawlJob)
         .join(counts, true())
         .join(documents, true())
+        .join(pages, true())
         .where(CrawlJob.id == job_id)
     )
     async with session.begin():
@@ -309,8 +318,10 @@ async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobPro
     if row is None:
         raise NotFoundError(f"Crawl job {job_id} does not exist.")
     job, *values = row
-    state_counts = values[: len(UrlState)]
-    by_status = dict(zip(IndexStatus, values[len(UrlState) : -1], strict=True))
+    states, statuses = len(UrlState), len(IndexStatus)
+    state_counts = values[:states]
+    by_status = dict(zip(IndexStatus, values[states : states + statuses], strict=True))
+    active, pages_stored = values[states + statuses :]
     return CrawlJobProgress(
         job=job,
         urls_by_state=dict(zip(UrlState, state_counts, strict=True)),
@@ -319,9 +330,10 @@ async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobPro
             queued=by_status[IndexStatus.QUEUED],
             indexed=by_status[IndexStatus.INDEXED],
             failed=by_status[IndexStatus.FAILED],
-            active=values[-1],
+            active=active,
             completed_at=job.indexing_completed_at,
         ),
+        pages_stored=pages_stored,
     )
 
 

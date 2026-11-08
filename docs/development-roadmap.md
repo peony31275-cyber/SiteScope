@@ -18,7 +18,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 5 | Distributed scheduling and workers | **Done** (2026-11-06) |
 | 6 | Fault tolerance and recovery | **Done** (2026-11-07) |
 | 7 | Asynchronous search indexing | **Done** (2026-11-08) |
-| 8 | Search and analysis APIs | Not started |
+| 8 | Search and analysis APIs | **Done** (2026-11-08) |
 | 9 | React dashboard | Not started |
 | 10 | Testing, benchmarking, and observability | Not started |
 | 11 | Final deployment and documentation | Not started |
@@ -38,21 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 7
+## Repository state after Phase 8
 
-Updated on 2026-11-08. The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08 (Phase 8). The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7). |
-| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) and `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8). |
+| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7) and `0005` (two indexes widened for the analysis queries; Phase 8). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 1867 tests: 1291 unit, 576 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container). |
-| `benchmarks/` | The distributed crawl throughput benchmark (Phase 5) and the indexing and search benchmark (Phase 7), with their raw results. |
+| `backend/tests/` | 1985 tests: 1373 unit, 612 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container). |
+| `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), and the analysis latency benchmark with its index A/B (Phase 8), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0018, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0019, API conventions, development guide. |
 | `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
@@ -1088,29 +1088,141 @@ and the snapshot), its test fails; all seven were checked that way and the files
 - **The job detail** already has the `indexing` block.
 - **Reindexing** (`request_reindex`) has no endpoint yet.
 
-### Phase 8: Search and analysis APIs
+### Phase 8: Search and analysis APIs (done)
 
-**Scope**
+**Goal.** Expose search and website analysis of each crawl job through a stable, read-only REST
+API for the dashboard, computed from the stored crawl results, without a second search engine,
+without any request to a crawl target, and without reporting anything the crawl did not observe.
 
-- `GET /api/v1/search`, on the Phase 7 search service (`app/services/search.py`):
-  - `websearch_to_tsquery` for parsing and `ts_rank` with field weights for ranking (ADR-0018);
-  - safe `ts_headline` snippets;
-  - pagination;
-  - scoped to a job.
-- The pages of a job.
-- Link analysis:
-  - reports on broken, redirecting, unchecked, and external links;
-  - link statistics: in-link and out-link counts, the depth distribution, and the most-linked
-    pages;
-  - API endpoints, and the indexes that support them.
+**Scope, reconciled with the plan.** Delivered as planned: `GET /api/v1/search` on the Phase 7
+service, the pages of a job, link reports (broken, redirecting, unchecked and external links,
+through each link's classification), link statistics (in- and out-link counts, the depth
+distribution, the most-linked URLs), the endpoints and the indexes that support them, and the
+planned tests. Changed from the plan:
 
-**Tests**
+- **Broken links** are narrower than architecture section 13 planned ("failed, or a status of 400
+  or higher"): only a 404 or 410 at the end of the target's redirects. Every other outcome has its
+  own class (ADR-0019, which amends section 13).
+- **Search pages with `page` and `page_size`**, not a cursor: results are ranked, and the
+  service's offset bound (1,000) stays.
+- Added: the link graph endpoint, a statistics endpoint, `progress.pages_stored` on the job
+  detail, `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS`, a benchmark of the analysis queries, and an
+  end-to-end test of the whole pipeline through the API with real processes.
+- Added after the review: the `verified` and `redirected` filters of the links listing.
+- Not done: "pages reached through only one in-link" (the graph gives every in-degree), grouping
+  external links by host, and a reindex endpoint.
 
-- A title match outranks a body match.
-- Arbitrary query strings never cause an error.
-- Search over the fixture crawl.
-- A fixture site with known broken links, redirect chains, and depth-limited links, checked against
-  exact expected reports.
+**Delivered** (design in ADR-0019; architecture: the status note and sections 3 to 5, 13, 16,
+18 to 20; api-conventions "Search" and "Website analysis")
+
+- **Endpoints** (`app/api/v1/search.py`, `app/api/v1/analysis.py`, schemas next to them):
+  `GET /api/v1/search`; `GET /api/v1/crawls/{job_id}/pages`, `/links` (filters: source page,
+  internal, class, `verified`, `redirected`), `/broken-links`, `/link-graph`, `/stats`.
+  Explicit response models with examples, typed and bounded parameters, problem+json errors
+  (`404`, `422` with `invalid_cursor`, `empty_query`, `query_too_long`, `page_out_of_range`;
+  `503` with `search_timeout` or `analysis_timeout`), OpenAPI tags with the terms (page,
+  discovered URL, link, document, broken, unverified).
+- **Analysis service** (`app/services/site_analysis.py`): every query in SQL, one read-only
+  REPEATABLE READ transaction per call, a statement timeout and a client deadline, forced custom
+  plans. Link classification in eleven classes, redirect chains followed through the job's own
+  results (loops detected), confirmed broken links, the link graph with its limits and
+  truncation, statistics. Keyset pagination with typed, validated cursors.
+- **Migration `0005`:** `pages (job_id)` becomes `pages (job_id, normalized_url)`;
+  `page_links (job_id, target_normalized_url)` gains `INCLUDE (is_internal)`. The number of
+  indexes is unchanged; both were measured first.
+- **Job detail:** `progress.pages_stored`; clearer descriptions of the crawl's `finished_at`
+  versus the indexing's `completed_at`.
+- **Configuration:** `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS` (10 s, shorter than the database
+  command timeout), validated at startup, documented in `.env.example`.
+- **Benchmarks:** `benchmarks/analysis.py` and `benchmarks/analysis_index_ab.py`, with raw
+  results and plans (`benchmarks/results/phase8-*`).
+- **Docs:** ADR-0019; architecture, API conventions, development guide, CLAUDE.md (invariant 13:
+  analysis reports only what the crawl observed).
+
+**Performance** (`benchmarks/results/phase8-analysis.md`; this laptop, synthetic data, 50 links per
+page, p50 of 20 calls, final code): under 90 ms at the median for a 1,000-page job (the default
+page budget), except the link graph at its maximum limits (148 ms). For a 10,000-page job (500,000 links): the
+pages and links listings 9 to 17 ms, broken links 185 ms, a class-filtered link listing 323 ms,
+the link graph 156 ms (500 nodes) and 247 ms (2,000 nodes), statistics 593 ms. Before the
+optimizations, the same link listing took 2.1 s after five calls on one connection
+(PostgreSQL's generic plan), and the statistics 1.2 s.
+
+**Tests** (1985 in all: 1373 unit, 612 integration and fault; 118 more than after Phase 7)
+
+- **Unit:** cursor round trips and every rejection (another listing's cursor, altered, non-ASCII,
+  NUL, booleans, out-of-range integers, deep nesting), every parameter bound through HTTP, the
+  search page arithmetic, response mapping, OpenAPI (operations, problem responses, parameters,
+  response models, examples, tags), the analysis timeout setting, timeouts against session test
+  doubles, and that neither search terms nor cursors are logged.
+- **Integration (real PostgreSQL):** every link class from stored results, redirect chains (2xx
+  and 404 at the end, loops, self-redirects, chains leaving the job's hosts or never admitted, a
+  300-URL chain), retry-pending targets, the depth and budget limits, nofollow links and pages,
+  every listing paged without gaps or repeats, filters, broken links, the graph and its limits,
+  statistics (all counts, the status buckets, an empty job, one snapshot under a concurrent
+  commit), job isolation, unknown jobs, statement and client timeouts, the transaction settings;
+  the same through HTTP with pages indexed by the Phase 7 services; migration 0005 up and down.
+- **End to end (real processes):** `tests/fault/test_api_end_to_end.py` creates a job through the
+  API on the demo site served on 127.0.0.1, runs the scheduler, two crawler workers, the index
+  dispatcher and two indexers, waits for indexing to complete, and checks every endpoint against
+  the demo site's known structure (14 URLs, 12 pages, 11 indexed, 26 links, one 404, one
+  robots.txt refusal, one nofollow target, two external links).
+
+**Independent review** (read-only; it ran the unit tests only: 1359 passed). No high-severity
+finding. Every finding was low and is fixed, each with a regression test:
+
+1. A final 1xx response (httpcore2 returns a 101 as final) fell in no HTTP status bucket, so the
+   buckets did not add up to the finished requests. Added `informational_1xx`.
+2. A `TimeoutError` that was not the call's own deadline (asyncpg's connect timeout, 5 s) was
+   reported as `analysis_timeout`, and in the Phase 7 search service as `search_timeout`. Only the
+   expired deadline or PostgreSQL's statement timeout is a timeout now; anything else reaches the
+   API's outage handler (`503 dependency_unavailable`, `Retry-After`).
+3. `page=1002` and above got `less_than_equal`, not `page_out_of_range`, and a query error was
+   not reported with a page error. The page has no schema maximum now; both are checked together.
+4. Benchmark and ADR summaries contradicted the raw data (a 149 ms case under a "90 ms" claim,
+   "within 6%" for a 12% spread, broken links said to classify every link). Corrected, and both
+   benchmarks were run again on the final code.
+5. Six doc statements were imprecise: filtered cursor walks while values change, the order the
+   graph's edges are cut in, `final_url` of a self-redirect, what `queued` means, which requests
+   read every link, and what a depth's `fetched` counts. Corrected.
+6. URLs admitted through links can form redirect chains of any length, and the chain query grew
+   with the square of their length. Chains are followed for at most 20 redirects
+   (`redirect_error` beyond; the most `SITESCOPE_FETCH_MAX_REDIRECTS` allows).
+7. Scope: there was no filter for redirecting links. The links listing gained `redirected` and
+   `verified` (unchecked links are `verified=false`).
+
+**Mutation check.** Sixteen defects were put back into the code one at a time: ten against the
+design rules (a retry's status deciding the class, every 4xx counted as broken, READ COMMITTED
+statistics, no forced custom plans, a link's target joined across jobs, the broken-link
+prefilter forgetting 410, the budget ignored, loop detection removed, a nested cursor escaping
+as a 500, an off-by-one in the deepest search page) and six against the review fixes and
+filters. Each made its test fail; every file was restored and checked by hash.
+
+**Known limitations**
+
+- **A snapshot of the crawl:** a target that answered 404 stays broken for that job; nothing is
+  checked again (by design: no request outside the crawl).
+- **Reasons not recorded** in the stored rows are reported as `not_crawled`: the redirect hop
+  limit, a redirect to an unapproved URL of the job's host, a job that ended before admitting a
+  level. An unreachable robots.txt counts as `robots_blocked`.
+- **Cost grows with the links of a job:** statistics, broken links and class-filtered listings
+  read all of them (0.2 to 0.6 s at 500,000 links on this laptop). A much larger job would reach
+  the 10 s limit and get `503 analysis_timeout`; precomputed summaries would be the next step.
+- **Index-only scans** need the visibility map: right after a crawl, before autovacuum, the
+  statistics read the heap as before.
+- **No caching** of analysis responses; the link graph at its maximum limits is about a megabyte.
+- **Highlights** are Unicode code point offsets (JavaScript must index `Array.from(snippet)`).
+- **Cursors** carry URLs, so they can be several kilobytes long (at most 8,192 characters).
+- **Search** keeps the Phase 7 limits (English-first, `ts_rank`, results up to offset 1,000).
+
+**Notes for Phase 9**
+
+- Generate the client from `/openapi.json`; operation IDs are the handler names
+  (`search_pages`, `list_crawl_pages`, `list_crawl_links`, `list_crawl_broken_links`,
+  `get_crawl_link_graph`, `get_crawl_stats`).
+- Render snippets and every URL, title and anchor text as text, never as HTML (architecture
+  section 12.6).
+- Show crawl status and indexing status separately; poll the job detail while either runs.
+- Pass `next_cursor` back unchanged with the same filters; search uses `page` and `page_size`.
 
 ### Phase 9: React dashboard
 

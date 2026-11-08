@@ -225,6 +225,12 @@ class Settings(BaseSettings):
     # the database command timeout.
     search_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
 
+    # --- Website analysis (Phase 8) --------------------------------------------------------------
+    # An analysis request (pages, links, broken links, the link graph, statistics) is stopped
+    # after this long (statement_timeout, and by the client). Shorter than the database command
+    # timeout.
+    analysis_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     # --- API (Phase 6) ---------------------------------------------------------------------------
     # How long an Idempotency-Key of POST /api/v1/crawls is remembered. Afterwards the key is
     # forgotten (the job stays) and may create a new job.
@@ -378,6 +384,11 @@ class Settings(BaseSettings):
         if self.search_timeout_seconds >= self.db_command_timeout_seconds:
             raise ValueError(
                 "SITESCOPE_SEARCH_TIMEOUT_SECONDS must be shorter than"
+                " SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS"
+            )
+        if self.analysis_timeout_seconds >= self.db_command_timeout_seconds:
+            raise ValueError(
+                "SITESCOPE_ANALYSIS_TIMEOUT_SECONDS must be shorter than"
                 " SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS"
             )
         # A request that finds its host idle may still have to wait one interval.

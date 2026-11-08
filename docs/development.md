@@ -771,7 +771,8 @@ $env:SITESCOPE_FETCH_INTERNAL_ORIGINS = "http://127.0.0.1:8080"
 
    `status` is `pending`, `running`, `indexed` (complete) or `failed` (complete, with pages that
    could not be indexed), with the counts per document status and `completed_at`.
-6. **Search** (read-only; the HTTP search API is Phase 8):
+6. **Search** (read-only; since Phase 8 also `GET /api/v1/search`, see
+   [Search and website analysis](#search-and-website-analysis-phase-8)):
 
    ```powershell
    .\.venv\Scripts\python.exe -m app.scheduler.search <job-id> "robots"
@@ -801,6 +802,62 @@ keeps serving the previous vectors until they are rebuilt.
 English stop words ignored. Chinese and other languages written without spaces are not split into
 words, so a query matches such text only as a whole run of characters.
 
+## Search and website analysis (Phase 8)
+
+The API serves search and read-only analysis of each crawl job (design:
+[ADR-0019](adr/0019-website-analysis-from-stored-crawl-results.md); request and response details:
+[api-conventions.md](api-conventions.md), sections "Search" and "Website analysis"). They read
+PostgreSQL only: no crawl target is ever contacted, and nothing is written.
+
+Apply migration `0005` first (`alembic upgrade head`): it widens two indexes the analysis queries
+use. The endpoints also work at revision `0004`, only slower on large jobs.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS` | `10` | an analysis request is stopped after this long, with `503 analysis_timeout` (0 < value <= 60, shorter than `SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS`) |
+| `SITESCOPE_SEARCH_TIMEOUT_SECONDS` | `5` | a search is stopped after this long, with `503 search_timeout` (Phase 7) |
+
+**Try it** on a crawled and indexed job (for example the demonstration of
+[Search indexing](#search-indexing-phase-7), with the API running), from PowerShell:
+
+```powershell
+$job = "<job-id>"
+$api = "http://127.0.0.1:8000/api/v1"
+Invoke-RestMethod "$api/search?job_id=$job&q=robots&page_size=5" | ConvertTo-Json -Depth 6
+Invoke-RestMethod "$api/crawls/$job/stats" | ConvertTo-Json -Depth 6
+Invoke-RestMethod "$api/crawls/$job/pages?limit=20"
+Invoke-RestMethod "$api/crawls/$job/links?classification=robots_blocked"
+Invoke-RestMethod "$api/crawls/$job/broken-links"
+Invoke-RestMethod "$api/crawls/$job/link-graph?max_nodes=100&max_edges=500" | ConvertTo-Json -Depth 4
+```
+
+With `curl.exe` (Windows 10 ships it), quote the URL: `curl.exe -s "http://127.0.0.1:8000/api/v1/crawls/<job-id>/stats"`.
+
+- **Paging.** The listings return `next_cursor`; pass it back unchanged as `cursor` with the same
+  filters: `Invoke-RestMethod "$api/crawls/$job/links?cursor=$($page.next_cursor)"`. Search pages
+  with `page` and `page_size` (at most 50) up to result 1,000 plus one page.
+- **Reading the link report.** `broken-links` lists only links whose target answered 404 or 410
+  (after its redirects). A link the crawl never requested (external, `nofollow`, beyond
+  `max_depth` or the page budget, disallowed by robots.txt, not crawled yet) or that got no
+  response is never reported as broken or as working: `links?classification=<class>` lists each
+  kind, and `stats.links.by_class` counts them.
+- **Errors.** An unknown job is `404`; invalid parameters or cursors are `422` with the field in
+  `errors[].loc`; a request over its time limit is `503` with `analysis_timeout` or
+  `search_timeout`. Request logs record the path only, never the query string (search terms,
+  cursors).
+
+**Demo-site end to end.** `tests/fault/test_api_end_to_end.py` runs the whole pipeline with real
+processes (scheduler, two crawler workers, the index dispatcher, two indexers) on the demo site
+served on 127.0.0.1, creates the job through the API, and checks every Phase 8 endpoint against the
+demo site's known structure. It uses the disposable test database:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/fault/test_api_end_to_end.py -p no:cacheprovider --require-services
+```
+
+**Benchmarks.** `benchmarks/analysis.py` measures every analysis endpoint on synthetic
+1,000- and 10,000-page jobs (results: `benchmarks/results/phase8-analysis.md`).
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to
@@ -808,7 +865,7 @@ keep. Run the commands from `backend\`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head      # apply all pending migrations
-.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0004 (head)"
+.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0005 (head)"
 .\.venv\Scripts\python.exe -m alembic history           # the migration chain
 .\.venv\Scripts\python.exe -m alembic upgrade head --sql    # print the SQL without connecting
 ```
@@ -818,7 +875,7 @@ To change the schema:
 1. **Update the models.** Change `app/db/models.py`.
 2. **Generate a draft.** It needs a database at head:
    ```powershell
-   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0005
+   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0006
    ```
 3. **Review and complete the draft.**
    - Autogenerate handles tables, columns, indexes, foreign keys and unique constraints.

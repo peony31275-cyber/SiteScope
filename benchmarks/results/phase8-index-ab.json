@@ -1,0 +1,67 @@
+{
+  "command": "../benchmarks/analysis_index_ab.py --output ../benchmarks/results/phase8-index-ab.json",
+  "environment": {
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "measured_at": "2026-11-07T19:38:10-08:00"
+  },
+  "pages": 10000,
+  "links_per_page": 50,
+  "repeat": 10,
+  "variants": {
+    "0004": {
+      "pages: first 50": 17.05,
+      "pages: 50 after a deep cursor": 11.55,
+      "links: first 50": 101.93,
+      "links: 50 after a deep cursor": 59.16,
+      "links: one source page": 7.77,
+      "links: class broken, first 50": 287.93,
+      "broken links: first 50": 169.52,
+      "link graph: 500 nodes, 2000 edges": 318.04,
+      "link graph: 2000 nodes, 10000 edges": 449.56,
+      "statistics": 1078.6
+    },
+    "A": {
+      "pages: first 50": 13.79,
+      "pages: 50 after a deep cursor": 10.83,
+      "links: first 50": 7.24,
+      "links: 50 after a deep cursor": 7.31,
+      "links: one source page": 7.17,
+      "links: class broken, first 50": 280.72,
+      "broken links: first 50": 173.59,
+      "link graph: 500 nodes, 2000 edges": 310.68,
+      "link graph: 2000 nodes, 10000 edges": 429.78,
+      "statistics": 1088.28
+    },
+    "B": {
+      "pages: first 50": 14.79,
+      "pages: 50 after a deep cursor": 10.79,
+      "links: first 50": 110.89,
+      "links: 50 after a deep cursor": 65.41,
+      "links: one source page": 7.37,
+      "links: class broken, first 50": 273.28,
+      "broken links: first 50": 161.78,
+      "link graph: 500 nodes, 2000 edges": 131.89,
+      "link graph: 2000 nodes, 10000 edges": 238.64,
+      "statistics": 573.52
+    },
+    "0004 again": {
+      "pages: first 50": 14.13,
+      "pages: 50 after a deep cursor": 10.8,
+      "links: first 50": 117.81,
+      "links: 50 after a deep cursor": 68.63,
+      "links: one source page": 9.44,
+      "links: class broken, first 50": 271.04,
+      "broken links: first 50": 159.66,
+      "link graph: 500 nodes, 2000 edges": 295.6,
+      "link graph: 2000 nodes, 10000 edges": 415.74,
+      "statistics": 1065.9
+    }
+  },
+  "rows": {
+    "crawl_urls": 11000,
+    "pages": 10000,
+    "page_links": 500000
+  }
+}

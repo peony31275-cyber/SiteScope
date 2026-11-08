@@ -31,7 +31,7 @@ INSERT_URL = text(
     """
     INSERT INTO crawl_urls (job_id, normalized_url, depth, state, result_epoch, outcome,
                             http_status, finished_at)
-    VALUES (:job_id, :url, 0, 'fetched', 0, 'html_stored', 200, clock_timestamp())
+    VALUES (:job_id, :url, :depth, 'fetched', 0, 'html_stored', 200, clock_timestamp())
     RETURNING id
     """
 )
@@ -40,9 +40,9 @@ INSERT_PAGE = text(
     """
     INSERT INTO pages (job_id, crawl_url_id, normalized_url, http_status, content_type, title,
                        meta_description, headings, extracted_text, content_hash, byte_size,
-                       fetched_at, content_version, robots_noindex)
+                       fetched_at, content_version, robots_noindex, robots_nofollow)
     VALUES (:job_id, :url_id, :url, 200, 'text/html', :title, :description, :headings, :body,
-            :hash, :size, clock_timestamp(), :version, :noindex)
+            :hash, :size, clock_timestamp(), :version, :noindex, :nofollow)
     RETURNING id
     """
 )
@@ -58,15 +58,19 @@ async def add_page(
     headings: str = "",
     body: str = "",
     noindex: bool = False,
+    nofollow: bool = False,
     content_version: int = 1,
     host: str = "example.test",
+    depth: int = 0,
 ) -> uuid.UUID:
-    """A stored page of ``job_id`` at ``https://<host>/<path>``, with a pending search document
-    (none for a noindex page); returns the page ID."""
+    """A stored page of ``job_id`` at ``https://<host>/<path>`` (its crawl URL at ``depth``),
+    with a pending search document (none for a noindex page); returns the page ID."""
     url = f"https://{host}/{path if path is not None else uuid.uuid4().hex}"
     digest = hashlib.sha256(f"{title}|{description}|{headings}|{body}".encode()).digest()
     async with database.transaction() as session:
-        url_id = (await session.execute(INSERT_URL, {"job_id": job_id, "url": url})).scalar_one()
+        url_id = (
+            await session.execute(INSERT_URL, {"job_id": job_id, "url": url, "depth": depth})
+        ).scalar_one()
         page_id: uuid.UUID = (
             await session.execute(
                 INSERT_PAGE,
@@ -82,6 +86,7 @@ async def add_page(
                     "size": len(body.encode()),
                     "version": content_version,
                     "noindex": noindex,
+                    "nofollow": nofollow,
                 },
             )
         ).scalar_one()
