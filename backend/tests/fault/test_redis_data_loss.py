@@ -1,4 +1,6 @@
-"""Redis loses all its data in the middle of a crawl (Phase 6; real processes, marker ``fault``).
+"""Redis loses all its data in the middle of a crawl (Phase 6) or of the indexing (Phase 7).
+
+Real processes, marker ``fault``.
 
 ``FLUSHALL`` is never sent to the development Redis, not even to its test database 15 (a
 database number does not isolate ``FLUSHALL``). This test starts its own disposable Redis
@@ -25,12 +27,20 @@ from urllib.parse import urlsplit
 import pytest
 from pydantic import SecretStr
 from redis.asyncio import Redis
+from sqlalchemy import text
 
 from app.core.config import Settings
 from app.core.redis import create_redis_client
 from app.db.session import Database
-from tests.crawl_support import assert_job_invariants, create_local_job, job_row, url_rows
+from tests.crawl_support import (
+    assert_job_invariants,
+    create_local_job,
+    job_row,
+    new_job,
+    url_rows,
+)
 from tests.fetch_support import LocalHttpServer
+from tests.index_support import add_page, finish_job
 from tests.process_support import tree_site, wait_for
 from tests.service_fixtures import ClusterFactory
 
@@ -213,3 +223,89 @@ async def test_the_crawl_survives_a_redis_that_lost_all_its_data(
     assert recreated, "the lost consumer group was not created again"
     groups = await disposable_client.xinfo_groups(f"{prefix}:crawl")
     assert [group["name"] for group in groups] == ["crawlers"]
+
+
+async def test_indexing_survives_a_redis_that_lost_all_its_data(
+    database: Database,
+    clusters: ClusterFactory,
+    disposable_redis: DisposableRedis,
+    disposable_client: Redis,
+    redis_client: Redis,
+    service_settings: Settings,
+) -> None:
+    """Phase 7. The index dispatcher has published every document (they are ``queued``) and no
+    indexer has read them yet when Redis loses everything. The documents stay ``queued`` in
+    PostgreSQL; the dispatcher's reconciliation finds their entries gone and publishes them
+    again; the indexers started afterwards index every page."""
+    sentinel = f"sitescope-test-sentinel-{uuid.uuid4().hex}"
+    await redis_client.set(sentinel, "must survive", ex=600)  # development Redis, DB 15
+    job_id, _ = await new_job(database)
+    for index in range(12):
+        await add_page(database, job_id, path=f"p{index}", body=f"lost index task {index}")
+    await finish_job(database, job_id)
+    try:
+        cluster = clusters(hosts=[HOST], ports=[80], settings=disposable_redis.settings)
+        dispatcher = cluster.index_dispatcher()
+        await cluster.started(dispatcher)
+        prefix = cluster.environment["SITESCOPE_REDIS_KEY_PREFIX"]
+
+        async def all_queued() -> bool:
+            return await queued_documents(database, job_id) == 12
+
+        await wait_for(all_queued, within=60, what="every document queued", cluster=cluster)
+        assert await disposable_client.xlen(f"{prefix}:index") == 12
+        marker = f"{prefix}:flush-marker"
+        await disposable_client.set(marker, "before the flush")
+        await flush_disposable(
+            disposable_client, redis_client, disposable_redis.settings, service_settings
+        )
+        assert not await disposable_client.exists(marker)
+        assert await redis_client.get(sentinel) == "must survive"
+        indexers = [cluster.indexer(), cluster.indexer()]
+        await cluster.started(*indexers)
+
+        async def complete() -> bool:
+            return (await job_row(database, job_id)).indexing_completed_at is not None
+
+        await wait_for(complete, within=120, what="the indexing to complete", cluster=cluster)
+        exit_codes = await cluster.stop_all()
+    finally:
+        await redis_client.delete(sentinel)
+
+    assert set(exit_codes.values()) == {0}
+    assert await indexed_documents(database, job_id) == 12
+    republished = sum(
+        int(line.get("republished", 0))
+        for line in dispatcher.lines()
+        if line.get("event") == "index_dispatcher.pass"
+    )
+    assert republished >= 12, "the lost tasks were not published again"
+    groups = await disposable_client.xinfo_groups(f"{prefix}:index")
+    assert [group["name"] for group in groups] == ["indexers"]
+
+
+async def queued_documents(database: Database, job_id: uuid.UUID) -> int:
+    async with database.session() as session:
+        return int(
+            await session.scalar(
+                text(
+                    "SELECT count(*) FROM search_documents WHERE job_id = :id AND status = 'queued'"
+                ),
+                {"id": job_id},
+            )
+            or 0
+        )
+
+
+async def indexed_documents(database: Database, job_id: uuid.UUID) -> int:
+    async with database.session() as session:
+        return int(
+            await session.scalar(
+                text(
+                    "SELECT count(*) FROM search_documents"
+                    " WHERE job_id = :id AND status = 'indexed'"
+                ),
+                {"id": job_id},
+            )
+            or 0
+        )

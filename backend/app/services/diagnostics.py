@@ -1,9 +1,11 @@
-"""Read-only views of crawl state, for operators (``python -m app.scheduler.status``)."""
+"""Read-only views of crawl and index state, for operators (``app.scheduler.status``)."""
 
 from dataclasses import dataclass, field
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.search_index import IndexingOverview, read_indexing_overview
 
 _JOBS_BY_STATUS = text("SELECT status, count(*) AS n FROM crawl_jobs GROUP BY status")
 
@@ -28,6 +30,16 @@ _LEASES = text(
            count(*) FILTER (WHERE lease_expires_at >= clock_timestamp()) AS live,
            count(*) FILTER (WHERE lease_expires_at < clock_timestamp()) AS expired
     FROM crawl_urls WHERE state = 'in_progress'
+    GROUP BY lease_owner ORDER BY lease_owner
+    """
+)
+
+# Index attempts running now (Phase 7): queued documents with a live lease, per indexer.
+_INDEX_LEASES = text(
+    """
+    SELECT lease_owner, count(*) AS live
+    FROM search_documents
+    WHERE status = 'queued' AND lease_expires_at >= clock_timestamp()
     GROUP BY lease_owner ORDER BY lease_owner
     """
 )
@@ -94,3 +106,20 @@ async def crawl_overview(session: AsyncSession, *, limit: int = 20) -> CrawlOver
         expired_leases=expired,
         oldest_queued_seconds=float(oldest) if oldest is not None else None,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class IndexOverview:
+    """Search documents over all jobs (Phase 7), and the index attempts running now."""
+
+    documents: IndexingOverview
+    live_leases_by_indexer: dict[str, int]  # queued documents per indexer, unexpired leases
+
+
+async def index_overview(session: AsyncSession) -> IndexOverview:
+    """Index statistics, read in one read-only transaction."""
+    async with session.begin():
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        documents = await read_indexing_overview(session)
+        leases = {row.lease_owner: row.live for row in await session.execute(_INDEX_LEASES)}
+    return IndexOverview(documents=documents, live_leases_by_indexer=leases)

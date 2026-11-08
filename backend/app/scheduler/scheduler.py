@@ -54,24 +54,23 @@ current pass. A second signal cancels the pass; an unfinished dispatch then roll
 
 import argparse
 import asyncio
-import contextlib
 import logging
 import math
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import Final, Self
 
-from app.core.backoff import Backoff
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
-from app.core.process import error_type, is_transient, process_name
+from app.core.process import process_name
 from app.core.redis import create_redis_client
 from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.session import Database
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream
+from app.scheduler.passes import PassLoop, run_until_stopped
 from app.services.crawl_cancellation import Settlement, cancelling_jobs, settle_cancellation
 from app.services.crawl_jobs import expire_idempotency_keys
 from app.services.crawl_state import (
@@ -160,8 +159,12 @@ class PassReport:
         )
 
 
-class Scheduler:
+class Scheduler(PassLoop[PassReport]):
     """The scheduler's loop. See the module docstring."""
+
+    ROLE = "scheduler"
+    ID_FIELD = "scheduler_id"
+    DISPLAY_NAME = "Scheduler"
 
     def __init__(
         self,
@@ -171,11 +174,10 @@ class Scheduler:
         *,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        super().__init__(interval=config.interval, clock=clock)
         self._database = database
         self._stream = stream
         self._config = config
-        self._clock = clock
-        self._backoff = Backoff(base=0.5, cap=30.0)
         self._next_reconcile = 0.0  # at once: a restart may follow a loss of Redis data
         self._next_maintenance = 0.0
         self._reconcile_cursor: ReconcileCursor | None = None
@@ -184,56 +186,14 @@ class Scheduler:
     def name(self) -> str:
         return self._config.name
 
-    async def run(self, stop: asyncio.Event) -> None:
-        """Run passes until ``stop`` is set (see the module docstring)."""
+    def _started_fields(self) -> dict[str, object]:
         config = self._config
-        logger.info(
-            "Scheduler started",
-            extra={
-                "event": "scheduler.started",
-                "scheduler_id": self.name,
-                "stream": self._stream.key,
-                "interval_seconds": config.interval,
-                "max_running_jobs": config.max_running_jobs,
-                "max_outstanding": config.max_outstanding,
-                "max_in_flight_per_job": config.max_in_flight_per_job,
-            },
-        )
-        while not stop.is_set():
-            started = self._clock()
-            try:
-                report = await self.run_pass()
-            except Exception as exc:
-                delay = self._backoff.next_delay()
-                transient = is_transient(exc)
-                logger.log(
-                    logging.WARNING if transient else logging.ERROR,
-                    "Scheduler pass failed; retrying",
-                    exc_info=None if transient else exc,
-                    extra={
-                        "event": "scheduler.pass_failed",
-                        "scheduler_id": self.name,
-                        "error_type": error_type(exc),
-                        "failures": self._backoff.failures,
-                        "retry_in_ms": round(delay * 1000),
-                    },
-                )
-                await _sleep_unless(stop, delay)
-                continue
-            if self._backoff.reset():
-                logger.info(
-                    "Scheduler passes succeed again",
-                    extra={"event": "scheduler.recovered", "scheduler_id": self.name},
-                )
-            if report.busy:
-                logger.info(
-                    "Scheduler pass",
-                    extra={"event": "scheduler.pass", "scheduler_id": self.name, **asdict(report)},
-                )
-            await _sleep_unless(stop, config.interval - (self._clock() - started))
-        logger.info(
-            "Scheduler stopped", extra={"event": "scheduler.stopped", "scheduler_id": self.name}
-        )
+        return {
+            "stream": self._stream.key,
+            "max_running_jobs": config.max_running_jobs,
+            "max_outstanding": config.max_outstanding,
+            "max_in_flight_per_job": config.max_in_flight_per_job,
+        }
 
     async def run_pass(self) -> PassReport:
         """One pass: activate, advance, dispatch, and from time to time reconcile and maintain."""
@@ -314,28 +274,6 @@ class Scheduler:
             cancelled=cancelled,
         )
 
-    async def _for_job[T](self, job_id: uuid.UUID, step: Awaitable[T]) -> T | None:
-        """Run one job's step. A job whose step fails for a reason of its own is logged and
-        skipped for this pass, so that one broken job cannot stop the scheduling of all the
-        others (found by the Phase 5 review). A transient error (PostgreSQL or Redis
-        unreachable) fails the whole pass instead: every other job would fail the same way."""
-        try:
-            return await step
-        except Exception as exc:
-            if is_transient(exc):
-                raise
-            logger.error(
-                "A job's scheduling step failed; the other jobs go on",
-                exc_info=exc,
-                extra={
-                    "event": "scheduler.job_failed",
-                    "scheduler_id": self.name,
-                    "job_id": str(job_id),
-                    "error_type": error_type(exc),
-                },
-            )
-            return None
-
     async def _advance(self, job_id: uuid.UUID) -> AdvanceResult:
         async with self._database.session() as session:
             return await advance_job(session, job_id)
@@ -413,14 +351,6 @@ class Scheduler:
         )
 
 
-async def _sleep_unless(event: asyncio.Event, seconds: float) -> None:
-    """Sleep for ``seconds``, or until ``event`` is set."""
-    if seconds <= 0:
-        return
-    with contextlib.suppress(TimeoutError):
-        await asyncio.wait_for(event.wait(), timeout=seconds)
-
-
 def idle_transaction_timeout_ms(settings: Settings) -> int:
     """The scheduler sessions' ``idle_in_transaction_session_timeout``.
 
@@ -433,11 +363,14 @@ def idle_transaction_timeout_ms(settings: Settings) -> int:
     return round((2 * settings.redis_socket_timeout_seconds + 5) * 1000)
 
 
-def scheduler_database(settings: Settings) -> Database:
-    """The scheduler's PostgreSQL access (see ``idle_transaction_timeout_ms``)."""
+def scheduler_database(
+    settings: Settings, *, application_name: str = "sitescope-scheduler"
+) -> Database:
+    """The PostgreSQL access of a process that publishes inside transactions: the scheduler and
+    the index dispatcher (see ``idle_transaction_timeout_ms``)."""
     return Database(
         settings,
-        application_name="sitescope-scheduler",
+        application_name=application_name,
         server_settings={
             "idle_in_transaction_session_timeout": str(idle_transaction_timeout_ms(settings))
         },
@@ -454,16 +387,7 @@ async def run(settings: Settings, signals: StopSignals) -> None:
             CrawlStream(redis, key_prefix=settings.redis_key_prefix),
             SchedulerConfig.from_settings(settings),
         )
-        loop = asyncio.create_task(scheduler.run(signals.stop))
-        forced = asyncio.create_task(signals.force.wait())
-        try:
-            await asyncio.wait([loop, forced], return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            forced.cancel()
-            if not loop.done():  # a second signal: abandon the current pass
-                loop.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await loop
+        await run_until_stopped(scheduler, signals)
     finally:
         await redis.aclose()
         await database.dispose()

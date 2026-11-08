@@ -39,14 +39,15 @@ PostgreSQL holds the keys, so they survive restarts, and a request that fails ro
 with the job.
 
 **Reads** run in their own short transactions, and the job detail is a single SQL statement, so
-the job row and its URL counts come from the same snapshot.
+the job row, its URL counts and its search document counts (Phase 7) come from the same
+snapshot.
 """
 
 import hashlib
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
 
@@ -58,7 +59,16 @@ from app.core.config import Settings
 from app.core.errors import ConflictError, FieldViolation, InvalidInputError, NotFoundError
 from app.crawler.scope import CrawlTargetPolicy, TargetNotAllowedError
 from app.crawler.urls import InvalidUrlError, NormalizedUrl, normalize_url
-from app.db.models import TERMINAL_URL_STATES, CrawlJob, CrawlUrl, JobStatus, UrlState
+from app.db.models import (
+    TERMINAL_URL_STATES,
+    CrawlJob,
+    CrawlUrl,
+    IndexStatus,
+    JobStatus,
+    SearchDocument,
+    UrlState,
+)
+from app.services.search_index import IndexingProgress
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +117,11 @@ class SubmittedCrawlJob:
 
 @dataclass(frozen=True, slots=True)
 class CrawlJobProgress:
-    """A job and how many of its URLs are in each state, read in one snapshot."""
+    """A job, how many of its URLs are in each state, and its indexing, read in one snapshot."""
 
     job: CrawlJob
     urls_by_state: dict[UrlState, int]
+    indexing: IndexingProgress = field(default_factory=IndexingProgress)
 
     @property
     def urls_total(self) -> int:
@@ -256,7 +267,8 @@ async def expire_idempotency_keys(session: AsyncSession, *, ttl: int, limit: int
 
 
 async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobProgress:
-    """Return a job with its URL counts per state, or raise ``NotFoundError``."""
+    """Return a job with its URL counts per state and its indexing progress, or raise
+    ``NotFoundError``."""
     counts = (
         select(
             *(
@@ -267,13 +279,50 @@ async def get_crawl_job(session: AsyncSession, job_id: uuid.UUID) -> CrawlJobPro
         .where(CrawlUrl.job_id == CrawlJob.id)
         .lateral("url_counts")
     )
-    statement = select(CrawlJob, *counts.c).join(counts, true()).where(CrawlJob.id == job_id)
+    documents = (
+        select(
+            *(
+                func.count()
+                .filter(SearchDocument.status == status.value)
+                .label(f"documents_{status.value}")
+                for status in IndexStatus
+            ),
+            func.count()
+            .filter(
+                SearchDocument.status == IndexStatus.QUEUED.value,
+                SearchDocument.lease_expires_at >= func.clock_timestamp(),
+            )
+            .label("documents_active"),
+        )
+        .where(SearchDocument.job_id == CrawlJob.id)
+        .lateral("document_counts")
+    )
+    statement = (
+        select(CrawlJob, *counts.c, *documents.c)
+        .select_from(CrawlJob)
+        .join(counts, true())
+        .join(documents, true())
+        .where(CrawlJob.id == job_id)
+    )
     async with session.begin():
         row = (await session.execute(statement)).one_or_none()
     if row is None:
         raise NotFoundError(f"Crawl job {job_id} does not exist.")
-    job, *state_counts = row
-    return CrawlJobProgress(job=job, urls_by_state=dict(zip(UrlState, state_counts, strict=True)))
+    job, *values = row
+    state_counts = values[: len(UrlState)]
+    by_status = dict(zip(IndexStatus, values[len(UrlState) : -1], strict=True))
+    return CrawlJobProgress(
+        job=job,
+        urls_by_state=dict(zip(UrlState, state_counts, strict=True)),
+        indexing=IndexingProgress(
+            pending=by_status[IndexStatus.PENDING],
+            queued=by_status[IndexStatus.QUEUED],
+            indexed=by_status[IndexStatus.INDEXED],
+            failed=by_status[IndexStatus.FAILED],
+            active=values[-1],
+            completed_at=job.indexing_completed_at,
+        ),
+    )
 
 
 async def list_crawl_jobs(

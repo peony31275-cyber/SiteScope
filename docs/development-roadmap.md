@@ -17,7 +17,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 4 | BFS crawling, persistence and politeness | **Done** (2026-11-06) |
 | 5 | Distributed scheduling and workers | **Done** (2026-11-06) |
 | 6 | Fault tolerance and recovery | **Done** (2026-11-07) |
-| 7 | Asynchronous search indexing | Not started |
+| 7 | Asynchronous search indexing | **Done** (2026-11-08) |
 | 8 | Search and analysis APIs | Not started |
 | 9 | React dashboard | Not started |
 | 10 | Testing, benchmarking, and observability | Not started |
@@ -38,21 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 6
+## Repository state after Phase 7
 
-Updated on 2026-11-07. The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08. The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6). |
-| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims) and `0003` (robots directive flags). Phases 5 and 6 added none. |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7). |
+| `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) and `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 1631 tests: 1157 unit, 474 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler and worker processes, and a disposable Redis container). |
-| `benchmarks/` | The distributed throughput benchmark and its raw results (Phase 5). |
+| `backend/tests/` | 1867 tests: 1291 unit, 576 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container). |
+| `benchmarks/` | The distributed crawl throughput benchmark (Phase 5) and the indexing and search benchmark (Phase 7), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0017, API conventions, development guide. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0018, API conventions, development guide. |
 | `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
@@ -917,30 +917,183 @@ need it (ADR-0016), and duplicate work stays bounded.
 - **Index writes:** they still need the content-version guard (Phase 2C review finding).
 - **Lock order:** any new transaction that holds a URL row and inserts rows that reference the job takes `FOR KEY SHARE` on the job row (lock order, architecture section 9).
 
-### Phase 7: Asynchronous search indexing
+### Phase 7: Asynchronous search indexing (done)
 
-**Scope**
+**Goal.** Index crawled pages asynchronously and reliably: committed pages only, no lost or
+duplicated effects across crashes, duplicates and Redis data loss, no older index ever replacing
+a newer one, and a job's indexing reported separately from its crawl.
 
-- The index relay, which publishes `pending` `search_documents` rows (ADR-0008), and the indexer
-  worker.
-- A weighted `tsvector` with truncation. The `search_documents` table and its GIN index exist
-  since Phase 2B.
-- Index writes guarded by the content version, so a slow indexer cannot overwrite a newer version
-  (Phase 2C review finding).
-- Indexing progress on the job detail, and `indexing_completed_at`.
+**Scope, reconciled with the plan.** The planned scope is delivered: the relay of `pending`
+`search_documents` rows (ADR-0008) and the indexer, a weighted `tsvector` with truncation,
+version-guarded index writes (the Phase 2C review finding), indexing progress on the job detail
+and `indexing_completed_at`. Changed from the plan: the relay is a process of its own, the index
+dispatcher, rather than a scheduler step (ADR-0018). Added: an internal search service with a
+read-only command (the HTTP API stays in Phase 8), indexing statistics in the status command,
+and a benchmark. Not done: Compose services for the new roles (with the backend image, Phase 11)
+and a command for reindexing (`request_reindex` is a service function only).
 
-**Tests**
+**Delivered** (design in ADR-0018; architecture sections 3, 4, 5, 7.3, 9, 10.8, 11, 13 to 15, 18
+and 19)
 
-- The relay crash window (duplicate publish).
-- Duplicate and replayed index events.
-- A stale index write is rejected.
+- **Index dispatcher** (`app/scheduler/index_dispatcher.py`, `python -m app.scheduler.index_dispatcher`):
+  dispatch inside the transaction (`SKIP LOCKED`, `XADD`, mark `queued`), backpressure,
+  reconciliation of lost messages, job indexing completion, stream maintenance, statistics. It
+  shares the scheduler's pass loop (`app/scheduler/passes.py`, extracted; the scheduler uses it
+  too, with unchanged events).
+- **Indexer** (`app/workers/indexer.py`, `python -m app.workers.indexer [--concurrency N]`) on the
+  consumer loop extracted from the crawler worker (`app/workers/consumer.py`; the crawler worker
+  uses it too, with unchanged behaviour and log lines): attempts counted in PostgreSQL before any
+  work, advisory leases, the vector built inside PostgreSQL from the locked page, one deadline
+  for the whole attempt, dispositions for every case (architecture section 10.8).
+- **Index state** (`app/services/search_index.py`): I1 to I6, reconciliation, progress and
+  statistics. **Search** (`app/services/search.py`; command `python -m app.scheduler.search`):
+  per job, `websearch_to_tsquery`, `ts_rank`, a total order, bounded paging, the visibility rule,
+  plain-text snippets with highlight ranges, one REPEATABLE READ snapshot, a timeout. Pure
+  helpers in `app/indexing/`.
+- **Streams and messages:** a generic `TaskStream` (`CrawlStream`, `IndexStream`: `<prefix>:index`,
+  group `indexers`, dead letters in `<prefix>:index:dlq`); `IndexTask` `{v, job_id, page_id,
+  content_version}`.
+- **Migration `0004`:** triggers that keep `pages.content_version` and
+  `search_documents.indexed_content_version` from moving back; the index lease columns
+  (`lease_owner`, `lease_expires_at`) with their CHECK constraints; the partial indexes
+  `ix_crawl_jobs_indexing_open` and `ix_search_documents_open`.
+- **Job lifecycle:** the job detail's `indexing` block (status `pending`, `running`, `indexed`,
+  `failed`; counts per document status; `completed_at`), unchanged crawl statuses; cancelled jobs'
+  pages stay indexed (policy, ADR-0018).
+- **Diagnostics:** the status command's `indexing` and `index_stream` sections; the dispatcher's
+  `index_dispatcher.stats`; events `job.indexing_completed`, `job.reindex_requested`,
+  `page.index_failed`.
+- **Settings:** `SITESCOPE_INDEX_CONCURRENCY`, `_MAX_ATTEMPTS`, `_MAX_BODY_CHARS`,
+  `_TASK_DEADLINE_SECONDS`, `_RECLAIM_MIN_IDLE_SECONDS`, `_RECONCILE_AFTER_SECONDS`,
+  `_DISPATCH_BATCH_SIZE`, `_MAX_OUTSTANDING`, `_DISPATCHER_INTERVAL_SECONDS` (all
+  `SITESCOPE_INDEX_*`), and `SITESCOPE_SEARCH_TIMEOUT_SECONDS`, with startup checks of their
+  timing order, of the indexer's concurrency against its connection pool, and of both deadlines
+  against the database command timeout.
+- **Tests:** unit tests for messages, query normalization, snippets, the indexing state, the
+  indexer's rules and configuration, settings and commands; integration tests
+  `test_search_index.py`, `test_index_versions.py` (every interleaving forced with row locks),
+  `test_search.py`, `test_indexer_worker.py`; real-process tests
+  `fault/test_indexing_processes.py` and a second scenario in `fault/test_redis_data_loss.py`.
+  `tests/process_support.py` starts index dispatchers and indexers.
+- **Benchmark:** `benchmarks/indexing.py`, results in
+  [`benchmarks/results/phase7-indexing.md`](../benchmarks/results/phase7-indexing.md).
+- **Dependencies:** none added.
+
+**Verification** (2026-11-08 UTC; Windows 10, Python 3.13.7, PostgreSQL 18.6 and Redis 8.10.3 in WSL)
+
+- `pytest --require-services` on the final code, twice: **1867 passed** in 356 s, and 1867 passed
+  in 369 s; nothing skipped or failed. That is 1291 unit tests and 576 integration and fault
+  tests; Phase 7 added 236 (134 unit, 102 integration and fault).
+- Before the independent review's fixes, one full run: 1853 passed in 367 s.
+- The real-process tests (`tests/fault`, `test_distributed.py`, `test_process_sessions.py`: 30
+  tests), twice more on their own: 30 passed in 258 s, and 30 passed in 261 s.
+- **Static checks:** `ruff check` and `ruff format --check`: clean (155 files). `mypy` strict
+  (155 files): no issues.
+- **Migrations:** head `0004`. The migration tests pass (upgrade from an empty database, the schema
+  equals the models, downgrade and upgrade again, an interrupted migration leaves nothing).
+- **`wsl docker compose config --quiet`:** valid; services `postgres` and `redis`, unchanged.
+- **Development database:** upgraded from `0003` to `0004` with `alembic upgrade head`, as in
+  Phase 4. Its fingerprint is `e574f91fa587b2ea` before and after, and its three queued jobs are
+  still queued.
+- **Secrets:** no value from `backend/.env` in any of the 55 changed or new files, and
+  `backend/.env` is not tracked.
+- **Earlier suites:** the Phase 2C to 6 tests still pass. Earlier tests were changed only to extend
+  an enumeration (migration revisions, the trigger count, the commands checked) or to give the new
+  settings their fast values in the timing tests; none was removed or weakened.
+- **Benchmark:** see below and
+  [`benchmarks/results/phase7-indexing.md`](../benchmarks/results/phase7-indexing.md).
+
+**Review findings and fixes**
+
+*Self-review* (my own checks, and failures of the new tests):
+
+- **A split word was indexed:** cutting the body at the limit indexed the part of a word before
+  the cut ("al" of "alpha"; found by the truncation test). The cut now drops it.
+- **The vector size limit:** my first measurement used `pg_column_size`, but PostgreSQL's 1 MB
+  limit counts lexemes and positions. Remeasured: distinct hyphenated CJK compounds need about
+  6.7 bytes per character, so the maximum body setting (150,000) can exceed the limit for such
+  text; the quarter-body fallback stays, and the documentation gives the measured numbers.
+- **Stop-word-only queries were run:** `querytree()` returns an empty string, not `T`, for an
+  empty query (found by a search test).
+- **The job detail failed at run time:** two lateral joins made SQLAlchemy's FROM clause
+  ambiguous; mypy passed, the API integration test did not. An explicit FROM fixes it.
+
+*Independent review.* A separate agent reviewed the code against the invariants, read-only,
+running unit tests only. It confirmed that the index writes, the version guard and triggers,
+completion, lock ordering, search visibility and the refactors of the crawler worker and the
+scheduler held under every interleaving it traced, and found:
+
+1. **Medium:** an indexer could run more tasks than its connection pool holds; a task that then
+   waited too long for a connection, after its attempt was counted, used up the attempt without
+   indexing. Startup now refuses `SITESCOPE_INDEX_CONCURRENCY` or `--concurrency` above
+   `SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW`.
+2. **Medium-low:** the deadline applied to each statement, not to the attempt, so an attempt on
+   the quarter-body fallback path could outlive its lease; on the last attempt another indexer
+   could fail a document whose attempt was about to succeed. The statements now share one budget
+   (each gets what remains as `statement_timeout`), the indexer abandons the attempt when it is
+   spent, and the reclaim idle time must exceed the deadline by at least 2 s (the lease outlasts
+   the attempt by at least 1 s).
+3. **Low:** a client-side timeout of a search surfaced as a generic error. The search has one
+   deadline in all, both kinds of timeout map to `SearchTimeoutError`, and the search timeout must
+   be shorter than the database command timeout.
+4. **Low, latent:** a dispatch racing a content change could publish the previous version while
+   the document waited for the current one; the indexer then dropped that message as `outdated`,
+   and the document waited for the reconciler. An older message now starts an attempt like the
+   current one: the attempt indexes the current content anyway.
+5. **Low:** the dispatcher looked only at the 100 oldest unfinished jobs, so jobs still being
+   indexed could delay the completion of newer ones. It now looks only at jobs with nothing left
+   to index (`ix_search_documents_open`).
+6. **Very low:** a word longer than the 100-character look-back that the cut split was indexed in
+   part. The look-back is now 2,048 characters; a longer run of non-space characters is left
+   whole, and the parser ignores it.
+7. **Test quality:** a test of the single snapshot of a search, and of a client-side timeout,
+   were missing (added); the reconciliation test's documents were labelled the wrong way round
+   (fixed, and each entry's state is now asserted); the killed-indexer test now asserts exact
+   attempt counts; the cancellation test no longer depends on relative speeds (a slow page holds
+   its BFS level open); the duplicate-message test runs one task at a time.
+
+Each finding has a regression test. With each defect put back into the code (findings 2 to 6,
+and the snapshot), its test fails; all seven were checked that way and the files restored.
+
+**Known limitations**
+
+- **Language:** English-first. Other languages are not stemmed; Chinese, Japanese and other
+  languages written without spaces are not segmented (a run of characters is one token). No
+  multilingual search.
+- **Ranking:** `ts_rank` with field weights only: no IDF or BM25, no typo tolerance. Positions are
+  capped at 16,383 by PostgreSQL.
+- **Search cost:** every match is ranked, so a common term costs more than a rare one; measured
+  only on 2,000 pages (median 37 ms for a term in every page, 19 ms for a rare one).
+- **Body limit:** only the first `SITESCOPE_INDEX_MAX_BODY_CHARS` characters of a body are
+  searchable.
+- **Duplicate work:** a page can be indexed twice (an attempt that outlived its lease and its
+  successor), with the same result.
+- **Cancelled jobs** keep being indexed for the pages they stored (the policy).
+- **Content versions above 1** are exercised by tests only: nothing changes stored content yet
+  (no re-crawl).
+- **An attempt's start** waits for the document row lock without a deadline of its own; every
+  transaction that holds that row is bounded.
+- **Scaling:** indexing throughput grew 1.33x with 2 indexers and 1.66x with 4 (medians of three
+  runs, all processes on one laptop), and whole runs on this laptop differed by up to a third;
+  where the limit lies is not measured.
+- **Compose:** `backend/compose.yaml` still runs only PostgreSQL and Redis (Phase 11).
+
+**Notes for Phase 8**
+
+- **The search endpoint** can call `search_job`: `InvalidInputError` (422), `NotFoundError` (404)
+  and `SearchTimeoutError` (503) are domain errors already. Snippets are plain text with
+  highlight ranges; never render them as HTML.
+- **Paging:** limit 1 to 50 and offset at most 1,000 (`app/indexing/queries.py`); the results
+  carry the job's indexing progress, for freshness.
+- **The job detail** already has the `indexing` block.
+- **Reindexing** (`request_reindex`) has no endpoint yet.
 
 ### Phase 8: Search and analysis APIs
 
 **Scope**
 
-- `GET /api/v1/search`:
-  - `websearch_to_tsquery` for parsing and `ts_rank_cd` for ranking;
+- `GET /api/v1/search`, on the Phase 7 search service (`app/services/search.py`):
+  - `websearch_to_tsquery` for parsing and `ts_rank` with field weights for ranking (ADR-0018);
   - safe `ts_headline` snippets;
   - pagination;
   - scoped to a job.

@@ -1,0 +1,341 @@
+{
+  "environment": {
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "postgresql": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "command": "../benchmarks/indexing.py --output ../benchmarks/results/phase7-indexing.json --plans ../benchmarks/results/phase7-search-plans.txt --logs C:/Users/24419/AppData/Local/Temp/claude/28315522e9bd6d1a/13cb6bd8-d8e4-4e32-8dae-d9fb3bf6a786/scratchpad/bench-logs-third",
+    "date_utc": "2026-11-08T01:41:04Z"
+  },
+  "dataset": {
+    "pages": 2000,
+    "body_words": 1000,
+    "seed": 7,
+    "search_documents_heap": "728 kB",
+    "search_documents_total": "23 MB",
+    "gin_index": "6344 kB"
+  },
+  "indexing_runs": [
+    {
+      "indexers": 1,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 14.378,
+      "pages_per_second": 139.1,
+      "latency_seconds_p50": 7.421,
+      "latency_seconds_p95": 13.695,
+      "latency_seconds_max": 14.378,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 2000
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0
+      },
+      "repeat": 1
+    },
+    {
+      "indexers": 1,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 15.708,
+      "pages_per_second": 127.3,
+      "latency_seconds_p50": 8.123,
+      "latency_seconds_p95": 14.966,
+      "latency_seconds_max": 15.708,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 2000
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0
+      },
+      "repeat": 2
+    },
+    {
+      "indexers": 1,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 16.654,
+      "pages_per_second": 120.1,
+      "latency_seconds_p50": 8.867,
+      "latency_seconds_p95": 15.899,
+      "latency_seconds_max": 16.654,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 2000
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0
+      },
+      "repeat": 3
+    },
+    {
+      "indexers": 2,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 11.81,
+      "pages_per_second": 169.4,
+      "latency_seconds_p50": 6.31,
+      "latency_seconds_p95": 11.281,
+      "latency_seconds_max": 11.81,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 1002,
+        "indexer-2": 998
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0
+      },
+      "repeat": 1
+    },
+    {
+      "indexers": 2,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 11.578,
+      "pages_per_second": 172.7,
+      "latency_seconds_p50": 6.062,
+      "latency_seconds_p95": 11.047,
+      "latency_seconds_max": 11.578,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 1001,
+        "indexer-2": 999
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0
+      },
+      "repeat": 2
+    },
+    {
+      "indexers": 2,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 11.819,
+      "pages_per_second": 169.2,
+      "latency_seconds_p50": 6.344,
+      "latency_seconds_p95": 11.278,
+      "latency_seconds_max": 11.819,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 1000,
+        "indexer-2": 1000
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0
+      },
+      "repeat": 3
+    },
+    {
+      "indexers": 4,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 9.512,
+      "pages_per_second": 210.3,
+      "latency_seconds_p50": 5.155,
+      "latency_seconds_p95": 9.108,
+      "latency_seconds_max": 9.512,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 497,
+        "indexer-2": 505,
+        "indexer-3": 495,
+        "indexer-4": 503
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0,
+        "indexer-3": 0,
+        "indexer-4": 0
+      },
+      "repeat": 1
+    },
+    {
+      "indexers": 4,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 9.375,
+      "pages_per_second": 213.3,
+      "latency_seconds_p50": 5.016,
+      "latency_seconds_p95": 8.983,
+      "latency_seconds_max": 9.375,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 503,
+        "indexer-2": 496,
+        "indexer-3": 501,
+        "indexer-4": 500
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0,
+        "indexer-3": 0,
+        "indexer-4": 0
+      },
+      "repeat": 2
+    },
+    {
+      "indexers": 4,
+      "concurrency_per_indexer": 4,
+      "pages": 2000,
+      "body_words": 1000,
+      "seconds_commit_to_last_indexed": 9.452,
+      "pages_per_second": 211.6,
+      "latency_seconds_p50": 4.996,
+      "latency_seconds_p95": 9.049,
+      "latency_seconds_max": 9.452,
+      "max_attempt_count": 1,
+      "indexed_per_indexer": {
+        "indexer-1": 504,
+        "indexer-2": 498,
+        "indexer-3": 497,
+        "indexer-4": 501
+      },
+      "handled_by_reason": {
+        "indexed": 2000
+      },
+      "exit_codes": {
+        "index-dispatcher-1": 0,
+        "indexer-1": 0,
+        "indexer-2": 0,
+        "indexer-3": 0,
+        "indexer-4": 0
+      },
+      "repeat": 3
+    }
+  ],
+  "search": [
+    {
+      "query_kind": "common_term",
+      "query": "babaduzo",
+      "searchable": true,
+      "matches": 2000,
+      "runs": 30,
+      "ms_min": 34.76,
+      "ms_p50": 36.89,
+      "ms_p95": 41.02,
+      "ms_max": 46.63
+    },
+    {
+      "query_kind": "medium_term",
+      "query": "belila",
+      "searchable": true,
+      "matches": 1287,
+      "runs": 30,
+      "ms_min": 27.61,
+      "ms_p50": 29.94,
+      "ms_p95": 35.72,
+      "ms_max": 37.49
+    },
+    {
+      "query_kind": "rare_term",
+      "query": "pegupu",
+      "searchable": true,
+      "matches": 45,
+      "runs": 30,
+      "ms_min": 17.5,
+      "ms_p50": 18.8,
+      "ms_p95": 19.64,
+      "ms_max": 20.32
+    },
+    {
+      "query_kind": "two_terms",
+      "query": "babaduzo belila",
+      "searchable": true,
+      "matches": 1287,
+      "runs": 30,
+      "ms_min": 30.84,
+      "ms_p50": 32.14,
+      "ms_p95": 33.12,
+      "ms_max": 33.38
+    },
+    {
+      "query_kind": "or_terms",
+      "query": "belila or pegupu",
+      "searchable": true,
+      "matches": 1301,
+      "runs": 30,
+      "ms_min": 29.07,
+      "ms_p50": 30.0,
+      "ms_p95": 30.86,
+      "ms_max": 31.42
+    },
+    {
+      "query_kind": "phrase",
+      "query": "\"gebome baze\"",
+      "searchable": true,
+      "matches": 2,
+      "runs": 30,
+      "ms_min": 9.68,
+      "ms_p50": 10.38,
+      "ms_p95": 11.08,
+      "ms_max": 11.15
+    },
+    {
+      "query_kind": "no_match",
+      "query": "zzzqqqxxx",
+      "searchable": true,
+      "matches": 0,
+      "runs": 30,
+      "ms_min": 6.53,
+      "ms_p50": 7.23,
+      "ms_p95": 7.77,
+      "ms_max": 7.9
+    },
+    {
+      "query_kind": "stop_words_only",
+      "query": "the and of",
+      "searchable": false,
+      "matches": 0,
+      "runs": 30,
+      "ms_min": 5.91,
+      "ms_p50": 6.25,
+      "ms_p95": 6.8,
+      "ms_max": 7.32
+    }
+  ]
+}

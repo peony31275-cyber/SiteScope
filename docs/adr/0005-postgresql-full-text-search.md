@@ -1,6 +1,6 @@
 # ADR-0005: PostgreSQL full-text search instead of a dedicated search engine
 
-- Status: Accepted
+- Status: Accepted; weights and ranking function amended by [ADR-0018](0018-asynchronous-indexing-pipeline.md)
 - Date: 2026-11-06
 
 ## Context

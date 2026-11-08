@@ -1,10 +1,12 @@
 """Real processes for the distributed tests (tests/integration/test_distributed.py, tests/fault).
 
 ``Cluster`` starts the scheduler and crawler workers as separate operating-system processes
-(``python -m app.scheduler``, ``python -m app.workers.crawler``), each with its JSON log in a
-file. It can stop them gracefully (CTRL_BREAK_EVENT on Windows, SIGTERM elsewhere), kill them
-(TerminateProcess / SIGKILL), and stall them (NtSuspendProcess / SIGSTOP). ``TcpProxy`` sits
-between the processes and PostgreSQL or Redis and can cut them off.
+(``python -m app.scheduler``, ``python -m app.workers.crawler``), and since Phase 7 the index
+dispatcher and indexers (``python -m app.scheduler.index_dispatcher``,
+``python -m app.workers.indexer``), each with its JSON log in a file. It can stop them
+gracefully (CTRL_BREAK_EVENT on Windows, SIGTERM elsewhere), kill them (TerminateProcess /
+SIGKILL), and stall them (NtSuspendProcess / SIGSTOP). ``TcpProxy`` sits between the processes
+and PostgreSQL or Redis and can cut them off.
 
 Safety: the children read backend/.env for credentials, and its database is the development
 database. ``child_environment`` therefore always sets the database explicitly, and refuses any
@@ -60,6 +62,11 @@ FAST_TIMING: Mapping[str, str] = {
     "RETRY_MAX_DELAY_SECONDS": "1",
     "CRAWL_CANCEL_CHECK_SECONDS": "0.2",
     "POLITENESS_SLOT_LEASE_SECONDS": "1",
+    # Phase 7: index tasks cut off after 3 s, reclaimed after 5 s idle, republished after 10 s.
+    "INDEX_TASK_DEADLINE_SECONDS": "3",
+    "INDEX_RECLAIM_MIN_IDLE_SECONDS": "5",
+    "INDEX_RECONCILE_AFTER_SECONDS": "10",
+    "INDEX_DISPATCHER_INTERVAL_SECONDS": "0.1",
 }
 
 ALLOW_ALL_ROBOTS = Reply(
@@ -354,6 +361,15 @@ class Cluster:
     def workers(self) -> list[ManagedProcess]:
         return [process for process in self.processes if process.name.startswith("worker")]
 
+    def index_dispatcher(self) -> ManagedProcess:
+        return self._spawn("index-dispatcher", "app.scheduler.index_dispatcher")
+
+    def indexer(self, *arguments: str) -> ManagedProcess:
+        return self._spawn("indexer", "app.workers.indexer", *arguments)
+
+    def indexers(self) -> list[ManagedProcess]:
+        return [process for process in self.processes if process.name.startswith("indexer")]
+
     def _spawn(self, role: str, module: str, *arguments: str) -> ManagedProcess:
         self._counts[role] += 1
         name = f"{role}-{self._counts[role]}"
@@ -375,7 +391,7 @@ class Cluster:
         """Wait until each process logged that it started (its stop handlers are installed)."""
         deadline = time.monotonic() + within
         for process in processes:
-            while not (process.events("worker.started") or process.events("scheduler.started")):
+            while not any(process.events(event) for event in STARTED_EVENTS):
                 if not process.alive:
                     raise AssertionError(f"{process.name} exited:\n{process.tail()}")
                 if time.monotonic() > deadline:
@@ -425,6 +441,10 @@ async def wait_for(
                 )
             raise AssertionError(f"timed out waiting for {what}\n{tails}")
         await asyncio.sleep(0.1)
+
+
+# The line each kind of process logs once its stop handlers are installed.
+STARTED_EVENTS = ("worker.started", "scheduler.started", "index_dispatcher.started")
 
 
 # --- A TCP proxy that can cut a service off ------------------------------------------------------

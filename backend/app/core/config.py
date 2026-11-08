@@ -191,6 +191,40 @@ class Settings(BaseSettings):
     # again (its message may have been lost from Redis).
     scheduler_reconcile_after_seconds: float = Field(default=300.0, gt=0, le=86_400)
 
+    # --- Indexing (Phase 7, ADR-0018) -------------------------------------------------------------
+    # Index tasks one indexer process runs at once (each holds one database connection, so at
+    # most SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW).
+    index_concurrency: int = Field(default=4, ge=1, le=64)
+    # Indexing attempts of one page before it fails for good. Each attempt is counted in
+    # PostgreSQL before its work starts, so crashed attempts count too.
+    index_max_attempts: int = Field(default=3, ge=1, le=10)
+    # Characters of a page's body text that are indexed, cut before the vector is built (the
+    # title, the description and the headings are indexed whole). PostgreSQL limits a vector's
+    # lexemes and positions to 1 MB; the default stays below it for every text measured, the
+    # densest being hyphenated CJK compounds (about 6.7 bytes per character). A vector over the
+    # limit is built again from a quarter of the body (app/indexing/documents.py).
+    index_max_body_chars: int = Field(default=100_000, ge=1000, le=150_000)
+    # An index attempt's statements have this long in all: each one's statement_timeout is what
+    # remains, and the indexer abandons the attempt when it is spent; the attempt then counts as
+    # failed and is retried. Shorter than the database command timeout, so the server stops a
+    # statement before the client gives up on it.
+    index_task_deadline_seconds: float = Field(default=20.0, gt=0, le=600)
+    # How long an index task must have been idle before another indexer takes it over
+    # (XAUTOCLAIM): at least the task deadline + 2 s, so an attempt's lease (halfway between the
+    # two) outlasts the attempt by at least 1 s.
+    index_reclaim_min_idle_seconds: float = Field(default=60.0, gt=0, le=86_400)
+    # A queued index task without progress this long is published again if its message is gone
+    # (Redis lost it, or it was trimmed).
+    index_reconcile_after_seconds: float = Field(default=300.0, gt=0, le=86_400)
+    # Index tasks the dispatcher publishes per pass, and at most queued at any time.
+    index_dispatch_batch_size: int = Field(default=200, ge=1, le=10_000)
+    index_max_outstanding: int = Field(default=1000, ge=1, le=1_000_000)
+    # Pause between two index dispatcher passes.
+    index_dispatcher_interval_seconds: float = Field(default=0.5, gt=0, le=60)
+    # A search is stopped after this long (statement_timeout, and by the client). Shorter than
+    # the database command timeout.
+    search_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+
     # --- API (Phase 6) ---------------------------------------------------------------------------
     # How long an Idempotency-Key of POST /api/v1/crawls is remembered. Afterwards the key is
     # forgotten (the job stays) and may create a new job.
@@ -310,6 +344,41 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SITESCOPE_RETRY_BASE_DELAY_SECONDS must not exceed"
                 " SITESCOPE_RETRY_MAX_DELAY_SECONDS"
+            )
+        # The index pipeline's timing order (ADR-0018): a live indexer finishes or gives up on a
+        # task before another one may take it over, and a task is reclaimed before it counts as
+        # lost; the stream keeps entries at least that long.
+        if self.index_task_deadline_seconds >= self.db_command_timeout_seconds:
+            raise ValueError(
+                "SITESCOPE_INDEX_TASK_DEADLINE_SECONDS must be shorter than"
+                " SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS"
+            )
+        if self.index_reclaim_min_idle_seconds < self.index_task_deadline_seconds + 2:
+            raise ValueError(
+                "SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS must be at least"
+                " SITESCOPE_INDEX_TASK_DEADLINE_SECONDS + 2"
+            )
+        if self.index_reconcile_after_seconds < self.index_reclaim_min_idle_seconds:
+            raise ValueError(
+                "SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS must be at least"
+                " SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS"
+            )
+        if self.stream_retention_seconds < self.index_reconcile_after_seconds:
+            raise ValueError(
+                "SITESCOPE_STREAM_RETENTION_SECONDS must be at least"
+                " SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS"
+            )
+        # One database connection per index task: a task that waited for a connection after its
+        # attempt was counted would use up an attempt without indexing (independent review).
+        if self.index_concurrency > self.db_pool_size + self.db_max_overflow:
+            raise ValueError(
+                "SITESCOPE_INDEX_CONCURRENCY must not exceed SITESCOPE_DB_POOL_SIZE +"
+                " SITESCOPE_DB_MAX_OVERFLOW"
+            )
+        if self.search_timeout_seconds >= self.db_command_timeout_seconds:
+            raise ValueError(
+                "SITESCOPE_SEARCH_TIMEOUT_SECONDS must be shorter than"
+                " SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS"
             )
         # A request that finds its host idle may still have to wait one interval.
         if self.politeness_interval_seconds > self.politeness_max_wait_seconds:

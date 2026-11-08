@@ -14,8 +14,9 @@ and divergence between Redis and PostgreSQL must all be handled.
 React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
   -> scheduler (dispatcher, outbox relay, level advancer, reconciler)
   -> Redis stream "sitescope:crawl" -> crawler workers (asyncio + HTTPX + BeautifulSoup)
-  -> PostgreSQL (pages, links, search_documents) -> Redis stream "sitescope:index"
-  -> indexer worker -> PostgreSQL full-text index (tsvector + GIN) -> search API
+  -> PostgreSQL (pages, links, search_documents) -> index dispatcher
+  -> Redis stream "sitescope:index" -> indexer workers
+  -> PostgreSQL full-text index (tsvector + GIN) -> search service (HTTP API in Phase 8)
 ```
 
 - Design: [docs/architecture.md](docs/architecture.md)
@@ -76,9 +77,9 @@ explanations for the project owner in Chinese.
    - Request handlers never publish to Redis.
    - The state row is the outbox: crawl tasks are published from `crawl_urls`, and index tasks from
      `search_documents` rows in status `pending`. There is no separate outbox table.
-   - The relay publishes, then marks the row as published, in the same transaction. A claim
-     locks the URL row first, so it waits for a dispatch of that row still in flight
-     (ADR-0016).
+   - The dispatchers (crawl and index) publish, then mark the row as published, in the same
+     transaction. A claim, or an index attempt, locks the row first, so it waits for a dispatch
+     of that row still in flight (ADR-0016, ADR-0018).
 4. **Leases with fencing tokens.**
    - A worker claims a URL with a compare-and-set that increments `lease_epoch`.
    - Its result transaction must re-check `state = 'in_progress' AND lease_epoch = :token` under a row
@@ -129,6 +130,18 @@ explanations for the project owner in Chinese.
     `PinnedNetworkBackend` opens connections.
 11. **Clocks.** Leases use the PostgreSQL clock, and rate limits use the Redis clock. A worker's local
     clock is never used for correctness.
+12. **An older index never replaces a newer one** (ADR-0018).
+    - The indexer builds the vector inside PostgreSQL from the page row it locks (`FOR SHARE`),
+      and writes it with that page's `content_version`, only while the document is `queued` and
+      its `indexed_content_version` is not newer. Triggers (migration 0004) reject lowering
+      `indexed_content_version` or `pages.content_version`.
+    - Index attempts are counted in PostgreSQL before their work (`start_index_attempt`), with an
+      advisory lease; never give up on a document because of Redis delivery counts. An attempt
+      ends by its deadline, before its lease does, and an indexer runs at most as many tasks as
+      its connection pool holds.
+    - Search returns only documents with `indexed_content_version = pages.content_version`.
+    - Indexing never changes a job's crawl status; `indexing_completed_at` is set only when the
+      job is finished and none of its documents is `pending` or `queued`.
 
 ## Code conventions
 
@@ -142,7 +155,8 @@ explanations for the project owner in Chinese.
   - `scheduler` and `workers` may use `services`, `queue`, `crawler`, and `indexing`, but never `api`.
   - `crawler` has no database imports (it uses Redis only for politeness and the robots.txt
     cache), and `queue` has no domain logic. `services` and `core.config` may use the pure
-    functions of `crawler` (URL normalization, scope).
+    functions of `crawler` (URL normalization, scope); `services` may use `indexing`, which is
+    pure too (Phase 7: document rules, query handling).
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
   fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
   when measurements show a need. HTML parsing is such work: call `parse_html` with
@@ -189,7 +203,8 @@ explanations for the project owner in Chinese.
   emits a deprecation warning, which would fail the run.
 - Concurrency and fault tests assert the invariants listed under "Correctness invariants" in
   `docs/architecture.md`.
-- Process tests (`tests/process_support.py`) start real scheduler and worker processes. Their
+- Process tests (`tests/process_support.py`) start real scheduler, crawler worker, index
+  dispatcher and indexer processes. Their
   environment always names the test database: `child_environment` refuses any database that
   is not a disposable `*_test` one. Never start `python -m app.scheduler` against the
   development database: it starts every queued job there.
@@ -225,7 +240,10 @@ explanations for the project owner in Chinese.
   | Run one crawl job in-process | `.\.venv\Scripts\python.exe -m app.workers.local_crawler <job-id>` |
   | Run the scheduler (never against the development database) | `.\.venv\Scripts\python.exe -m app.scheduler` |
   | Run a crawler worker (one per window) | `.\.venv\Scripts\python.exe -m app.workers.crawler` |
-  | Read-only crawl status | `.\.venv\Scripts\python.exe -m app.scheduler.status` |
+  | Run the index dispatcher (starts no job) | `.\.venv\Scripts\python.exe -m app.scheduler.index_dispatcher` |
+  | Run an indexer (one per window) | `.\.venv\Scripts\python.exe -m app.workers.indexer` |
+  | Read-only crawl and index status | `.\.venv\Scripts\python.exe -m app.scheduler.status` |
+  | Read-only search of one job | `.\.venv\Scripts\python.exe -m app.scheduler.search <job-id> "query"` |
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
   | Type check | `.\.venv\Scripts\python.exe -m mypy` |
@@ -239,8 +257,10 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
   app/            api/ core/ (Phase 1); db/ services/ (Phase 2B); crawler/ (Phases 2C-4: URLs,
                   scope, safe fetcher, HTML parser, robots.txt, politeness); workers/ (Phase 4:
                   crawl task, single-process driver; Phase 5: crawler worker; Phase 6: retry
-                  policy); queue/ scheduler/ (Phase 5: Redis Streams, scheduler, status);
-                  services/crawl_cancellation.py (Phase 6); indexing/ (later)
+                  policy; Phase 7: shared consumer loop, indexer); queue/ scheduler/ (Phase 5:
+                  Redis Streams, scheduler, status; Phase 7: index dispatcher, search command);
+                  services/crawl_cancellation.py (Phase 6); services/search_index.py and
+                  search.py, indexing/ (Phase 7)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes)

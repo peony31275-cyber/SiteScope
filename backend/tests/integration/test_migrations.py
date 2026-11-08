@@ -18,7 +18,7 @@ from tests.integration import helpers
 
 pytestmark = pytest.mark.anyio
 
-REVISIONS = ["0001", "0002", "0003"]  # oldest first
+REVISIONS = ["0001", "0002", "0003", "0004"]  # oldest first
 HEAD = REVISIONS[-1]
 
 
@@ -96,12 +96,14 @@ async def test_upgrade_builds_the_schema_from_an_empty_database(empty_database: 
     assert await public_tables(empty_database) == {*helpers.APP_TABLES, "alembic_version"}
     assert await query(empty_database, "SELECT version_num FROM alembic_version") == [HEAD]
     assert await sitescope_functions(empty_database) == [
+        "sitescope_content_version_forward",
+        "sitescope_index_version_forward",
         "sitescope_lease_epoch_monotonic",
         "sitescope_lease_epoch_per_claim",
         "sitescope_reject_update",
         "sitescope_set_updated_at",
     ]
-    assert len(await user_triggers(empty_database)) == 7
+    assert len(await user_triggers(empty_database)) == 9
 
 
 async def test_migrated_schema_matches_the_models(empty_database: Settings) -> None:

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.errors import FieldViolation, InvalidInputError
 from app.db.models import JobStatus, UrlState
 from app.services.crawl_jobs import CrawlJobProgress, JobPosition
+from app.services.search_index import IndexingState
 
 # As submitted; the normalized URL must also fit in 2048 bytes (app/crawler/urls.py).
 SEED_URL_MAX_LENGTH = 4096
@@ -101,21 +102,64 @@ class CrawlProgress(BaseModel):
     urls_by_state: UrlStateCounts
 
 
+class DocumentStatusCounts(BaseModel):
+    """Number of the job's search documents (one per indexable page) in each status."""
+
+    pending: int = Field(description="Waiting to be published to the indexers.")
+    queued: int = Field(description="Published; an indexer has not finished it yet.")
+    indexed: int
+    failed: int = Field(description="Could not be indexed (bounded attempts).")
+
+
+class CrawlIndexing(BaseModel):
+    """Indexing of the job's pages (Phase 7), counted when the request was served."""
+
+    status: IndexingState = Field(
+        description="`pending`: nothing published or indexed yet. `running`: under way, or "
+        "waiting for the crawl or for the index dispatcher. `indexed`: the job is finished and "
+        "every one of its pages is indexed. `failed`: the job is finished, indexing is over, "
+        "and at least one page could not be indexed (`documents_by_status.failed`); the others "
+        "are searchable."
+    )
+    documents_total: int = Field(
+        description="Pages to index: every stored page except those marked `noindex`."
+    )
+    documents_by_status: DocumentStatusCounts
+    active: int = Field(description="Documents an indexer is working on now.")
+    completed_at: datetime | None = Field(
+        description="When the indexing of the finished job was found complete; null until then."
+    )
+
+
 class CrawlJobDetail(CrawlJobSummary):
-    """A crawl job with its progress."""
+    """A crawl job with its progress and its indexing."""
 
     progress: CrawlProgress
+    indexing: CrawlIndexing
 
     @classmethod
     def from_progress(cls, progress: CrawlJobProgress) -> Self:
         summary = CrawlJobSummary.model_validate(progress.job)
         counts = {state.value: progress.urls_by_state[state] for state in UrlState}
+        indexing = progress.indexing
         return cls(
             **summary.model_dump(),
             progress=CrawlProgress(
                 urls_total=progress.urls_total,
                 urls_finished=progress.urls_finished,
                 urls_by_state=UrlStateCounts(**counts),
+            ),
+            indexing=CrawlIndexing(
+                status=indexing.state,
+                documents_total=indexing.documents,
+                documents_by_status=DocumentStatusCounts(
+                    pending=indexing.pending,
+                    queued=indexing.queued,
+                    indexed=indexing.indexed,
+                    failed=indexing.failed,
+                ),
+                active=indexing.active,
+                completed_at=indexing.completed_at,
             ),
         )
 

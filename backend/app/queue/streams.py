@@ -1,13 +1,16 @@
-"""The crawl task stream: a thin adapter over Redis Streams and one consumer group.
+"""Task streams: a thin adapter over Redis Streams and one consumer group per stream.
 
-Keys (prefix ``SITESCOPE_REDIS_KEY_PREFIX``):
+``TaskStream`` is generic over the message type; two streams use it:
 
-* ``<prefix>:crawl``: the task stream, read by the consumer group ``crawlers``;
-* ``<prefix>:crawl:dlq``: dead letters, kept for inspection and capped at about
-  ``DEAD_LETTER_MAX_LENGTH`` entries: malformed entries, tasks that do not match the database
-  (an unknown URL, a URL of another job), and poison tasks, delivered more than
-  ``SITESCOPE_STREAM_MAX_DELIVERIES`` times without being settled, whose URL can no longer be
-  claimed (Phase 6, ADR-0017).
+* ``CrawlStream`` (Phase 5): ``<prefix>:crawl``, read by the consumer group ``crawlers``;
+* ``IndexStream`` (Phase 7, ADR-0018): ``<prefix>:index``, read by the group ``indexers``.
+
+Each stream ``<prefix>:<name>`` has a dead-letter stream ``<prefix>:<name>:dlq``, kept for
+inspection and capped at about ``DEAD_LETTER_MAX_LENGTH`` entries: malformed entries, tasks
+that do not match the database (an unknown row, a row of another job), and, for crawl tasks,
+poison tasks, delivered more than ``SITESCOPE_STREAM_MAX_DELIVERIES`` times without being
+settled, whose URL can no longer be claimed (Phase 6, ADR-0017). Every key is under
+``SITESCOPE_REDIS_KEY_PREFIX``.
 
 Delivery semantics are Redis Streams' own: a message read with ``XREADGROUP`` stays in the
 group's pending entries list (PEL) until it is acknowledged (``XACK``). A message whose consumer
@@ -17,7 +20,8 @@ therefore at least once: a message can be delivered again, and the same task can
 more than once. Consumers make every effect idempotent through PostgreSQL (ADR-0016).
 
 The adapter never decides *whether* to acknowledge or dead-letter; workers do
-(``app.workers.crawler``). Dead-lettering is one Lua script that acknowledges the entry and
+(``app.workers.consumer`` and its subclasses). Dead-lettering is one Lua script that acknowledges
+the entry and
 copies it only if that acknowledgment removed it from the PEL, so an entry is copied once at
 most, however often it is dead-lettered.
 
@@ -30,18 +34,19 @@ owed to a consumer, and publishes the task again only if it is not.
 """
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
-from app.queue.messages import CONTRACT_FIELDS, CrawlTask, MalformedMessageError
+from app.queue.messages import CrawlTask, IndexTask, MalformedMessageError, StreamMessage
 
 logger = logging.getLogger(__name__)
 
-GROUP: Final = "crawlers"
+GROUP: Final = "crawlers"  # the crawl stream's consumer group
+INDEX_GROUP: Final = "indexers"  # the index stream's consumer group (Phase 7)
 DEAD_LETTER_MAX_LENGTH: Final = 10_000  # approximate cap of the dead-letter stream
 _ORIGINAL_VALUE_CHARS: Final = 64  # a UUID has 36
 
@@ -76,21 +81,31 @@ return removed
 
 
 @dataclass(frozen=True, slots=True)
-class Delivery:
-    """One stream entry handed to this consumer, decoded if it is a valid crawl task."""
+class Delivery[T]:
+    """One stream entry handed to this consumer, decoded if it is a valid task."""
 
     entry_id: str
     fields: Mapping[str, str]
-    task: CrawlTask | None
+    task: T | None
     error: str | None = None  # why ``task`` is None
 
-    @classmethod
-    def of(cls, entry_id: str, fields: Mapping[str, str] | None) -> "Delivery":
-        fields = dict(fields or {})
-        try:
-            return cls(entry_id, fields, CrawlTask.decode(fields))
-        except MalformedMessageError as exc:
-            return cls(entry_id, fields, None, str(exc))
+    @staticmethod
+    def of(entry_id: str, fields: Mapping[str, str] | None) -> "Delivery[CrawlTask]":
+        """A crawl stream entry (kept for the crawl stream's callers)."""
+        return decode_delivery(entry_id, fields, CrawlTask.decode)
+
+
+def decode_delivery[T](
+    entry_id: str,
+    fields: Mapping[str, str] | None,
+    decode: Callable[[Mapping[str, str]], T],
+) -> Delivery[T]:
+    """Decode one entry; a malformed one becomes a delivery without a task, with the reason."""
+    fields = dict(fields or {})
+    try:
+        return Delivery(entry_id, fields, decode(fields))
+    except MalformedMessageError as exc:
+        return Delivery(entry_id, fields, None, str(exc))
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +116,11 @@ class PendingSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class Reclaimed:
+class Reclaimed[T]:
     """One ``XAUTOCLAIM`` call: deliveries now owned by the caller, and where to continue."""
 
     next_start: str  # "0-0" once the whole pending list has been scanned
-    deliveries: list[Delivery]
+    deliveries: list[Delivery[T]]
     deleted: list[str]  # pending IDs whose entries no longer exist (trimmed or lost)
 
 
@@ -134,14 +149,25 @@ def safe_trim_point(
     return f"{milliseconds}-{sequence}"
 
 
-class CrawlStream:
-    """The crawl task stream and its consumer group. Safe for concurrent use by one process."""
+class TaskStream[T: StreamMessage]:
+    """A task stream and its consumer group. Safe for concurrent use by one process."""
 
-    def __init__(self, redis: Redis, *, key_prefix: str, group: str = GROUP) -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        *,
+        key_prefix: str,
+        name: str,
+        group: str,
+        decode: Callable[[Mapping[str, str]], T],
+        contract_fields: Sequence[str],
+    ) -> None:
         self._redis = redis
-        self.key = f"{key_prefix}:crawl"
-        self.dead_letter_key = f"{key_prefix}:crawl:dlq"
+        self.key = f"{key_prefix}:{name}"
+        self.dead_letter_key = f"{key_prefix}:{name}:dlq"
         self.group = group
+        self._decode = decode
+        self._contract_fields = tuple(contract_fields)
         self._remove_idle = redis.register_script(_REMOVE_IDLE_CONSUMERS)
         self._dead_letter = redis.register_script(_DEAD_LETTER)
 
@@ -158,7 +184,7 @@ class CrawlStream:
             return False
         return True
 
-    async def publish(self, tasks: Sequence[CrawlTask]) -> list[str]:
+    async def publish(self, tasks: Sequence[T]) -> list[str]:
         """``XADD`` each task, in one round trip; returns the entry IDs in order."""
         if not tasks:
             return []
@@ -168,7 +194,7 @@ class CrawlStream:
             ids: list[str] = await pipe.execute()
         return ids
 
-    async def read(self, consumer: str, *, count: int, block_ms: int) -> list[Delivery]:
+    async def read(self, consumer: str, *, count: int, block_ms: int) -> list[Delivery[T]]:
         """New messages for ``consumer`` (``XREADGROUP ... >``), waiting up to ``block_ms``.
 
         Recreates the group if it vanished (for example after Redis lost its data).
@@ -187,7 +213,7 @@ class CrawlStream:
             await self._recreate_group()
             return []
         return [
-            Delivery.of(entry_id, fields)
+            decode_delivery(entry_id, fields, self._decode)
             for _, entries in reply or []
             for entry_id, fields in entries
         ]
@@ -209,7 +235,7 @@ class CrawlStream:
 
     async def reclaim(
         self, consumer: str, *, min_idle_ms: int, start: str, count: int
-    ) -> Reclaimed:
+    ) -> Reclaimed[T]:
         """Take over messages idle for at least ``min_idle_ms`` (``XAUTOCLAIM``)."""
         try:
             reply: list[Any] = await self._redis.xautoclaim(
@@ -224,13 +250,13 @@ class CrawlStream:
         deleted = list(reply[2]) if len(reply) > 2 else []
         return Reclaimed(
             next_start,
-            [Delivery.of(entry_id, fields) for entry_id, fields in entries],
+            [decode_delivery(entry_id, fields, self._decode) for entry_id, fields in entries],
             deleted,
         )
 
     async def dead_letter(
         self,
-        delivery: Delivery,
+        delivery: Delivery[T],
         reason: str,
         *,
         kind: str | None = None,
@@ -247,17 +273,19 @@ class CrawlStream:
         malformed entry, otherwise the worker's reason); ``kind``, the classification
         (``malformed``, ``unknown_url``, ``job_mismatch``, ``max_deliveries_exceeded``);
         ``deliveries`` (the ``XPENDING`` delivery count) and ``consumer`` when given; the task's
-        ``job_id`` and ``url_id`` when it decoded. Of the original fields, only the contract's
-        (``original.v``, ``original.job_id``, ``original.url_id``) keep their values, shortened;
-        any other field is listed by name only (``original.other_fields``), so the dead-letter
-        stream never copies an arbitrary payload, a URL for example.
+        identifiers when it decoded (``job_id`` and ``url_id``, or ``job_id``, ``page_id`` and
+        ``content_version``). Of the original fields, only the contract's (for example
+        ``original.v``, ``original.job_id``) keep their values, shortened; any other field is
+        listed by name only (``original.other_fields``), so the dead-letter stream never copies
+        an arbitrary payload, a URL for example.
         """
+        contract = self._contract_fields
         fields: dict[str, str] = {
             f"original.{name}": delivery.fields[name][:_ORIGINAL_VALUE_CHARS]
-            for name in CONTRACT_FIELDS
+            for name in contract
             if name in delivery.fields
         }
-        others = sorted(name for name in delivery.fields if name not in CONTRACT_FIELDS)
+        others = sorted(name for name in delivery.fields if name not in contract)
         if others:
             fields["original.other_fields"] = ",".join(name[:32] for name in others[:16])
         fields.update(
@@ -272,8 +300,7 @@ class CrawlStream:
         if deliveries is not None:
             fields["deliveries"] = str(deliveries)
         if delivery.task is not None:
-            fields["job_id"] = str(delivery.task.job_id)
-            fields["url_id"] = str(delivery.task.url_id)
+            fields.update(delivery.task.identifiers())
         pairs = [item for pair in fields.items() for item in pair]
         written = await self._dead_letter(
             keys=[self.key, self.dead_letter_key],
@@ -412,3 +439,31 @@ class CrawlStream:
             "group": mine,
             "consumers": consumers,
         }
+
+
+class CrawlStream(TaskStream[CrawlTask]):
+    """The crawl task stream ``<prefix>:crawl`` and its group ``crawlers`` (Phase 5)."""
+
+    def __init__(self, redis: Redis, *, key_prefix: str, group: str = GROUP) -> None:
+        super().__init__(
+            redis,
+            key_prefix=key_prefix,
+            name="crawl",
+            group=group,
+            decode=CrawlTask.decode,
+            contract_fields=CrawlTask.CONTRACT_FIELDS,
+        )
+
+
+class IndexStream(TaskStream[IndexTask]):
+    """The index task stream ``<prefix>:index`` and its group ``indexers`` (Phase 7)."""
+
+    def __init__(self, redis: Redis, *, key_prefix: str, group: str = INDEX_GROUP) -> None:
+        super().__init__(
+            redis,
+            key_prefix=key_prefix,
+            name="index",
+            group=group,
+            decode=IndexTask.decode,
+            contract_fields=IndexTask.CONTRACT_FIELDS,
+        )

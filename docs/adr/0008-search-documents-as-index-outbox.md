@@ -1,6 +1,6 @@
 # ADR-0008: `search_documents` is both the index store and the indexing outbox
 
-- Status: Accepted
+- Status: Accepted; extended by [ADR-0018](0018-asynchronous-indexing-pipeline.md)
 - Date: 2026-11-06
 - Supersedes: the index-event part of [ADR-0002](0002-transactional-outbox.md)
 

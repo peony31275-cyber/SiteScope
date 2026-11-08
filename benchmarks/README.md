@@ -44,3 +44,43 @@ The process logs of every run are written under `--logs` (not committed).
 
 **Results.** See [`results/phase5-distributed.md`](results/phase5-distributed.md) and the raw
 JSON files next to it.
+
+## `indexing.py` (Phase 7)
+
+Indexing throughput and latency with 1, 2 and 4 indexer processes, search latency, and the search
+statement's query plans.
+
+**Setup.** One index dispatcher process and N indexer processes
+(`python -m app.scheduler.index_dispatcher`, `python -m app.workers.indexer`: separate
+operating-system processes, each indexer running 4 tasks at once) index a generated dataset of
+one job: 2,000 pages, each with a 5-word title, a 15-word description, 20 words of headings and a
+1,000-word body, drawn from a 5,000-word pseudo-word vocabulary with a Zipf-like frequency and a
+fixed seed (the same dataset in every run). The dispatcher publishes up to 1,000 tasks per pass
+every 0.1 s, so that it does not limit the indexers.
+
+**Measured.** The clock starts at the commit that stores the pages, read from PostgreSQL; each
+page's latency is its `indexed_at` minus that commit time, by the same clock; throughput is pages
+divided by the time to the last `indexed_at`. Process start-up is excluded. Each configuration
+runs three times; every run is reported. Then, on the last run's index, after `VACUUM (ANALYZE)`
+(which also merges the GIN index's pending list), eight queries (a common term, a medium and a
+rare one, two terms, an OR, a phrase, no match, stop words only) run 30 times each through the
+search service, one call at a time, and `EXPLAIN (ANALYZE, BUFFERS)` of the search statement is
+saved for the common and the rare term.
+
+**Isolation.** A disposable database `<SITESCOPE_POSTGRES_DB>_test_bench` (created, migrated and
+dropped by the script), Redis database 15 under a unique key prefix per run (deleted afterwards).
+The development database is never touched.
+
+**Run** from `backend\`, with PostgreSQL and Redis up:
+
+```powershell
+.\.venv\Scripts\python.exe ..\benchmarks\indexing.py `
+    --output ..\benchmarks\results\phase7-indexing.json `
+    --plans ..\benchmarks\results\phase7-search-plans.txt `
+    --logs $env:TEMP\sitescope-bench-index-logs
+```
+
+**Results.** See [`results/phase7-indexing.md`](results/phase7-indexing.md), the raw JSON
+[`results/phase7-indexing.json`](results/phase7-indexing.json), the plans
+[`results/phase7-search-plans.txt`](results/phase7-search-plans.txt), and the raw output of the
+earlier runs [`results/phase7-indexing-earlier-runs.txt`](results/phase7-indexing-earlier-runs.txt).

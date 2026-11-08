@@ -695,6 +695,112 @@ wsl docker compose exec redis redis-cli -a "<password from backend/.env>" --no-a
 processes against local servers, on its own disposable database; see
 [benchmarks/README.md](../benchmarks/README.md).
 
+## Search indexing (Phase 7)
+
+Crawled pages are indexed asynchronously by two more kinds of process (design:
+[architecture.md](architecture.md), sections 3, 10.8 and 13;
+[ADR-0018](adr/0018-asynchronous-indexing-pipeline.md)):
+
+- the **index dispatcher** (`python -m app.scheduler.index_dispatcher`) publishes the stored pages
+  waiting to be indexed to the stream `<prefix>:index` (consumer group `indexers`), republishes
+  tasks whose messages were lost, and marks the indexing of finished jobs complete. It starts no
+  crawl job and changes no crawl state;
+- **indexers** (`python -m app.workers.indexer [--concurrency N]`, as many as needed) build each
+  page's weighted search vector inside PostgreSQL and mark it `indexed`.
+
+Apply migration `0004` first (`alembic upgrade head`, see [Database migrations](#database-migrations)).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SITESCOPE_INDEX_CONCURRENCY` | `4` | index tasks one indexer runs at once (1 to 64); each holds one database connection, so at most `SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW` (10 by default; `--concurrency` too) |
+| `SITESCOPE_INDEX_MAX_ATTEMPTS` | `3` | attempts per page, counted in PostgreSQL before each one starts (crashed attempts count) |
+| `SITESCOPE_INDEX_MAX_BODY_CHARS` | `100000` | characters of a page body that are indexed (1000 to 150000); title, description and headings are indexed whole |
+| `SITESCOPE_INDEX_TASK_DEADLINE_SECONDS` | `20` | an index attempt's deadline, for all its statements together (shorter than `SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS`) |
+| `SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS` | `60` | how long an index task must have been idle before another indexer takes it over (at least the deadline + 2 s) |
+| `SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS` | `300` | a queued page without progress this long is published again if its message is gone |
+| `SITESCOPE_INDEX_DISPATCH_BATCH_SIZE` | `200` | tasks published per dispatcher pass |
+| `SITESCOPE_INDEX_MAX_OUTSTANDING` | `1000` | pages queued at most at any time |
+| `SITESCOPE_INDEX_DISPATCHER_INTERVAL_SECONDS` | `0.5` | pause between dispatcher passes |
+| `SITESCOPE_SEARCH_TIMEOUT_SECONDS` | `5` | a search is stopped after this long (shorter than `SITESCOPE_DB_COMMAND_TIMEOUT_SECONDS`) |
+
+The timing order is checked at startup: index task deadline + 2 s <= reclaim min idle <= reconcile
+after <= `SITESCOPE_STREAM_RETENTION_SECONDS`.
+
+**Connections.** Each process opens at most `SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW`
+(10 by default) PostgreSQL connections, and an indexer uses at most one per running task. Keep the
+total over all processes (API, scheduler, crawler workers, index dispatchers, indexers) below
+PostgreSQL's `max_connections` (100 in the development container).
+
+**Demonstration: crawl, persist, publish, index, search.** Prepare the separate database
+`sitescope_manual` and serve the demo site as in [Crawling (Phase 4)](#crawling-phase-4). In every
+window below, from `backend\`, set the same environment as in
+[Distributed crawling](#distributed-crawling-phase-5):
+
+```powershell
+$env:SITESCOPE_POSTGRES_DB = "sitescope_manual"      # never the development database
+$env:SITESCOPE_CRAWL_ALLOWED_HOSTS = "127.0.0.1"
+$env:SITESCOPE_CRAWL_ALLOWED_PORTS = "8080"
+$env:SITESCOPE_FETCH_INTERNAL_ORIGINS = "http://127.0.0.1:8080"
+```
+
+1. **Start the processes**, one window each:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m app.scheduler                    # the crawl scheduler
+   .\.venv\Scripts\python.exe -m app.workers.crawler              # a crawler worker (or two)
+   .\.venv\Scripts\python.exe -m app.scheduler.index_dispatcher   # the index dispatcher
+   .\.venv\Scripts\python.exe -m app.workers.indexer              # an indexer (or two)
+   .\.venv\Scripts\python.exe -m uvicorn app.main:app             # the API
+   ```
+
+2. **Crawl.** Create a job through the API as in the Phase 4 example
+   (`POST /api/v1/crawls` with `"seed_url": "http://127.0.0.1:8080/"`). The scheduler starts it and
+   the crawler workers fetch its pages.
+3. **Persist.** Each stored page gets a `pending` search document in the same transaction
+   (`noindex` pages get none).
+4. **Publish.** The index dispatcher's log shows `index.dispatched` and `index_dispatcher.pass`
+   lines; the documents become `queued`.
+5. **Index.** Each indexer logs one `task.handled` line per message (`reason` `indexed`, with
+   `job_id`, `page_id`, `content_version`, `attempt`, `lexemes`, `duration_ms`). Once the job is
+   finished and no document is pending or queued, the dispatcher logs `job.indexing_completed`.
+   The job detail shows the progress:
+
+   ```powershell
+   (Invoke-RestMethod http://127.0.0.1:8000/api/v1/crawls/<job-id>).indexing
+   ```
+
+   `status` is `pending`, `running`, `indexed` (complete) or `failed` (complete, with pages that
+   could not be indexed), with the counts per document status and `completed_at`.
+6. **Search** (read-only; the HTTP search API is Phase 8):
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m app.scheduler.search <job-id> "robots"
+   .\.venv\Scripts\python.exe -m app.scheduler.search <job-id> '"exact phrase" -excluded' --limit 5
+   ```
+
+   It prints JSON: the normalized query, `searchable` (false for a query of stop words or only
+   excluded words, which is not run), `total`, and per result the URL, title, rank, a plain-text
+   snippet with highlight ranges, and when the page was fetched and indexed, then the job's
+   indexing progress. Only pages whose index reflects their current content are returned.
+
+Diagnostics: `python -m app.scheduler.status` adds an `indexing` section (documents by status,
+attempts running per indexer, the oldest pending and queued documents, finished jobs whose
+indexing is not complete) and an `index_stream` section (length, pending messages, consumers,
+newest dead letters: `malformed`, `unknown_document`, `job_mismatch`, `version_ahead`).
+
+**Recovery.** Killing an indexer is safe: its attempt is already counted, its lease expires, and
+another indexer takes its message over after `SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS`. A page
+fails for good after `SITESCOPE_INDEX_MAX_ATTEMPTS` attempts that crashed or ran past their
+deadline (`search_documents.last_error`, for example `max_attempts_exceeded (last error:
+deadline_exceeded)`, and a `page.index_failed` event). Pages of a cancelled job are
+still indexed (ADR-0018). Reindexing a job (`request_reindex` in
+`app/services/search_index.py`) sets its indexed and failed documents back to `pending`; search
+keeps serving the previous vectors until they are rebuilt.
+
+**Language.** The index uses PostgreSQL's `english` configuration: English words are stemmed and
+English stop words ignored. Chinese and other languages written without spaces are not split into
+words, so a query matches such text only as a whole run of characters.
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to
@@ -702,7 +808,7 @@ keep. Run the commands from `backend\`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m alembic upgrade head      # apply all pending migrations
-.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0003 (head)"
+.\.venv\Scripts\python.exe -m alembic current           # revision of the database, e.g. "0004 (head)"
 .\.venv\Scripts\python.exe -m alembic history           # the migration chain
 .\.venv\Scripts\python.exe -m alembic upgrade head --sql    # print the SQL without connecting
 ```
@@ -712,7 +818,7 @@ To change the schema:
 1. **Update the models.** Change `app/db/models.py`.
 2. **Generate a draft.** It needs a database at head:
    ```powershell
-   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0004
+   .\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "describe the change" --rev-id 0005
    ```
 3. **Review and complete the draft.**
    - Autogenerate handles tables, columns, indexes, foreign keys and unique constraints.

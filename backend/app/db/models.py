@@ -22,6 +22,9 @@ Integrity rules enforced by the database itself:
   transaction is rolled back. Triggers created by the migrations (not visible in these models)
   keep ``lease_epoch`` from decreasing (0001), and let it change only in a claim, by exactly
   one, with every lease grant requiring that new token (0002).
+* Index versions (ADR-0018): triggers keep ``pages.content_version`` and
+  ``search_documents.indexed_content_version`` from moving back (0004), so an older index can
+  never replace a newer one.
 """
 
 import uuid
@@ -186,6 +189,12 @@ class CrawlJob(Base):
             "ix_crawl_jobs_active",
             "created_at",
             postgresql_where=text(sql_in("status", ACTIVE_JOB_STATUSES)),
+        ),
+        # Index dispatcher (Phase 7): finished jobs whose indexing is not complete yet.
+        Index(
+            "ix_crawl_jobs_indexing_open",
+            "finished_at",
+            postgresql_where=text("finished_at IS NOT NULL AND indexing_completed_at IS NULL"),
         ),
     )
 
@@ -417,12 +426,14 @@ class PageLink(Base):
 
 
 class SearchDocument(Base):
-    """Full-text index state of one page; also the outbox for index tasks (ADR-0008).
+    """Full-text index state of one page; also the outbox for index tasks (ADR-0008, ADR-0018).
 
-    A page needs (re)indexing while ``status`` is ``pending``. The scheduler publishes pending rows
-    to the index stream and marks them ``queued``; the indexer writes ``search_vector`` and
-    ``indexed_content_version`` and marks them ``indexed``. When a page's content changes, the same
-    transaction that increments ``pages.content_version`` sets ``status`` back to ``pending``.
+    A page needs (re)indexing while ``status`` is ``pending``. The index dispatcher publishes
+    pending rows to the index stream and marks them ``queued``; an indexer counts an attempt and
+    takes the row's lease, then writes ``search_vector`` and ``indexed_content_version`` and
+    marks it ``indexed`` (or ``failed`` after bounded attempts). When a page's content changes,
+    the same transaction that increments ``pages.content_version`` sets ``status`` back to
+    ``pending``. Triggers (migration 0004) keep both versions from moving back.
     """
 
     __tablename__ = "search_documents"
@@ -432,11 +443,18 @@ class SearchDocument(Base):
     status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
     indexed_content_version: Mapped[int | None] = mapped_column(Integer)
     search_vector: Mapped[str | None] = mapped_column(TSVECTOR)
+    # Indexing attempts since the row was last set to pending; counted before each attempt's
+    # work starts, so crashed attempts count too (Phase 7).
     attempt_count: Mapped[int] = mapped_column(SmallInteger, server_default=text("0"))
     last_error: Mapped[str | None] = mapped_column(Text)
     dispatched_at: Mapped[datetime | None]
     stream_entry_id: Mapped[str | None] = mapped_column(Text)
     indexed_at: Mapped[datetime | None]
+    # The indexer running the current attempt, and until when (database clock; migration 0004).
+    # Advisory, not a fencing token: it keeps duplicate messages from starting attempts while
+    # one runs. Set only while the row is queued.
+    lease_owner: Mapped[str | None] = mapped_column(Text)
+    lease_expires_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), server_onupdate=FetchedValue()
@@ -465,6 +483,10 @@ class SearchDocument(Base):
         CheckConstraint(
             "last_error IS NULL OR char_length(last_error) <= 2000", name="last_error_length"
         ),
+        CheckConstraint(
+            "(lease_owner IS NULL) = (lease_expires_at IS NULL)", name="lease_complete"
+        ),
+        CheckConstraint("status = 'queued' OR lease_owner IS NULL", name="lease_only_when_queued"),
         Index("ix_search_documents_search_vector", "search_vector", postgresql_using="gin"),
         Index("ix_search_documents_job_id", "job_id"),
         # Index relay: pending documents, oldest change first.
@@ -477,6 +499,12 @@ class SearchDocument(Base):
             "ix_search_documents_queued_since",
             "dispatched_at",
             postgresql_where=text("status = 'queued'"),
+        ),
+        # Job indexing completion (Phase 7): a job's documents still to index.
+        Index(
+            "ix_search_documents_open",
+            "job_id",
+            postgresql_where=text("status IN ('pending', 'queued')"),
         ),
     )
 

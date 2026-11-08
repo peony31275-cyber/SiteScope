@@ -180,6 +180,30 @@ job summary:
 The job detail adds `progress`, counted from the job's URL rows when the request is served:
 `urls_total`, `urls_finished`, and `urls_by_state` with a count for each of the seven URL states.
 
+Since Phase 7 it also adds `indexing`, counted from the job's search documents in the same
+statement:
+
+```json
+"indexing": {
+  "status": "running",
+  "documents_total": 12,
+  "documents_by_status": {"pending": 2, "queued": 3, "indexed": 7, "failed": 0},
+  "active": 1,
+  "completed_at": null
+}
+```
+
+- `documents_total`: the pages to index, every stored page except `noindex` ones.
+- `active`: documents an indexer is working on now.
+- `status`: `pending` (nothing published or indexed yet), `running` (under way, or waiting for the
+  crawl or the index dispatcher), `indexed` (the job is finished and every page is indexed) or
+  `failed` (the job is finished, indexing is over, and at least one page could not be indexed; the
+  others are searchable). It never changes the job's own `status`: a job is fully complete when
+  its `status` is `completed` and its indexing `status` is `indexed`.
+- `completed_at`: when the indexing of the finished job was found complete; `null` until then.
+
+Search itself has no HTTP endpoint before Phase 8.
+
 ## Health endpoints
 
 | Endpoint | Purpose | Checks dependencies? |

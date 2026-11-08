@@ -567,6 +567,10 @@ def test_accepts_the_fast_timing_of_the_process_tests(monkeypatch: pytest.Monkey
         "SITESCOPE_STREAM_RETENTION_SECONDS": "60",
         "SITESCOPE_POLITENESS_MAX_WAIT_SECONDS": "3",
         "SITESCOPE_ROBOTS_MAX_CRAWL_DELAY_SECONDS": "1",
+        # Phase 7: the index pipeline's own order (task deadline + 2 <= reclaim <= reconcile).
+        "SITESCOPE_INDEX_TASK_DEADLINE_SECONDS": "3",
+        "SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS": "5",
+        "SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS": "10",
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -647,3 +651,103 @@ def test_the_base_retry_delay_must_not_exceed_the_maximum(
 
     with pytest.raises(ValidationError, match="SITESCOPE_RETRY_BASE_DELAY_SECONDS must not exceed"):
         Settings(_env_file=None)
+
+
+# --- Indexing and search (Phase 7) ---------------------------------------------------------------
+
+
+def test_phase_7_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert (settings.index_concurrency, settings.index_max_attempts) == (4, 3)
+    assert settings.index_max_body_chars == 100_000
+    assert settings.index_task_deadline_seconds == 20
+    assert settings.index_reclaim_min_idle_seconds == 60
+    assert settings.index_reconcile_after_seconds == 300
+    assert (settings.index_dispatch_batch_size, settings.index_max_outstanding) == (200, 1000)
+    assert settings.index_dispatcher_interval_seconds == 0.5
+    assert settings.search_timeout_seconds == 5
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SITESCOPE_INDEX_CONCURRENCY", "0"),
+        ("SITESCOPE_INDEX_CONCURRENCY", "65"),
+        ("SITESCOPE_INDEX_MAX_ATTEMPTS", "0"),
+        ("SITESCOPE_INDEX_MAX_ATTEMPTS", "11"),
+        ("SITESCOPE_INDEX_MAX_BODY_CHARS", "999"),
+        ("SITESCOPE_INDEX_MAX_BODY_CHARS", "150001"),  # beyond what fits a tsvector safely
+        ("SITESCOPE_INDEX_TASK_DEADLINE_SECONDS", "0"),
+        ("SITESCOPE_INDEX_DISPATCH_BATCH_SIZE", "0"),
+        ("SITESCOPE_INDEX_MAX_OUTSTANDING", "0"),
+        ("SITESCOPE_INDEX_DISPATCHER_INTERVAL_SECONDS", "0"),
+        ("SITESCOPE_SEARCH_TIMEOUT_SECONDS", "0"),
+        ("SITESCOPE_SEARCH_TIMEOUT_SECONDS", "61"),
+    ],
+)
+def test_rejects_invalid_phase_7_settings(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        (  # PostgreSQL must cut a statement off before the client gives up on it
+            {"SITESCOPE_INDEX_TASK_DEADLINE_SECONDS": "30"},
+            "SITESCOPE_INDEX_TASK_DEADLINE_SECONDS must be shorter than",
+        ),
+        (  # an attempt's lease must outlast the attempt by at least 1 s (independent review)
+            {"SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS": "21.9"},
+            "SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS must be at least",
+        ),
+        (  # one second below the default reclaim idle time (60 s)
+            {"SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS": "59"},
+            "SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS must be at least",
+        ),
+        (  # the stream keeps an entry at least until the reconciler would replace it
+            {
+                "SITESCOPE_INDEX_RECONCILE_AFTER_SECONDS": "400",
+                "SITESCOPE_STREAM_RETENTION_SECONDS": "399",
+            },
+            "SITESCOPE_STREAM_RETENTION_SECONDS must be at least",
+        ),
+        (  # one database connection per index task (independent review)
+            {"SITESCOPE_INDEX_CONCURRENCY": "11"},
+            "SITESCOPE_INDEX_CONCURRENCY must not exceed",
+        ),
+        (  # PostgreSQL and the service stop a search before the client gives up on it
+            {"SITESCOPE_SEARCH_TIMEOUT_SECONDS": "30"},
+            "SITESCOPE_SEARCH_TIMEOUT_SECONDS must be shorter than",
+        ),
+    ],
+)
+def test_rejects_inconsistent_index_timing(
+    monkeypatch: pytest.MonkeyPatch, values: dict[str, str], message: str
+) -> None:
+    """task deadline < reclaim min idle <= reconcile after <= retention, and the deadline is
+    shorter than the database command timeout (ADR-0018)."""
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(_env_file=None)
+
+
+def test_accepts_the_boundaries_of_the_index_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    values = {
+        "SITESCOPE_INDEX_RECLAIM_MIN_IDLE_SECONDS": "22",  # exactly the deadline (20) + 2
+        "SITESCOPE_INDEX_CONCURRENCY": "10",  # exactly the pool: 5 + 5
+        "SITESCOPE_SEARCH_TIMEOUT_SECONDS": "29.9",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings(_env_file=None)
+
+    assert (settings.index_reclaim_min_idle_seconds, settings.index_concurrency) == (22, 10)
