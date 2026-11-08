@@ -9,6 +9,7 @@ These are the development commands for the Windows 10 development machine:
 - The safe fetcher commands were run in Phase 3.
 - The crawl commands were run in Phase 4, against a separate database (see
   [Crawling](#crawling-phase-4)).
+- The dashboard commands were run in Phase 9 (see [Dashboard](#dashboard-phase-9)).
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
@@ -182,6 +183,9 @@ Helpful variants:
 ```
 
 pytest treats warnings as errors, so deprecations surface immediately.
+
+The dashboard has its own checks (`npm run check` in `frontend\`; section
+[Dashboard](#dashboard-phase-9)).
 
 ## Docker (WSL 2)
 
@@ -857,6 +861,73 @@ demo site's known structure. It uses the disposable test database:
 
 **Benchmarks.** `benchmarks/analysis.py` measures every analysis endpoint on synthetic
 1,000- and 10,000-page jobs (results: `benchmarks/results/phase8-analysis.md`).
+
+## Dashboard (Phase 9)
+
+The React dashboard lives in `frontend\` (its README has the architecture, the design system and
+every command; design decisions: [ADR-0020](adr/0020-dashboard-same-origin-typed-client.md)). It
+needs Node.js 22.12 or newer (Node.js 24 is installed) and talks to the API on its own origin:
+the Vite development and preview servers proxy `/api` to the API, so the API needs no CORS.
+
+**Run it** with the API running (section [Run the API](#run-the-api)), from
+`C:\Users\24419\Desktop\SITESCOPE\frontend`:
+
+```powershell
+npm ci             # once, and whenever package-lock.json changes
+npm run dev        # http://127.0.0.1:5173, /api proxied to http://127.0.0.1:8000
+```
+
+`SITESCOPE_API_URL` points the proxy elsewhere, for example
+`$env:SITESCOPE_API_URL = "http://127.0.0.1:8010"`. The dashboard shows the jobs of the database
+the API uses; for crawls to make progress, the scheduler, crawler workers, index dispatcher and
+indexers must run against the same database (sections
+[Distributed crawling](#distributed-crawling-phase-5) and
+[Search indexing](#search-indexing-phase-7)). Never start the scheduler against the development
+database.
+
+The two endpoints Phase 9 added are read-only: `GET /api/v1/crawl-policy` (approved targets and
+job limits, for the job form) and `GET /api/v1/overview` (counts over every job, in one
+snapshot). Apply migration `0005` to the database first if it is still at `0004` (section
+[Search and website analysis](#search-and-website-analysis-phase-8)).
+
+**Checks**, all from `frontend\`:
+
+```powershell
+npm run check          # type check, lint, format check, tests, production build
+npm test               # unit and component tests only (Vitest)
+npm run build          # production build in dist\
+npm run preview        # serve dist\ on http://127.0.0.1:4173, with the same /api proxy
+```
+
+**End to end with the real stack.** `tests/dashboard_stack.py` starts everything on a disposable
+database and runs the Playwright suite in the installed Microsoft Edge (no browser download).
+With PostgreSQL and Redis up (`wsl docker compose up -d --wait`, and a WSL window kept open),
+from `backend\`:
+
+```powershell
+.\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e     # run the suite, then stop
+.\.venv\Scripts\python.exe -m tests.dashboard_stack           # serve the stack until Ctrl+C
+```
+
+It creates and migrates `<SITESCOPE_POSTGRES_DB>_test_ui` (refusing any non-`_test` name), uses
+Redis database 15 under its own key prefix, serves the demo site on 127.0.0.1 and a slow site on
+127.0.0.2, starts the API, the scheduler, two crawler workers, the index dispatcher, two indexers
+and `vite preview` (after a production build; `--no-build` skips it), prints their addresses,
+and at the end stops every process, deletes its Redis keys and drops the database (`--keep`
+keeps it). Logs and `stack.json` are in a temporary directory it prints. Arguments after `--`
+go to `playwright test`; `$env:E2E_SCREENSHOTS = "1"` adds screenshots of every page.
+
+**API types.** After an API change, regenerate the dashboard's types:
+
+```powershell
+# in backend\
+.\.venv\Scripts\python.exe -m app.api.openapi_export ..\frontend\src\lib\api\openapi.json
+# in frontend\
+npm run api:types
+```
+
+The backend unit test `tests/unit/api/test_openapi_snapshot.py` fails until the snapshot is
+current.
 
 ## Database migrations
 

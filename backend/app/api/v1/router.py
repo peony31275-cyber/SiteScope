@@ -2,12 +2,14 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import analysis, crawls, health, search
+from app.api.v1 import analysis, crawl_policy, crawls, health, overview, search
 
 API_V1_PREFIX = "/api/v1"
 
 router = APIRouter(prefix=API_V1_PREFIX)
 router.include_router(health.router)
 router.include_router(crawls.router)
+router.include_router(crawl_policy.router)
 router.include_router(analysis.router)
 router.include_router(search.router)
+router.include_router(overview.router)

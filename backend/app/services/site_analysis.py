@@ -892,14 +892,15 @@ async def crawl_stats(
 
 
 @asynccontextmanager
-async def _read_only(
-    session: AsyncSession, job_id: uuid.UUID, timeout_seconds: float
-) -> AsyncIterator[Any]:
-    """A read-only REPEATABLE READ transaction for one job that must exist (``NotFoundError``
-    otherwise); yields the job row. It has ``timeout_seconds`` in all: PostgreSQL stops each
-    statement after that long, and the transaction is abandoned when the time is up; either
-    becomes ``AnalysisTimeoutError``. Any other ``TimeoutError`` (connecting to PostgreSQL, for
-    example) propagates: the API reports it as an outage, ``dependency_unavailable``."""
+async def read_only_snapshot(
+    session: AsyncSession, timeout_seconds: float, *, subject: str = "analysis"
+) -> AsyncIterator[None]:
+    """A read-only REPEATABLE READ transaction with ``timeout_seconds`` in all: PostgreSQL stops
+    each statement after that long, and the transaction is abandoned when the time is up; either
+    becomes ``AnalysisTimeoutError`` (its message names ``subject``). Any other ``TimeoutError``
+    (connecting to PostgreSQL, for example) propagates: the API reports it as an outage,
+    ``dependency_unavailable``. Every statement is planned with its parameters. The analysis use
+    cases and the dashboard's overview (``app/services/overview.py``, Phase 9) read through it."""
     deadline = asyncio.timeout(timeout_seconds)
     try:
         async with deadline, session.begin():
@@ -908,19 +909,29 @@ async def _read_only(
                 _STATEMENT_TIMEOUT, {"timeout": str(max(1, math.ceil(timeout_seconds * 1000)))}
             )
             await session.execute(_CUSTOM_PLANS)
-            job = (await session.execute(_JOB, {"job_id": job_id})).one_or_none()
-            if job is None:
-                raise NotFoundError(f"Crawl job {job_id} does not exist.")
-            yield job
+            yield
     except (DBAPIError, TimeoutError) as exc:
         stopped = (
             deadline.expired() if isinstance(exc, TimeoutError) else sqlstate(exc) == QUERY_CANCELED
         )
         if stopped:
             raise AnalysisTimeoutError(
-                f"The analysis took longer than {timeout_seconds:g} s and was stopped."
+                f"The {subject} took longer than {timeout_seconds:g} s and was stopped."
             ) from None
         raise
+
+
+@asynccontextmanager
+async def _read_only(
+    session: AsyncSession, job_id: uuid.UUID, timeout_seconds: float
+) -> AsyncIterator[Any]:
+    """``read_only_snapshot`` for one job that must exist (``NotFoundError`` otherwise); yields
+    the job row."""
+    async with read_only_snapshot(session, timeout_seconds):
+        job = (await session.execute(_JOB, {"job_id": job_id})).one_or_none()
+        if job is None:
+            raise NotFoundError(f"Crawl job {job_id} does not exist.")
+        yield job
 
 
 def _link(row: Any) -> LinkView:

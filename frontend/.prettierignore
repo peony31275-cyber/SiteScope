@@ -1,0 +1,9 @@
+dist
+coverage
+node_modules
+playwright-report
+test-results
+package-lock.json
+# Generated from the backend's OpenAPI document (README.md, "API integration").
+src/lib/api/openapi.json
+src/lib/api/schema.d.ts

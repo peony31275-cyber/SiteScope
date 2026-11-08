@@ -12,7 +12,7 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import site_analysis
+from app.services import overview, site_analysis
 from app.services.search import SearchTimeoutError, search_job
 from app.services.site_analysis import AnalysisTimeoutError
 
@@ -55,6 +55,8 @@ ANALYSES: dict[str, Call] = {
         s, JOB, max_nodes=10, max_edges=10, timeout_seconds=t
     ),
     "statistics": lambda s, t: site_analysis.crawl_stats(s, JOB, timeout_seconds=t),
+    # The dashboard's overview (Phase 9) reads through the same snapshot helper.
+    "overview": lambda s, t: overview.system_overview(s, timeout_seconds=t),
 }
 
 

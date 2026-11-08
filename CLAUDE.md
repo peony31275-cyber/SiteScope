@@ -11,12 +11,13 @@ Correctness under failure is a first-class requirement: duplicate delivery, work
 and divergence between Redis and PostgreSQL must all be handled.
 
 ```
-React dashboard -> FastAPI -> PostgreSQL (jobs, URL frontier)
+React dashboard (same origin, /api proxied) -> FastAPI -> PostgreSQL (jobs, URL frontier)
   -> scheduler (dispatcher, outbox relay, level advancer, reconciler)
   -> Redis stream "sitescope:crawl" -> crawler workers (asyncio + HTTPX + BeautifulSoup)
   -> PostgreSQL (pages, links, search_documents) -> index dispatcher
   -> Redis stream "sitescope:index" -> indexer workers
   -> PostgreSQL full-text index (tsvector + GIN) -> search and website-analysis APIs (Phase 8)
+  -> React dashboard: jobs, live progress, search, analysis, link graph (Phase 9)
 ```
 
 - Design: [docs/architecture.md](docs/architecture.md)
@@ -149,6 +150,17 @@ explanations for the project owner in Chinese.
       results, answered 404 or 410. A target never requested, or without a final response, is
       unverified: never reported as broken or as working. A non-terminal URL's status (a retry
       in waiting) decides nothing.
+14. **The dashboard shows only what the API returned** (ADR-0020).
+    - It calls the API on its own origin (`/api/v1`, proxied by Vite or nginx): no CORS, no
+      address from user input, no secret in the bundle (`VITE_` variables are public).
+    - Crawled titles, snippets, anchor text and URLs are text: `dangerouslySetInnerHTML` is
+      banned by lint. A URL is a link only if it is http(s), with
+      `rel="noopener noreferrer nofollow"`. Highlight ranges are code points (`Array.from`).
+    - Totals come from endpoints that count them (`/overview`, `/stats`), never from a page of a
+      listing. Cursors are passed back unchanged, never built or parsed.
+    - Polling stops for settled jobs (crawl over and `indexing.completed_at` set), hidden tabs and
+      unmounted pages, and pauses when a job shows no change; a cancellation is shown as the
+      server answered it, never optimistically.
 
 ## Code conventions
 
@@ -193,6 +205,13 @@ explanations for the project owner in Chinese.
   - Crawl retries live in PostgreSQL (`pending` + `next_attempt_at`), not in an in-process sleep.
 - **Dependencies.** Prefer the standard library and packages that are already installed. Justify every new
   dependency with one line in the phase report.
+- **Frontend** (`frontend/`, Phase 9; details in its README).
+  - TypeScript strict. API types are generated from the OpenAPI document (`app.api.openapi_export`,
+    then `npm run api:types`), never written by hand; the backend test
+    `tests/unit/api/test_openapi_snapshot.py` fails while the snapshot is stale.
+  - `lib/api` is the only code that calls `fetch`; `features/*` hold pages and their query hooks;
+    `components` is the design system. Server state lives in TanStack Query.
+  - Exact dependency versions with a committed `package-lock.json`; install with `npm ci`.
 
 ## Tests
 
@@ -201,6 +220,8 @@ explanations for the project owner in Chinese.
 | `backend/tests/unit` | no network, database, or Redis |
 | `backend/tests/integration` | real PostgreSQL and Redis, or local HTTP/TLS servers on 127.0.0.1 (marker `integration`) |
 | `backend/tests/fault` | failure injection and recovery (marker `fault`) |
+| `frontend/src/**/*.test.ts(x)` | the dashboard's unit and component tests (Vitest, jsdom), against a fake API (a test double of `fetch`); no network |
+| `frontend/e2e` | the dashboard against the real stack (Playwright, installed Edge), started by `backend/tests/dashboard_stack.py --e2e` on a disposable database |
 
 - A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
   `pytest --require-services` turns those skips into failures (use it whenever the services are up,
@@ -217,6 +238,9 @@ explanations for the project owner in Chinese.
   environment always names the test database: `child_environment` refuses any database that
   is not a disposable `*_test` one. Never start `python -m app.scheduler` against the
   development database: it starts every queued job there.
+- `tests/dashboard_stack.py` (Phase 9) runs the whole stack for the dashboard's end-to-end
+  tests on its own disposable database, `<db>_test_ui`, and Redis database 15 under its own key
+  prefix; it drops the database and deletes its keys at the end.
 - Never send `FLUSHALL` (or `FLUSHDB`) to the development Redis; database 15 does not isolate
   it. Destructive Redis tests start their own disposable container and check that it is not
   the development server first (`tests/fault/test_redis_data_loss.py`).
@@ -256,8 +280,14 @@ explanations for the project owner in Chinese.
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
   | Type check | `.\.venv\Scripts\python.exe -m mypy` |
+  | Dashboard: install (in `frontend\`) | `npm ci` |
+  | Dashboard: dev server, `/api` proxied to :8000 | `npm run dev` |
+  | Dashboard: type check, lint, format check, tests, build | `npm run check` |
+  | Dashboard end to end (real stack, disposable DB) | `.\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e` |
+  | Regenerate the dashboard's API types | `.\.venv\Scripts\python.exe -m app.api.openapi_export ..\frontend\src\lib\api\openapi.json`, then `npm run api:types` in `frontend\` |
 
-  All four checks (tests, lint, format check, type check) must pass before work is reported done.
+  All four checks (tests, lint, format check, type check) must pass before work is reported done;
+  when the dashboard changed, `npm run check` too.
 
 ## Repository layout (target)
 
@@ -270,13 +300,18 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
                   Redis Streams, scheduler, status; Phase 7: index dispatcher, search command);
                   services/crawl_cancellation.py (Phase 6); services/search_index.py and
                   search.py, indexing/ (Phase 7); api/v1/search.py and analysis.py,
-                  services/site_analysis.py (Phase 8: search and website-analysis APIs)
+                  services/site_analysis.py (Phase 8: search and website-analysis APIs);
+                  api/v1/crawl_policy.py and overview.py, services/overview.py,
+                  api/openapi_export.py (Phase 9: the dashboard's endpoints and its types)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
-  tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes)
+  tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes);
+                  dashboard_stack.py (Phase 9: the whole stack for the dashboard's e2e run)
   pyproject.toml  dependencies + ruff / mypy / pytest configuration
   .env.example    configuration template; copy to backend/.env (git-ignored)
-frontend/         React + TypeScript dashboard (Phase 9; currently empty)
+frontend/         React + TypeScript dashboard (Phase 9): src/app (shell, routes), components (design
+                  system), features (overview, crawls, search, analysis, graph), hooks, lib/api
+                  (client, generated types); e2e/ (Playwright)
 demo-site/        controlled static website: the approved demo crawl target
 benchmarks/       reproducible benchmark scripts and raw results (crawl, indexing, analysis)
 docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/

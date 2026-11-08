@@ -1,0 +1,3558 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SiteScope API",
+    "summary": "Distributed web crawling and search infrastructure.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "Service information",
+        "description": "Describe the service and link to the API, health, and documentation endpoints.",
+        "operationId": "get_service_info",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "Liveness probe",
+        "description": "Return 200 while the process is able to serve requests.\n\nThis is a liveness check only. It does not check PostgreSQL, Redis, or any other dependency.",
+        "operationId": "get_health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/live": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Liveness probe",
+        "description": "Confirm that the API process is running and its event loop is serving requests.\n\nIt reports only the process's own state and checks no external dependency.",
+        "operationId": "get_liveness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Readiness probe",
+        "description": "Check PostgreSQL (``SELECT 1``) and Redis (``PING``) under a short deadline.\n\nReturns 200 only when both respond. Otherwise returns 503 with the same body shape.",
+        "operationId": "get_readiness",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "PostgreSQL or Redis is unavailable; the body says which.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls": {
+      "post": {
+        "tags": [
+          "crawls"
+        ],
+        "summary": "Create a crawl job",
+        "description": "Validate the request and store the job with its seed URL, in one transaction.\n\nThe seed URL is normalized and must name an approved crawl target; `max_depth` and\n`max_pages` must be within this server's limits. The job is created as `queued`: it waits\nfor the scheduler, and nothing is fetched yet. The `Location` header points to the job.",
+        "operationId": "create_crawl",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 255,
+                  "pattern": "^[\\x21-\\x7e]{1,255}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional. 1 to 255 visible ASCII characters. Retrying a request with the same key and an equivalent body returns the job the first request created (`200`) instead of creating another; the same key with a different body is a `409 idempotency_key_reused`. Keys are remembered for SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Optional. 1 to 255 visible ASCII characters. Retrying a request with the same key and an equivalent body returns the job the first request created (`200`) instead of creating another; the same key with a different body is a `409 idempotency_key_reused`. Keys are remembered for SITESCOPE_IDEMPOTENCY_KEY_TTL_SECONDS."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCrawlJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobSummary"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "A replay: an earlier request with the same `Idempotency-Key` and an equivalent body created this job (header `Idempotent-Replayed: true`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobSummary"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with earlier ones: an `Idempotency-Key` reused for a different request (`idempotency_key_reused`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "crawls"
+        ],
+        "summary": "List crawl jobs",
+        "description": "List crawl jobs, newest first, with cursor (keyset) pagination.\n\nPaging never returns a job twice, and returns every job that existed when paging started.\nJobs created meanwhile do not shift later pages.",
+        "operationId": "list_crawls",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Jobs per page.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Jobs per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page.",
+              "title": "Cursor"
+            },
+            "description": "The `next_cursor` of the previous page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "crawls"
+        ],
+        "summary": "Cancel a crawl job",
+        "description": "Cancel a job. Idempotent: repeating it, or cancelling a finished job, changes nothing.\n\nA `queued` job is `cancelled` at once (`200`). A `running` job stops: nothing new is\ndispatched or claimed, and its pending and queued URLs are cancelled at once. If none of its\nURLs is in progress, it is `cancelled` at once (`200`); otherwise it is `cancelling` (`202`)\nuntil its in-flight URLs are final (workers stop them within seconds; the URLs of a crashed\nworker are cancelled when their lease expires). The response is `202` whenever the job is\nstill `cancelling`, and `200` with the unchanged job for a finished one (`completed`,\n`failed`, `cancelled`).",
+        "operationId": "cancel_crawl",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobSummary"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The job is `cancelling`: in-flight URLs are still finishing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The resource does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}": {
+      "get": {
+        "tags": [
+          "crawls"
+        ],
+        "summary": "Get a crawl job",
+        "description": "Return the job, with progress counted from its URL rows in PostgreSQL.",
+        "operationId": "get_crawl",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlJobDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The resource does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawl-policy": {
+      "get": {
+        "tags": [
+          "crawls"
+        ],
+        "summary": "Get the crawl policy",
+        "description": "Return the crawl targets this server approves and its job limits.\n\nA seed URL is accepted when its host matches an approved pattern and its scheme and port\nare allowed (schemes and ports apply to every approved host), and `max_depth` and\n`max_pages` are within the limits. The server checks every request again: this is\nguidance for clients, not a promise that a URL can be crawled.",
+        "operationId": "get_crawl_policy",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlPolicy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/pages": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "List the pages of a crawl job",
+        "description": "List the job's stored HTML pages in BFS order (depth, then URL), with cursor paging.\n\nA *page* is an HTML document the crawl fetched (2xx) and stored. Other crawled URLs\n(redirects, errors, other content types) are not pages; the links and statistics endpoints\nreport them. Page bodies are never returned.",
+        "operationId": "list_crawl_pages",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page of the same listing, with the same filters.",
+              "title": "Cursor"
+            },
+            "description": "The `next_cursor` of the previous page of the same listing, with the same filters."
+          },
+          {
+            "name": "depth",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only pages at this BFS depth.",
+              "title": "Depth"
+            },
+            "description": "Only pages at this BFS depth."
+          },
+          {
+            "name": "index_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PageIndexStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only pages with this indexing status.",
+              "title": "Index Status"
+            },
+            "description": "Only pages with this indexing status."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`, for example `invalid_cursor` (a cursor of another listing, or altered) or `uuid_parsing` (`job_id`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The analysis took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and was stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/links": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "List the links of a crawl job",
+        "description": "List the job's stored links, by source page URL and position, with their classification.\n\nEvery link found on a stored page is recorded, internal or not, followed or not. A link's\nclassification comes from this job's stored crawl result for its target (after the\ntarget's redirects); a target that was never requested is never reported as working or\nbroken. Nothing is fetched to check a link.",
+        "operationId": "list_crawl_links",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page of the same listing, with the same filters.",
+              "title": "Cursor"
+            },
+            "description": "The `next_cursor` of the previous page of the same listing, with the same filters."
+          },
+          {
+            "name": "source_page_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only links on this page of the job.",
+              "title": "Source Page Id"
+            },
+            "description": "Only links on this page of the job."
+          },
+          {
+            "name": "internal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only internal (`true`) or external (`false`) links.",
+              "title": "Internal"
+            },
+            "description": "Only internal (`true`) or external (`false`) links."
+          },
+          {
+            "name": "classification",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LinkClass"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only links with this classification.",
+              "title": "Classification"
+            },
+            "description": "Only links with this classification."
+          },
+          {
+            "name": "verified",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only links whose classification an HTTP response decided (`true`), or only the unverified ones (`false`: never requested, or no response).",
+              "title": "Verified"
+            },
+            "description": "Only links whose classification an HTTP response decided (`true`), or only the unverified ones (`false`: never requested, or no response)."
+          },
+          {
+            "name": "redirected",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only links whose target itself answered with a redirect, a 3xx (`true`), or only the others (`false`).",
+              "title": "Redirected"
+            },
+            "description": "Only links whose target itself answered with a redirect, a 3xx (`true`), or only the others (`false`)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`, for example `invalid_cursor` (a cursor of another listing, or altered) or `uuid_parsing` (`job_id`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The analysis took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and was stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/broken-links": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "List the confirmed broken links of a crawl job",
+        "description": "List the job's confirmed broken links, by target URL, then source page URL.\n\nA link is *confirmed broken* when it is internal and its target, after following its\nredirects through this job's crawl results, answered 404 Not Found or 410 Gone during this\ncrawl. Nothing else is: not a 5xx, 408 or 429 (possibly transient), not another 4xx such as\n401 or 403, not a link the crawl never requested (out of scope, nofollow, beyond the depth\nor page limits, blocked by robots.txt, not crawled yet), and not one that got no response.\nThose are in the links listing, by classification.\n\nOne item per stored link: a page that links to a missing URL twice is listed once; a URL\nlinked from three pages is listed three times. `total` counts every item.",
+        "operationId": "list_crawl_broken_links",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 8192
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` of the previous page of the same listing, with the same filters.",
+              "title": "Cursor"
+            },
+            "description": "The `next_cursor` of the previous page of the same listing, with the same filters."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrokenLinkList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`, for example `invalid_cursor` (a cursor of another listing, or altered) or `uuid_parsing` (`job_id`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The analysis took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and was stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/link-graph": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "Get the internal link graph of a crawl job",
+        "description": "Return the job's internal link graph: its known URLs, and the stored internal links\nbetween them.\n\nNodes are every URL the job admitted (pages, and URLs without a page) and every target of\nan internal link the job never admitted, in BFS order; `kind` tells them apart. The graph\nis cut at `max_nodes` and `max_edges` in a stable order, and `truncated` says so.\n\nThe graph holds only what the crawl stored: links on pages it did not fetch are unknown, so\na node without inbound links is not necessarily an orphan page.",
+        "operationId": "get_crawl_link_graph",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job."
+          },
+          {
+            "name": "max_nodes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 1,
+              "description": "Most nodes to return.",
+              "default": 500,
+              "title": "Max Nodes"
+            },
+            "description": "Most nodes to return."
+          },
+          {
+            "name": "max_edges",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 10000,
+              "minimum": 0,
+              "description": "Most edges to return.",
+              "default": 2000,
+              "title": "Max Edges"
+            },
+            "description": "Most edges to return."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkGraphResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`, for example `invalid_cursor` (a cursor of another listing, or altered) or `uuid_parsing` (`job_id`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The analysis took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and was stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crawls/{job_id}/stats": {
+      "get": {
+        "tags": [
+          "analysis"
+        ],
+        "summary": "Get the statistics of a crawl job",
+        "description": "Return the job's crawl, HTTP status, depth, indexing and link statistics.\n\nEvery number is counted from stored rows in one snapshot of PostgreSQL: nothing is\nestimated, and the numbers agree with each other and with the listings at that moment.",
+        "operationId": "get_crawl_stats",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrawlStatsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`, for example `invalid_cursor` (a cursor of another listing, or altered) or `uuid_parsing` (`job_id`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The analysis took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and was stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Search the pages of one crawl job",
+        "description": "Search the indexed pages of one crawl job, ranked by relevance.\n\nOnly pages whose current content is indexed are found: a page that is not indexed yet, or\nwhose index is older than its content, is not returned, and nothing else (pages of other\njobs, unindexed text) is ever searched instead. While the job is still crawling or\nindexing (`indexing.status` is `pending` or `running`), a later search may find more.\n\nResults are ordered by score, then URL, then page ID, so pages do not overlap or skip\nresults while the index is unchanged. `total` counts every match. Every match is ranked\nbefore a page is cut, which is why results are served up to offset 1000 only.",
+        "operationId": "search_pages",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The crawl job to search. A search never covers another job.",
+              "title": "Job Id"
+            },
+            "description": "The crawl job to search. A search never covers another job."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 1024,
+              "description": "The query, in web-search syntax: words (all must match), quoted `\"exact phrases\"`, `or` between alternatives, and `-word` to exclude a word. At most 256 characters after invisible characters are removed and whitespace is collapsed. Words are matched by their English stem (`crawling` finds `crawled`); stop words such as `the` are ignored.",
+              "examples": [
+                "consumer groups"
+              ],
+              "title": "Q"
+            },
+            "description": "The query, in web-search syntax: words (all must match), quoted `\"exact phrases\"`, `or` between alternatives, and `-word` to exclude a word. At most 256 characters after invisible characters are removed and whitespace is collapsed. Words are matched by their English stem (`crawling` finds `crawled`); stop words such as `the` are ignored."
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "1-based page number. A search serves results up to offset 1000: a page with `(page - 1) * page_size` above it is refused (`page_out_of_range`).",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "1-based page number. A search serves results up to offset 1000: a page with `(page - 1) * page_size` above it is refused (`page_out_of_range`)."
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "Results per page.",
+              "default": 10,
+              "title": "Page Size"
+            },
+            "description": "Results per page."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The crawl job does not exist (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request failed validation (`validation_failed`); `errors` lists each field with its `type`: `empty_query` (nothing left after removing whitespace and invisible characters), `query_too_long`, `page_out_of_range` (reported together with a query error), or a schema rule (for example `uuid_parsing` for `job_id`, `missing` for a missing parameter).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The search took longer than SITESCOPE_SEARCH_TIMEOUT_SECONDS and was stopped (`search_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/overview": {
+      "get": {
+        "tags": [
+          "overview"
+        ],
+        "summary": "Get the overview of every crawl job",
+        "description": "Count every crawl job by status, every admitted URL by state, the stored pages and the\nsearch documents by status, in one read-only snapshot of PostgreSQL.\n\nEach count reads every row of its table, so the time grows with the deployment's data; it\nis stopped after SITESCOPE_ANALYSIS_TIMEOUT_SECONDS. Discovered URLs (admitted ones plus\nlink targets never admitted) are counted per job, in its statistics.",
+        "operationId": "get_overview",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The counts took longer than SITESCOPE_ANALYSIS_TIMEOUT_SECONDS and were stopped (`analysis_timeout`), or PostgreSQL is unavailable (`dependency_unavailable`, with `Retry-After`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BrokenLinkItem": {
+        "properties": {
+          "source_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Page Id"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Text"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position",
+            "description": "0-based order of the link's first occurrence on its page."
+          },
+          "target_url": {
+            "type": "string",
+            "title": "Target Url"
+          },
+          "status": {
+            "type": "integer",
+            "title": "Status",
+            "description": "The verified final status: 404 or 410."
+          },
+          "final_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Url",
+            "description": "The URL that answered `status` when the target redirected to it; null if the target itself answered."
+          },
+          "redirect_hops": {
+            "type": "integer",
+            "title": "Redirect Hops"
+          },
+          "target_http_status": {
+            "type": "integer",
+            "title": "Target Http Status",
+            "description": "The target URL's own status: `status`, or the 3xx of its first redirect."
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At",
+            "description": "When the crawl recorded the final response."
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_page_id",
+          "source_url",
+          "anchor_text",
+          "position",
+          "target_url",
+          "status",
+          "final_url",
+          "redirect_hops",
+          "target_http_status",
+          "checked_at"
+        ],
+        "title": "BrokenLinkItem",
+        "description": "A confirmed broken link: a stored internal link whose target, after its redirects,\nanswered 404 Not Found or 410 Gone during this crawl."
+      },
+      "BrokenLinkList": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Confirmed broken links of the job, on every page."
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BrokenLinkItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items",
+          "next_cursor"
+        ],
+        "title": "BrokenLinkList",
+        "description": "One page of a job's confirmed broken links, by target URL, then source page URL.",
+        "examples": [
+          {
+            "items": [
+              {
+                "anchor_text": "Our old team page",
+                "checked_at": "2026-11-07T10:15:04.551Z",
+                "position": 4,
+                "redirect_hops": 0,
+                "source_page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+                "source_url": "https://docs.example.com/about.html",
+                "status": 404,
+                "target_http_status": 404,
+                "target_url": "https://docs.example.com/missing.html"
+              }
+            ],
+            "total": 1
+          }
+        ]
+      },
+      "CrawlCounts": {
+        "properties": {
+          "urls_discovered": {
+            "type": "integer",
+            "title": "Urls Discovered",
+            "description": "Distinct URLs the job knows: every admitted URL, plus every target of an internal link that was never admitted."
+          },
+          "urls_admitted": {
+            "type": "integer",
+            "title": "Urls Admitted",
+            "description": "URLs admitted to the crawl, seed included (the job's `admitted_count`)."
+          },
+          "urls_by_state": {
+            "$ref": "#/components/schemas/UrlStateCounts",
+            "description": "Admitted URLs by crawl state. `fetched`: the response was recorded (any status); `failed`: the request ended without a response, or its response could not be used (for example a page that could not be parsed); `skipped`: never requested (robots.txt, not an approved target)."
+          },
+          "pages_stored": {
+            "type": "integer",
+            "title": "Pages Stored",
+            "description": "Stored HTML pages (2xx HTML responses)."
+          },
+          "current_depth": {
+            "type": "integer",
+            "title": "Current Depth",
+            "description": "The BFS level being crawled."
+          },
+          "max_depth": {
+            "type": "integer",
+            "title": "Max Depth"
+          },
+          "max_pages": {
+            "type": "integer",
+            "title": "Max Pages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls_discovered",
+          "urls_admitted",
+          "urls_by_state",
+          "pages_stored",
+          "current_depth",
+          "max_depth",
+          "max_pages"
+        ],
+        "title": "CrawlCounts",
+        "description": "The crawl's progress, from the job's URL rows."
+      },
+      "CrawlIndexing": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/IndexingState",
+            "description": "`pending`: nothing published or indexed yet. `running`: under way, or waiting for the crawl or for the index dispatcher. `indexed`: the job is finished and every one of its pages is indexed. `failed`: the job is finished, indexing is over, and at least one page could not be indexed (`documents_by_status.failed`); the others are searchable."
+          },
+          "documents_total": {
+            "type": "integer",
+            "title": "Documents Total",
+            "description": "Pages to index: every stored page except those marked `noindex`."
+          },
+          "documents_by_status": {
+            "$ref": "#/components/schemas/DocumentStatusCounts"
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "description": "Documents an indexer is working on now."
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At",
+            "description": "When the indexing of the finished job was found complete; null until then."
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "documents_total",
+          "documents_by_status",
+          "active",
+          "completed_at"
+        ],
+        "title": "CrawlIndexing",
+        "description": "Indexing of the job's pages (Phase 7), counted when the request was served."
+      },
+      "CrawlJobDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "description": "The crawl's status. `queued` until the scheduler starts the job; nothing is crawled while a job is queued. `completed`, `failed` and `cancelled` end the crawl, not its indexing: see `indexing.status` of the job detail."
+          },
+          "seed_url": {
+            "type": "string",
+            "title": "Seed Url",
+            "description": "The normalized seed URL."
+          },
+          "allowed_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Hosts",
+            "description": "Hosts this job may crawl (exact match)."
+          },
+          "max_depth": {
+            "type": "integer",
+            "title": "Max Depth"
+          },
+          "max_pages": {
+            "type": "integer",
+            "title": "Max Pages"
+          },
+          "current_level": {
+            "type": "integer",
+            "title": "Current Level",
+            "description": "The BFS level being crawled."
+          },
+          "admitted_count": {
+            "type": "integer",
+            "title": "Admitted Count",
+            "description": "URLs admitted so far, seed included."
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "When the scheduler started the crawl."
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "When the crawl ended (completed, failed or cancelled). Indexing may still be running then: its end is `indexing.completed_at` of the job detail."
+          },
+          "cancel_requested_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Requested At"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/CrawlProgress"
+          },
+          "indexing": {
+            "$ref": "#/components/schemas/CrawlIndexing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "seed_url",
+          "allowed_hosts",
+          "max_depth",
+          "max_pages",
+          "current_level",
+          "admitted_count",
+          "failure_reason",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "finished_at",
+          "cancel_requested_at",
+          "progress",
+          "indexing"
+        ],
+        "title": "CrawlJobDetail",
+        "description": "A crawl job with its progress and its indexing."
+      },
+      "CrawlJobList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CrawlJobSummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CrawlJobList",
+        "description": "One page of crawl jobs, newest first."
+      },
+      "CrawlJobSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "description": "The crawl's status. `queued` until the scheduler starts the job; nothing is crawled while a job is queued. `completed`, `failed` and `cancelled` end the crawl, not its indexing: see `indexing.status` of the job detail."
+          },
+          "seed_url": {
+            "type": "string",
+            "title": "Seed Url",
+            "description": "The normalized seed URL."
+          },
+          "allowed_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Hosts",
+            "description": "Hosts this job may crawl (exact match)."
+          },
+          "max_depth": {
+            "type": "integer",
+            "title": "Max Depth"
+          },
+          "max_pages": {
+            "type": "integer",
+            "title": "Max Pages"
+          },
+          "current_level": {
+            "type": "integer",
+            "title": "Current Level",
+            "description": "The BFS level being crawled."
+          },
+          "admitted_count": {
+            "type": "integer",
+            "title": "Admitted Count",
+            "description": "URLs admitted so far, seed included."
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "When the scheduler started the crawl."
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "When the crawl ended (completed, failed or cancelled). Indexing may still be running then: its end is `indexing.completed_at` of the job detail."
+          },
+          "cancel_requested_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Requested At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "seed_url",
+          "allowed_hosts",
+          "max_depth",
+          "max_pages",
+          "current_level",
+          "admitted_count",
+          "failure_reason",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "finished_at",
+          "cancel_requested_at"
+        ],
+        "title": "CrawlJobSummary",
+        "description": "A crawl job as stored in PostgreSQL."
+      },
+      "CrawlPolicy": {
+        "properties": {
+          "approved_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Approved Hosts",
+            "description": "Approved host patterns, normalized. `docs.example.com` approves exactly that host; `*.example.org` approves its subdomains, not `example.org` itself. Empty: nothing is approved, and every crawl request is refused (`target_not_allowed`)."
+          },
+          "allowed_schemes": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "http",
+                "https"
+              ]
+            },
+            "type": "array",
+            "title": "Allowed Schemes",
+            "description": "Schemes a seed URL may use, on every approved host."
+          },
+          "allowed_ports": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Allowed Ports",
+            "description": "Ports a seed URL may use, on every approved host: its explicit port, or its scheme's default (80 for http, 443 for https)."
+          },
+          "max_depth_limit": {
+            "type": "integer",
+            "title": "Max Depth Limit",
+            "description": "The largest `max_depth` a job may request."
+          },
+          "max_pages_limit": {
+            "type": "integer",
+            "title": "Max Pages Limit",
+            "description": "The largest `max_pages` a job may request."
+          }
+        },
+        "type": "object",
+        "required": [
+          "approved_hosts",
+          "allowed_schemes",
+          "allowed_ports",
+          "max_depth_limit",
+          "max_pages_limit"
+        ],
+        "title": "CrawlPolicy",
+        "description": "What `POST /api/v1/crawls` accepts on this server.",
+        "examples": [
+          {
+            "allowed_ports": [
+              443
+            ],
+            "allowed_schemes": [
+              "https"
+            ],
+            "approved_hosts": [
+              "docs.example.com",
+              "*.example.org"
+            ],
+            "max_depth_limit": 5,
+            "max_pages_limit": 1000
+          }
+        ]
+      },
+      "CrawlProgress": {
+        "properties": {
+          "urls_total": {
+            "type": "integer",
+            "title": "Urls Total",
+            "description": "URL rows of the job; equals `admitted_count`."
+          },
+          "urls_finished": {
+            "type": "integer",
+            "title": "Urls Finished",
+            "description": "URLs in a terminal state."
+          },
+          "urls_by_state": {
+            "$ref": "#/components/schemas/UrlStateCounts"
+          },
+          "pages_stored": {
+            "type": "integer",
+            "title": "Pages Stored",
+            "description": "HTML pages stored. Only a fetched 2xx HTML response stores a page; other fetched URLs (redirects, HTTP errors, other content types) have none."
+          }
+        },
+        "type": "object",
+        "required": [
+          "urls_total",
+          "urls_finished",
+          "urls_by_state",
+          "pages_stored"
+        ],
+        "title": "CrawlProgress",
+        "description": "Progress counted from the job's URL rows when the request was served."
+      },
+      "CrawlStatsResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus",
+            "description": "The crawl's status (see the job resource)."
+          },
+          "crawl": {
+            "$ref": "#/components/schemas/CrawlCounts"
+          },
+          "http_status": {
+            "$ref": "#/components/schemas/HttpStatusCounts"
+          },
+          "depths": {
+            "items": {
+              "$ref": "#/components/schemas/DepthCountItem"
+            },
+            "type": "array",
+            "title": "Depths",
+            "description": "Admitted URLs per BFS depth, from depth 0; depths without URLs are absent."
+          },
+          "indexing": {
+            "$ref": "#/components/schemas/CrawlIndexing"
+          },
+          "links": {
+            "$ref": "#/components/schemas/LinkCounts"
+          },
+          "most_linked": {
+            "items": {
+              "$ref": "#/components/schemas/MostLinkedItem"
+            },
+            "type": "array",
+            "title": "Most Linked",
+            "description": "The 10 URLs with the most stored internal links to them, most first, then by URL. A URL need not be a stored page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "crawl",
+          "http_status",
+          "depths",
+          "indexing",
+          "links",
+          "most_linked"
+        ],
+        "title": "CrawlStatsResponse",
+        "description": "Statistics of one crawl job, all counted in one snapshot of PostgreSQL.",
+        "examples": [
+          {
+            "crawl": {
+              "current_depth": 3,
+              "max_depth": 3,
+              "max_pages": 100,
+              "pages_stored": 12,
+              "urls_admitted": 14,
+              "urls_by_state": {
+                "cancelled": 0,
+                "failed": 0,
+                "fetched": 13,
+                "in_progress": 0,
+                "pending": 0,
+                "queued": 0,
+                "skipped": 1
+              },
+              "urls_discovered": 15
+            },
+            "depths": [
+              {
+                "depth": 0,
+                "fetched": 1,
+                "pages": 1,
+                "urls": 1
+              },
+              {
+                "depth": 1,
+                "fetched": 4,
+                "pages": 4,
+                "urls": 5
+              }
+            ],
+            "http_status": {
+              "client_error_4xx": 1,
+              "informational_1xx": 0,
+              "no_response": 0,
+              "redirect_3xx": 0,
+              "server_error_5xx": 0,
+              "success_2xx": 12
+            },
+            "indexing": {
+              "active": 0,
+              "completed_at": "2026-11-07T10:15:05.120Z",
+              "documents_by_status": {
+                "failed": 0,
+                "indexed": 11,
+                "pending": 0,
+                "queued": 0
+              },
+              "documents_total": 11,
+              "status": "indexed"
+            },
+            "job_id": "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b",
+            "links": {
+              "broken": 1,
+              "by_class": {
+                "beyond_limits": 2,
+                "broken": 1,
+                "http_error": 0,
+                "not_crawled": 0,
+                "not_followed": 1,
+                "ok": 33,
+                "out_of_scope": 2,
+                "redirect_error": 0,
+                "robots_blocked": 1,
+                "server_error": 0,
+                "unreachable": 0
+              },
+              "external": 2,
+              "internal": 38,
+              "internal_targets": 14,
+              "total": 40,
+              "unverified": 6,
+              "verified": 34
+            },
+            "most_linked": [
+              {
+                "in_links": 11,
+                "page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+                "url": "https://docs.example.com/"
+              }
+            ],
+            "status": "completed"
+          }
+        ]
+      },
+      "CreateCrawlJobRequest": {
+        "properties": {
+          "seed_url": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Seed Url",
+            "description": "Absolute http(s) URL on an approved host. It is normalized before it is stored (docs/architecture.md, section 8.1)."
+          },
+          "max_depth": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Max Depth",
+            "description": "Link hops to follow from the seed (0 crawls only the seed). At most the server's SITESCOPE_CRAWL_MAX_DEPTH_LIMIT."
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Pages",
+            "description": "Most URLs the job may admit, seed included. At most the server's SITESCOPE_CRAWL_MAX_PAGES_LIMIT."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "seed_url",
+          "max_depth",
+          "max_pages"
+        ],
+        "title": "CreateCrawlJobRequest",
+        "description": "A request to crawl one approved site, breadth-first from a seed URL.",
+        "examples": [
+          {
+            "max_depth": 3,
+            "max_pages": 500,
+            "seed_url": "https://docs.example.com/"
+          }
+        ]
+      },
+      "DependencyStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable",
+              "timeout"
+            ],
+            "title": "Status"
+          },
+          "latency_ms": {
+            "type": "number",
+            "title": "Latency Ms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "latency_ms"
+        ],
+        "title": "DependencyStatus",
+        "description": "Result of one dependency check. Deliberately contains no connection details."
+      },
+      "DepthCountItem": {
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "title": "Depth"
+          },
+          "urls": {
+            "type": "integer",
+            "title": "Urls",
+            "description": "URLs admitted at this depth."
+          },
+          "fetched": {
+            "type": "integer",
+            "title": "Fetched",
+            "description": "Of those, URLs in state `fetched` (their response was recorded)."
+          },
+          "pages": {
+            "type": "integer",
+            "title": "Pages",
+            "description": "Of those, stored HTML pages."
+          }
+        },
+        "type": "object",
+        "required": [
+          "depth",
+          "urls",
+          "fetched",
+          "pages"
+        ],
+        "title": "DepthCountItem",
+        "description": "The admitted URLs at one BFS depth."
+      },
+      "DocumentCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Search documents: every stored page except `noindex` ones."
+          },
+          "by_status": {
+            "$ref": "#/components/schemas/DocumentStatusCounts"
+          },
+          "active": {
+            "type": "integer",
+            "title": "Active",
+            "description": "Documents an indexer is working on now."
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "by_status",
+          "active"
+        ],
+        "title": "DocumentCounts"
+      },
+      "DocumentStatusCounts": {
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "Waiting to be published to the indexers."
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued",
+            "description": "Published; an indexer has not finished it yet."
+          },
+          "indexed": {
+            "type": "integer",
+            "title": "Indexed"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "Could not be indexed (bounded attempts)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "pending",
+          "queued",
+          "indexed",
+          "failed"
+        ],
+        "title": "DocumentStatusCounts",
+        "description": "Number of search documents (one per indexable page) in each status (of one job, or of\nevery job in the overview)."
+      },
+      "GraphEdgeItem": {
+        "properties": {
+          "source": {
+            "type": "integer",
+            "title": "Source",
+            "description": "The `id` of the linking page."
+          },
+          "target": {
+            "type": "integer",
+            "title": "Target",
+            "description": "The `id` of the target."
+          },
+          "nofollow": {
+            "type": "boolean",
+            "title": "Nofollow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "target",
+          "nofollow"
+        ],
+        "title": "GraphEdgeItem",
+        "description": "A stored internal link between two returned nodes."
+      },
+      "GraphNodeItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "description": "The node's index in `nodes`; edges refer to it."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NodeKind",
+            "description": "`page`: a stored HTML page. `crawl_url`: a URL the job admitted that has no stored page (not crawled yet, a redirect, an error, another content type, skipped). `link_target`: a target of internal links that the job never admitted; it was never requested."
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth",
+            "description": "BFS depth; null for a `link_target`."
+          },
+          "crawl_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UrlState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null for a `link_target`."
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status",
+            "description": "The URL's own final response status; null until its result is final, and when it got no response."
+          },
+          "in_degree": {
+            "type": "integer",
+            "title": "In Degree",
+            "description": "Stored internal links to this URL, one per linking page. Only links on stored pages are known: 0 does not mean that nothing links to the URL."
+          },
+          "out_degree": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Out Degree",
+            "description": "Stored internal links on this page; null if the node is not a page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "url",
+          "kind",
+          "page_id",
+          "title",
+          "depth",
+          "crawl_state",
+          "http_status",
+          "in_degree",
+          "out_degree"
+        ],
+        "title": "GraphNodeItem",
+        "description": "A URL of the job's internal link graph."
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "description": "Minimal liveness response for load balancers and container health checks."
+      },
+      "HighlightRange": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "HighlightRange",
+        "description": "A matched word in the snippet, as a `[start, end)` range of Unicode code points."
+      },
+      "HttpStatusCounts": {
+        "properties": {
+          "informational_1xx": {
+            "type": "integer",
+            "title": "Informational 1Xx",
+            "description": "A 1xx status as the final response (for example a `101` the request did not ask for): rare, and an HTTP error for the crawl."
+          },
+          "success_2xx": {
+            "type": "integer",
+            "title": "Success 2Xx"
+          },
+          "redirect_3xx": {
+            "type": "integer",
+            "title": "Redirect 3Xx"
+          },
+          "client_error_4xx": {
+            "type": "integer",
+            "title": "Client Error 4Xx"
+          },
+          "server_error_5xx": {
+            "type": "integer",
+            "title": "Server Error 5Xx"
+          },
+          "no_response": {
+            "type": "integer",
+            "title": "No Response",
+            "description": "Requests that ended without an HTTP response: DNS, connection, TLS or protocol errors, timeouts, attempts used up."
+          }
+        },
+        "type": "object",
+        "required": [
+          "informational_1xx",
+          "success_2xx",
+          "redirect_3xx",
+          "client_error_4xx",
+          "server_error_5xx",
+          "no_response"
+        ],
+        "title": "HttpStatusCounts",
+        "description": "Final response statuses of the URLs whose request ended (state `fetched` or `failed`),\neach URL counted once with its own status: a redirect counts as 3xx, not as its target's\nstatus. The six numbers add up to those URLs; skipped and unfinished URLs are not counted."
+      },
+      "IndexingState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "indexed",
+          "failed"
+        ],
+        "title": "IndexingState",
+        "description": "A job's indexing, derived from its search documents (never stored)."
+      },
+      "JobCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Every crawl job."
+          },
+          "by_status": {
+            "$ref": "#/components/schemas/JobStatusCounts",
+            "description": "The crawl's status of each job; indexing is counted in `documents`."
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "by_status"
+        ],
+        "title": "JobCounts"
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "cancelling",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatus"
+      },
+      "JobStatusCounts": {
+        "properties": {
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "running": {
+            "type": "integer",
+            "title": "Running"
+          },
+          "cancelling": {
+            "type": "integer",
+            "title": "Cancelling"
+          },
+          "completed": {
+            "type": "integer",
+            "title": "Completed"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "cancelled": {
+            "type": "integer",
+            "title": "Cancelled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queued",
+          "running",
+          "cancelling",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "JobStatusCounts",
+        "description": "Number of crawl jobs in each status."
+      },
+      "LinkClass": {
+        "type": "string",
+        "enum": [
+          "out_of_scope",
+          "not_followed",
+          "beyond_limits",
+          "not_crawled",
+          "redirect_error",
+          "ok",
+          "broken",
+          "server_error",
+          "http_error",
+          "robots_blocked",
+          "unreachable"
+        ],
+        "title": "LinkClass",
+        "description": "The class of a stored link (see the module docstring)."
+      },
+      "LinkClassCounts": {
+        "properties": {
+          "ok": {
+            "type": "integer",
+            "title": "Ok"
+          },
+          "broken": {
+            "type": "integer",
+            "title": "Broken"
+          },
+          "server_error": {
+            "type": "integer",
+            "title": "Server Error"
+          },
+          "http_error": {
+            "type": "integer",
+            "title": "Http Error"
+          },
+          "redirect_error": {
+            "type": "integer",
+            "title": "Redirect Error"
+          },
+          "out_of_scope": {
+            "type": "integer",
+            "title": "Out Of Scope"
+          },
+          "not_followed": {
+            "type": "integer",
+            "title": "Not Followed"
+          },
+          "beyond_limits": {
+            "type": "integer",
+            "title": "Beyond Limits"
+          },
+          "not_crawled": {
+            "type": "integer",
+            "title": "Not Crawled"
+          },
+          "robots_blocked": {
+            "type": "integer",
+            "title": "Robots Blocked"
+          },
+          "unreachable": {
+            "type": "integer",
+            "title": "Unreachable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "broken",
+          "server_error",
+          "http_error",
+          "redirect_error",
+          "out_of_scope",
+          "not_followed",
+          "beyond_limits",
+          "not_crawled",
+          "robots_blocked",
+          "unreachable"
+        ],
+        "title": "LinkClassCounts",
+        "description": "Stored links by classification (see `classification` of the links endpoint)."
+      },
+      "LinkCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "internal": {
+            "type": "integer",
+            "title": "Internal"
+          },
+          "external": {
+            "type": "integer",
+            "title": "External"
+          },
+          "internal_targets": {
+            "type": "integer",
+            "title": "Internal Targets",
+            "description": "Distinct target URLs of internal links."
+          },
+          "broken": {
+            "type": "integer",
+            "title": "Broken",
+            "description": "Confirmed broken links (404 or 410)."
+          },
+          "verified": {
+            "type": "integer",
+            "title": "Verified",
+            "description": "Links whose classification an HTTP response decided."
+          },
+          "unverified": {
+            "type": "integer",
+            "title": "Unverified",
+            "description": "All other links: never requested, or no response."
+          },
+          "by_class": {
+            "$ref": "#/components/schemas/LinkClassCounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "internal",
+          "external",
+          "internal_targets",
+          "broken",
+          "verified",
+          "unverified",
+          "by_class"
+        ],
+        "title": "LinkCounts",
+        "description": "The job's stored links: one per source page and target URL."
+      },
+      "LinkGraphResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeItem"
+            },
+            "type": "array",
+            "title": "Nodes",
+            "description": "Every URL the job admitted and every target of an internal link, in BFS order: depth, then URL; never-admitted targets last. Cut at `max_nodes`."
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeItem"
+            },
+            "type": "array",
+            "title": "Edges",
+            "description": "Internal links between returned nodes, by source URL and position. Cut at `max_edges`. Redirects are not edges."
+          },
+          "total_nodes": {
+            "type": "integer",
+            "title": "Total Nodes",
+            "description": "Nodes of the whole graph (`urls_discovered`)."
+          },
+          "total_edges": {
+            "type": "integer",
+            "title": "Total Edges",
+            "description": "Stored internal links of the job."
+          },
+          "max_nodes": {
+            "type": "integer",
+            "title": "Max Nodes"
+          },
+          "max_edges": {
+            "type": "integer",
+            "title": "Max Edges"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "Some nodes or edges were cut off. Degrees always count every stored link."
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "nodes",
+          "edges",
+          "total_nodes",
+          "total_edges",
+          "max_nodes",
+          "max_edges",
+          "truncated"
+        ],
+        "title": "LinkGraphResponse",
+        "description": "The job's internal link graph, possibly cut at `max_nodes` and `max_edges`.",
+        "examples": [
+          {
+            "edges": [
+              {
+                "nofollow": false,
+                "source": 0,
+                "target": 1
+              }
+            ],
+            "job_id": "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b",
+            "max_edges": 2000,
+            "max_nodes": 500,
+            "nodes": [
+              {
+                "crawl_state": "fetched",
+                "depth": 0,
+                "http_status": 200,
+                "id": 0,
+                "in_degree": 0,
+                "kind": "page",
+                "out_degree": 1,
+                "page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+                "title": "Example documentation",
+                "url": "https://docs.example.com/"
+              },
+              {
+                "crawl_state": "fetched",
+                "depth": 1,
+                "http_status": 404,
+                "id": 1,
+                "in_degree": 1,
+                "kind": "crawl_url",
+                "url": "https://docs.example.com/missing.html"
+              }
+            ],
+            "total_edges": 1,
+            "total_nodes": 2,
+            "truncated": false
+          }
+        ]
+      },
+      "LinkItem": {
+        "properties": {
+          "source_page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Source Page Id"
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "target_url": {
+            "type": "string",
+            "title": "Target Url",
+            "description": "The normalized target URL."
+          },
+          "anchor_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor Text"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position",
+            "description": "0-based order of the link's first occurrence on its page."
+          },
+          "internal": {
+            "type": "boolean",
+            "title": "Internal",
+            "description": "The target is in the job's scope: one of its hosts, and an approved crawl target. External links are recorded, never crawled."
+          },
+          "nofollow": {
+            "type": "boolean",
+            "title": "Nofollow",
+            "description": "The link has `rel=\"nofollow\"`."
+          },
+          "classification": {
+            "$ref": "#/components/schemas/LinkClass",
+            "description": "Why the link is or is not known to work, from the stored crawl results of this job only (never a new request). `ok`, `broken` (404 or 410), `server_error` (5xx, 408, 429), `http_error` (another status, such as 401 or 403) and `redirect_error` (a redirect loop, or a 3xx without a usable Location) are decided by an HTTP response: *verified*. `out_of_scope`, `not_followed` (nofollow), `beyond_limits` (max_depth or max_pages), `not_crawled` (not requested, or not finished, yet), `robots_blocked` and `unreachable` (no response: DNS, connection, TLS, timeouts) are *unverified*. A redirect is judged by where its chain ends. See ADR-0019."
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified",
+            "description": "An HTTP response decided `classification`."
+          },
+          "target_crawled": {
+            "type": "boolean",
+            "title": "Target Crawled",
+            "description": "The crawl attempted the target URL itself and its result is final (`target_state` is `fetched` or `failed`)."
+          },
+          "target_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UrlState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The target URL's crawl state in this job; null if the job never admitted it."
+          },
+          "target_http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Http Status",
+            "description": "The target URL's own final response status (3xx if it redirected); null until its result is final, and when it got no response."
+          },
+          "target_page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Page Id",
+            "description": "The target's stored page, if any."
+          },
+          "final_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Url",
+            "description": "Where the target's redirects end: the first URL that did not redirect, or a redirect target the job never requested; for an unusable chain (a loop, or more than 20 redirects), the last URL followed. Null if the target did not redirect to another URL (a target redirecting to itself is a `redirect_error` without one)."
+          },
+          "final_http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Http Status",
+            "description": "The final URL's response status; null if it was never requested or got no response."
+          },
+          "redirect_hops": {
+            "type": "integer",
+            "title": "Redirect Hops",
+            "description": "Redirects from the target to `final_url`."
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At",
+            "description": "When the result that decides `classification` was recorded; null if there is none."
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_page_id",
+          "source_url",
+          "target_url",
+          "anchor_text",
+          "position",
+          "internal",
+          "nofollow",
+          "classification",
+          "verified",
+          "target_crawled",
+          "target_state",
+          "target_http_status",
+          "target_page_id",
+          "final_url",
+          "final_http_status",
+          "redirect_hops",
+          "checked_at"
+        ],
+        "title": "LinkItem",
+        "description": "A stored link: one per source page and target URL (repeated links on a page are\nstored once, at their first position)."
+      },
+      "LinkList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LinkItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "LinkList",
+        "description": "One page of a job's stored links, by source page URL, then position on the page."
+      },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "uptime_seconds": {
+            "type": "number",
+            "title": "Uptime Seconds"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "version",
+          "uptime_seconds",
+          "checked_at"
+        ],
+        "title": "LivenessResponse",
+        "description": "Liveness details of the API process."
+      },
+      "MostLinkedItem": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "page_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Id",
+            "description": "The URL's stored page; null if none."
+          },
+          "in_links": {
+            "type": "integer",
+            "title": "In Links",
+            "description": "Stored internal links to the URL (one per page)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "url",
+          "page_id",
+          "in_links"
+        ],
+        "title": "MostLinkedItem"
+      },
+      "NodeKind": {
+        "type": "string",
+        "enum": [
+          "page",
+          "crawl_url",
+          "link_target"
+        ],
+        "title": "NodeKind"
+      },
+      "OverviewResponse": {
+        "properties": {
+          "jobs": {
+            "$ref": "#/components/schemas/JobCounts"
+          },
+          "urls": {
+            "$ref": "#/components/schemas/UrlCounts"
+          },
+          "pages_stored": {
+            "type": "integer",
+            "title": "Pages Stored",
+            "description": "Stored HTML pages of every job (2xx HTML responses)."
+          },
+          "documents": {
+            "$ref": "#/components/schemas/DocumentCounts"
+          },
+          "counted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Counted At",
+            "description": "When the counts were read (database clock)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobs",
+          "urls",
+          "pages_stored",
+          "documents",
+          "counted_at"
+        ],
+        "title": "OverviewResponse",
+        "description": "Every crawl job, admitted URL, stored page and search document, counted in one\nsnapshot of PostgreSQL.",
+        "examples": [
+          {
+            "counted_at": "2026-11-07T10:15:05.120Z",
+            "documents": {
+              "active": 1,
+              "by_status": {
+                "failed": 0,
+                "indexed": 31,
+                "pending": 1,
+                "queued": 2
+              },
+              "total": 34
+            },
+            "jobs": {
+              "by_status": {
+                "cancelled": 1,
+                "cancelling": 0,
+                "completed": 2,
+                "failed": 0,
+                "queued": 0,
+                "running": 1
+              },
+              "total": 4
+            },
+            "pages_stored": 36,
+            "urls": {
+              "by_state": {
+                "cancelled": 3,
+                "failed": 1,
+                "fetched": 40,
+                "in_progress": 1,
+                "pending": 3,
+                "queued": 2,
+                "skipped": 2
+              },
+              "total": 52
+            }
+          }
+        ]
+      },
+      "PageIndexStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "queued",
+          "indexed",
+          "failed",
+          "noindex"
+        ],
+        "title": "PageIndexStatus",
+        "description": "A stored page's indexing: its search document's status, or ``noindex`` (none)."
+      },
+      "PageItem": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "The page's normalized URL."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "The page's meta description."
+          },
+          "http_status": {
+            "type": "integer",
+            "title": "Http Status"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth",
+            "description": "BFS depth: link hops from the seed. A redirect target has the depth of the URL that redirected to it."
+          },
+          "crawled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Crawled At",
+            "description": "When the page was fetched."
+          },
+          "noindex": {
+            "type": "boolean",
+            "title": "Noindex",
+            "description": "The page asked not to be indexed (meta robots or X-Robots-Tag); it is never searchable."
+          },
+          "nofollow": {
+            "type": "boolean",
+            "title": "Nofollow",
+            "description": "The page asked that its links not be followed; they are recorded, never crawled."
+          },
+          "index_status": {
+            "$ref": "#/components/schemas/PageIndexStatus",
+            "description": "`pending` (waiting to be published), `queued` (published to the indexers, not indexed yet), `indexed`, `failed` (could not be indexed), or `noindex` (never indexed). A page whose content changed after indexing is `pending` again."
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At",
+            "description": "When the page's search vector was last built; null if never."
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "url",
+          "title",
+          "description",
+          "http_status",
+          "content_type",
+          "depth",
+          "crawled_at",
+          "noindex",
+          "nofollow",
+          "index_status",
+          "indexed_at"
+        ],
+        "title": "PageItem",
+        "description": "A stored HTML page. Page bodies are never returned."
+      },
+      "PageList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PageItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "PageList",
+        "description": "One page of a job's stored pages, in BFS order: depth, then URL.",
+        "examples": [
+          {
+            "items": [
+              {
+                "content_type": "text/html; charset=utf-8",
+                "crawled_at": "2026-11-07T10:15:01.204Z",
+                "depth": 0,
+                "description": "Guides and reference for Example.",
+                "http_status": 200,
+                "index_status": "indexed",
+                "indexed_at": "2026-11-07T10:15:02.877Z",
+                "nofollow": false,
+                "noindex": false,
+                "page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+                "title": "Example documentation",
+                "url": "https://docs.example.com/"
+              }
+            ],
+            "next_cursor": "WyJwYWdlcyIsMCwiaHR0cHM6Ly9kb2NzLmV4YW1wbGUuY29tLyJd"
+          }
+        ]
+      },
+      "ProblemDetails": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "status": {
+            "type": "integer",
+            "title": "Status"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "instance": {
+            "type": "string",
+            "title": "Instance"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ValidationErrorItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "instance",
+          "code"
+        ],
+        "title": "ProblemDetails",
+        "description": "An RFC 9457 problem details body (media type ``application/problem+json``)."
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Status"
+          },
+          "checks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DependencyStatus"
+            },
+            "type": "object",
+            "title": "Checks"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "checks",
+          "checked_at"
+        ],
+        "title": "ReadinessResponse",
+        "description": "Readiness of the API process and its required dependencies."
+      },
+      "SearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "The query as it was searched: invisible characters removed, whitespace collapsed."
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Job Id"
+          },
+          "searchable": {
+            "type": "boolean",
+            "title": "Searchable",
+            "description": "False when the query has no term an index can look up, for example only stop words (`the and`) or only excluded words (`-redis`): nothing was searched, and there are no results."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Indexed pages of the job that match, on every page."
+          },
+          "page": {
+            "type": "integer",
+            "title": "Page"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "Ranked by score, then URL, then page ID; empty beyond the last page."
+          },
+          "indexing": {
+            "$ref": "#/components/schemas/CrawlIndexing",
+            "description": "How much of the job is indexed, counted in the same snapshot as the results. Pages not indexed yet are not searched: while `status` is `pending` or `running`, later searches may find more."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "job_id",
+          "searchable",
+          "total",
+          "page",
+          "page_size",
+          "results",
+          "indexing"
+        ],
+        "title": "SearchResponse",
+        "description": "One page of the results of a search of one crawl job.",
+        "examples": [
+          {
+            "indexing": {
+              "active": 0,
+              "completed_at": "2026-11-07T10:15:05.120Z",
+              "documents_by_status": {
+                "failed": 0,
+                "indexed": 11,
+                "pending": 0,
+                "queued": 0
+              },
+              "documents_total": 11,
+              "status": "indexed"
+            },
+            "job_id": "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b",
+            "page": 1,
+            "page_size": 10,
+            "query": "consumer groups",
+            "results": [
+              {
+                "crawled_at": "2026-11-07T10:15:02.418Z",
+                "highlights": [
+                  {
+                    "end": 8,
+                    "start": 0
+                  },
+                  {
+                    "end": 15,
+                    "start": 9
+                  }
+                ],
+                "indexed_at": "2026-11-07T10:15:03.977Z",
+                "page_id": "0199a1b2-8d4e-7f50-9b0c-1d2e3f4a5b6c",
+                "score": 0.6079271,
+                "snippet": "Consumer groups let several workers share one stream",
+                "title": "Redis Streams",
+                "url": "https://docs.example.com/streams.html"
+              }
+            ],
+            "searchable": true,
+            "total": 1
+          }
+        ]
+      },
+      "SearchResult": {
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Page Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "The page's normalized URL."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "snippet": {
+            "type": "string",
+            "title": "Snippet",
+            "description": "Plain text around the matches, from the title, description, headings or body. Never HTML: render it as text."
+          },
+          "highlights": {
+            "items": {
+              "$ref": "#/components/schemas/HighlightRange"
+            },
+            "type": "array",
+            "title": "Highlights",
+            "description": "Matched words in `snippet`. Offsets count Unicode code points, not UTF-16 code units: in JavaScript, index `Array.from(snippet)`, not the string itself."
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "PostgreSQL `ts_rank` of the page for this query (title and description weigh more than headings, headings more than the body). It orders the results of this search; it is not comparable between queries or jobs."
+          },
+          "crawled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Crawled At",
+            "description": "When the indexed content was fetched."
+          },
+          "indexed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Indexed At",
+            "description": "When the page's search vector was built."
+          }
+        },
+        "type": "object",
+        "required": [
+          "page_id",
+          "url",
+          "title",
+          "snippet",
+          "highlights",
+          "score",
+          "crawled_at",
+          "indexed_at"
+        ],
+        "title": "SearchResult",
+        "description": "One matching page. Only pages whose stored content is indexed are ever returned."
+      },
+      "ServiceInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "api_base_url": {
+            "type": "string",
+            "title": "Api Base Url"
+          },
+          "health_url": {
+            "type": "string",
+            "title": "Health Url"
+          },
+          "docs_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Docs Url"
+          },
+          "openapi_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openapi Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "api_base_url",
+          "health_url",
+          "docs_url",
+          "openapi_url"
+        ],
+        "title": "ServiceInfo",
+        "description": "Entry point describing the service and where to find its endpoints."
+      },
+      "UrlCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "URLs admitted by every job, seeds included (the sum of the jobs' `admitted_count`). Link targets a job never admitted are not counted."
+          },
+          "by_state": {
+            "$ref": "#/components/schemas/UrlStateCounts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "by_state"
+        ],
+        "title": "UrlCounts"
+      },
+      "UrlState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "queued",
+          "in_progress",
+          "fetched",
+          "failed",
+          "skipped",
+          "cancelled"
+        ],
+        "title": "UrlState"
+      },
+      "UrlStateCounts": {
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "in_progress": {
+            "type": "integer",
+            "title": "In Progress"
+          },
+          "fetched": {
+            "type": "integer",
+            "title": "Fetched"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "cancelled": {
+            "type": "integer",
+            "title": "Cancelled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pending",
+          "queued",
+          "in_progress",
+          "fetched",
+          "failed",
+          "skipped",
+          "cancelled"
+        ],
+        "title": "UrlStateCounts",
+        "description": "Number of URLs in each state (of one job, or of every job in the overview)."
+      },
+      "ValidationErrorItem": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Loc"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Msg"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationErrorItem",
+        "description": "One invalid request field."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "service",
+      "description": "Service index and infrastructure liveness probe."
+    },
+    {
+      "name": "health",
+      "description": "Versioned health endpoints."
+    },
+    {
+      "name": "crawls",
+      "description": "Create, inspect, list and cancel crawl jobs, and read the crawl policy (approved targets and job limits) that job creation enforces."
+    },
+    {
+      "name": "overview",
+      "description": "Counts over every crawl job, in one snapshot, for the dashboard."
+    },
+    {
+      "name": "analysis",
+      "description": "Read-only analysis of one crawl job, from its stored results in PostgreSQL; nothing is fetched again. Terms: a *URL* is *discovered* when the job admitted it or a stored page links to it (internally); *admitted* URLs are crawled (or skipped) by the job. A *page* is a fetched HTML document (2xx) the job stored. A *link* is one stored link from a page to a target URL. A *broken link* is an internal link whose target, after its redirects, answered 404 or 410 during the crawl; a link is *unverified* when no HTTP response decides it (never requested, or no response). A *document* is a page's search-index entry (none for `noindex` pages). Details: ADR-0019."
+    },
+    {
+      "name": "search",
+      "description": "Full-text search of one crawl job's indexed pages (PostgreSQL full-text search, ranked with `ts_rank`)."
+    }
+  ]
+}

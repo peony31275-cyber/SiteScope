@@ -30,8 +30,12 @@
 > - Phase 8: the search and website-analysis REST APIs: `GET /api/v1/search`, and read-only pages,
 >   links (each classified), confirmed broken links, link graph and statistics of a job, computed
 >   from its stored crawl results (sections 3, 4, 13, ADR-0019).
+> - Phase 9: the React dashboard (`frontend/`): crawl jobs (create, follow live, cancel), search,
+>   website analysis and the link graph, on the REST API from the dashboard's own origin, with
+>   types generated from the OpenAPI document; two read-only endpoints for it,
+>   `GET /api/v1/crawl-policy` and `GET /api/v1/overview` (sections 3, 12.6, 12.7, 15, 18,
+>   ADR-0020).
 >
-> The dashboard is not implemented yet.
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
 > [`adr/`](adr/README.md).
@@ -129,7 +133,7 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
 
 | Component | Process / entrypoint | Responsibilities | Scaling |
 |---|---|---|---|
-| Dashboard | static SPA behind nginx | create and cancel jobs; show progress, pages, link reports, search | n/a |
+| Dashboard (Phase 9) | `frontend/`: static SPA (React, Vite); development: `npm run dev`; Phase 11: behind nginx | create and cancel jobs; follow crawl and indexing progress (bounded polling); search; website analysis (statistics, pages, links, broken links); link graph; deployment overview | static files, n/a |
 | API | `api`: `uvicorn app.main:app` | input validation, job commands, read models; since Phase 8 search and read-only website analysis (pages, links, broken links, link graph, statistics) | stateless, N replicas |
 | Scheduler (Phase 5) | `scheduler`: `python -m app.scheduler` | job activation, crawl dispatch, BFS level advancement, job completion, reconciliation, stream maintenance | 1..N, no leader (ADR-0016) |
 | Index dispatcher (Phase 7) | `index-dispatcher`: `python -m app.scheduler.index_dispatcher` | publishes pending search documents, republishes lost index tasks, completes the indexing of finished jobs, maintains the index stream; starts no job | 1..N, no leader (ADR-0018) |
@@ -248,6 +252,32 @@ It never starts a job or touches crawl state, so it is safe to run where the sch
   acknowledges after the commit. Section 10.8 lists every disposition.
 - Never reads page text into the process: the vector is built in PostgreSQL. Each task holds one
   database connection at a time; `SITESCOPE_INDEX_CONCURRENCY` tasks run at once.
+
+### 3.1 Dashboard (Phase 9)
+
+`frontend/` ([ADR-0020](adr/0020-dashboard-same-origin-typed-client.md); its README has the
+details) is a single-page React application. It holds no state of its own beyond the viewer's
+preferences: every number comes from the API, and the address holds the view (`?job=`, filters,
+tabs, search terms), so a view can be shared.
+
+- **API access.** The browser calls `/api/v1` on the dashboard's own origin; the Vite server
+  (development, preview) or nginx (deployment) proxies it to the API, so no CORS is needed and no
+  address comes from user input. `lib/api/client.ts` builds URLs with `URLSearchParams`, applies
+  timeouts and cancellation, and turns RFC 9457 problems into typed errors.
+- **Types** are generated from the OpenAPI document (`app/api/openapi_export.py` writes the
+  snapshot, `openapi-typescript` generates `schema.d.ts`); a backend test fails while the
+  snapshot is stale.
+- **Server state** lives in TanStack Query: one request per key at a time, newer requests cancel
+  older ones, transient failures retried twice with backoff. Polling follows the job lifecycle
+  (section 7.1 and 7.3): the viewer's interval while the crawl is active, slower while only its
+  indexing runs, none once both are over or the tab is hidden; a job whose reads show no change
+  for several minutes' worth of refreshes pauses its polling and says which process is probably
+  not running (reads are counted, so time in a hidden tab never counts).
+- **Two read-only endpoints** were added for it: `GET /api/v1/crawl-policy` (the approved
+  targets and job limits that job creation enforces) and `GET /api/v1/overview` (every job,
+  admitted URL, stored page and search document counted in one read-only snapshot, under the
+  analysis time limit). The job listing still has no totals; each listed row reads its job's
+  detail.
 
 ## 4. End-to-end flow
 
@@ -1312,17 +1342,25 @@ rows are implemented by the safe fetcher and the parser (Phase 3), the politenes
 
 - Crawled titles, snippets, anchor text, and URLs are rendered as text through React's escaping.
   `dangerouslySetInnerHTML` is never used for crawled content.
-- Search highlighting: `ts_headline` uses sentinel delimiters instead of HTML tags, and the frontend
-  splits on them to render `<mark>` elements. Sentinel characters are removed from page text before
-  indexing.
+- Search highlighting: the API returns plain-text snippets and `[start, end)` ranges of Unicode
+  code points (Phase 8). The dashboard splits the snippet with `Array.from`, clamps and merges the
+  ranges, and renders each part as text, inside `<mark>` or not (Phase 9).
 - A crawled URL is rendered as a link only if it is http(s), and always with
-  `rel="noopener noreferrer nofollow"`.
+  `rel="noopener noreferrer nofollow"` in a new tab; anything else stays text.
+- A lint rule rejects `dangerouslySetInnerHTML`, and the dashboard's tests check that markup in
+  crawled titles and snippets is shown as text.
 
 ### 12.7 API surface and secrets
 
 - Every input is validated with Pydantic, request sizes are limited, and server-side caps apply.
 - In public deployments, mutating endpoints can require a bearer token. Read endpoints are public.
-- Job creation is rate-limited per client, and CORS is restricted to the dashboard origin.
+- Job creation is rate-limited per client (Phase 11; not implemented yet). The dashboard calls the
+  API on its own origin through a reverse proxy, so the API sends no CORS headers (Phase 9,
+  ADR-0020); a deployment that splits the origins needs an explicit allowlist, never a wildcard.
+  CORS is not authentication.
+- `GET /api/v1/crawl-policy` exposes the approved host patterns, schemes, ports and job limits:
+  the targets of a public demo are public anyway. Internal fetch origins and every other setting
+  stay private.
 - Errors are returned as `application/problem+json` without internal details. SQL is issued only with
   bound parameters.
 - Configuration comes from environment variables. `.env` is git-ignored, and secrets never appear in
@@ -1528,7 +1566,8 @@ unless-stopped`. Phase 11 runs the full stack.
 - One backend image runs every Python role (with different commands) as a non-root user.
 - In the public profile, the `crawl` network has no general internet egress.
 - Before Phase 11, the Python processes run on Windows from `backend/.venv` against the PostgreSQL and
-  Redis containers started by Compose. `backend/compose.yaml` therefore still defines only those two
+  Redis containers started by Compose, and the dashboard runs on the Vite server (`npm run dev`,
+  which proxies `/api` to the API as nginx will). `backend/compose.yaml` therefore still defines only those two
   services in Phase 7: the index dispatcher and indexers are started like the scheduler and the
   crawler workers (`docs/development.md`).
 - Connections: each process opens at most `SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW`
@@ -1580,7 +1619,8 @@ SITESCOPE/
 |       |-- unit/
 |       |-- integration/
 |       `-- fault/               # Phase 5: crash and outage recovery with real processes
-|-- frontend/                    # Phase 9 (currently empty)
+|-- frontend/                    # Phase 9: React + TypeScript dashboard (src/app, components,
+|                               #   features, hooks, lib/api), Vitest tests, e2e/ (Playwright)
 |-- demo-site/                   # Phase 4: static site + robots.txt; Phase 11: its container
 |-- benchmarks/                  # Phase 5: distributed throughput; Phase 10: the full set
 `-- docs/
@@ -1624,7 +1664,7 @@ SITESCOPE/
 | Logging | stdlib `logging` + a JSON formatter | no extra dependency |
 | Tests | pytest with warnings treated as errors; Starlette's TestClient (needs `httpx2`); AnyIO's bundled pytest plugin for async tests; the HTTP client's mock transport for crawler tests | no extra plugin dependency: AnyIO is already installed with Starlette |
 | Quality | ruff (lint and format), mypy | |
-| Frontend | React + TypeScript + Vite; Vitest + Testing Library | |
+| Frontend | React 19 + TypeScript 5.9 + Vite 8; Tailwind CSS 4; React Router 8; TanStack Query 5; Recharts 3; Vitest + Testing Library; Playwright (installed Edge) | server state with request deduplication, cancellation and bounded polling; charts with an accessibility layer; no other UI framework (ADR-0020) |
 | Delivery | Docker Compose; GitHub Actions with PostgreSQL and Redis service containers | |
 
 ## 18. Testing strategy
@@ -1647,7 +1687,8 @@ SITESCOPE/
 | Indexing and search (Phase 7) | the indexing outbox (dispatch inside the transaction, `SKIP LOCKED`, rollback after `XADD`); attempts and leases; the weighted vector, size limits and the fallback; stale-index prevention with every interleaving forced by row locks; triggers; job indexing completion and reindexing; reconciliation; the indexer's dispositions in-process (duplicates, dead letters, a lost `XACK`, an abandoned attempt, a poison document, a PostgreSQL outage); relevance, ties, paging, visibility, isolation, snippets and awkward queries | PostgreSQL, Redis |
 | Processes (Phase 7) | real scheduler, crawler worker, index dispatcher and indexer processes: crawl, persist, publish, index and search a local site; an indexer killed mid-attempt; an index dispatcher killed between `XADD` and commit; Redis and PostgreSQL cut off; a job cancelled during indexing; `FLUSHALL` of a disposable Redis container after the dispatch | PostgreSQL, Redis, Docker (WSL), local servers |
 | End-to-end | crawl a local fixture site over real HTTP, then check search results (Phase 7) and, through the HTTP API, the pages, links, broken links, link graph, statistics and search of the demo site (Phase 8, `tests/fault/test_api_end_to_end.py`) | full stack |
-| Frontend | components and the API client; type check; production build | Node.js |
+| Frontend (Phase 9) | the API client (URLs, problems, timeouts, cancellation), Unicode highlight ranges, the polling rules and their lifecycle on fake timers, the job form (policy checks, idempotent retries), cancellation answers, cursor walks, link classes, the graph layout and node details, the shell; against a fake API (a test double of `fetch`); type check, lint (with accessibility rules), production build | Node.js |
+| Dashboard end to end (Phase 9) | `tests/dashboard_stack.py --e2e`: the real API and processes on a disposable database, the demo site and a slow site; Playwright in the installed Edge creates a job in the form, follows it to fully indexed, searches, reads the analysis and the graph, cancels a running crawl, and checks that no page scrolls sideways | PostgreSQL, Redis, Node.js, Edge |
 
 Tests that need unavailable services skip with an explicit reason. Benchmarks are kept separate from
 tests: fixed parameters, a recorded environment, and raw output committed to the repository
@@ -1750,7 +1791,12 @@ the development Redis, whose test database 15 would not isolate it.
   500,000 links on the development machine); the link graph's response can reach about a megabyte
   at its maximum limits; responses are not cached (Phase 8).
 - A client that retries job creation without an `Idempotency-Key` creates a second job; keys are
-  remembered for 24 hours by default.
+  remembered for 24 hours by default. The dashboard always sends one, and reuses it when it retries
+  a submission whose outcome it does not know (Phase 9).
+- The dashboard (Phase 9) has no authentication, and job creation is not rate-limited: a public
+  deployment needs both (Phase 11). A job list page reads one job detail per row (at most one page
+  of rows); the overview counts whole tables under the analysis time limit; listing walks are kept
+  in memory (a reload starts from the first page).
 
 ## 20. Decision records
 
@@ -1775,3 +1821,4 @@ the development Redis, whose test database 15 would not isolate it.
 | [0017](adr/0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation |
 | [0018](adr/0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes |
 | [0019](adr/0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs |
+| [0020](adr/0020-dashboard-same-origin-typed-client.md) | The dashboard: a same-origin client typed from the OpenAPI document, with bounded polling |

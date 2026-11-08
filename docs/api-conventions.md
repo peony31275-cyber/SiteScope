@@ -69,7 +69,7 @@ Every error response has the media type `application/problem+json`. For example:
 | 500 | `internal_error` | An unexpected error. Details appear only in the server logs, never in the response. |
 | 503 | `dependency_unavailable` | PostgreSQL or Redis is unreachable, or rejected the connection. Sent with `Retry-After: 5`. Ordinary SQL errors are never reported this way. |
 | 503 | `search_timeout` | A search took longer than `SITESCOPE_SEARCH_TIMEOUT_SECONDS` (5 s by default) and was stopped (Phase 8). A PostgreSQL connection that times out is `dependency_unavailable` instead. |
-| 503 | `analysis_timeout` | An analysis request took longer than `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS` (10 s by default) and was stopped (Phase 8). A PostgreSQL connection that times out is `dependency_unavailable` instead. |
+| 503 | `analysis_timeout` | An analysis request (Phase 8), or the overview (Phase 9), took longer than `SITESCOPE_ANALYSIS_TIMEOUT_SECONDS` (10 s by default) and was stopped. A PostgreSQL connection that times out is `dependency_unavailable` instead. |
 | other | status name in `snake_case` | For example, 403 → `forbidden` |
 
 ### Validation errors
@@ -152,6 +152,7 @@ change; a search during indexing may find more on a later request.
 | `GET /api/v1/crawls` | `200`: a page of jobs, newest first | `422`, `503` |
 | `GET /api/v1/crawls/{job_id}` | `200`: the job and its progress | `404`, `422` (malformed ID), `503` |
 | `POST /api/v1/crawls/{job_id}/cancel` | `202` while the job is `cancelling`; `200` once it is `cancelled`, or if it was already finished | `404`, `422` (malformed ID), `503` |
+| `GET /api/v1/crawl-policy` | `200`: the approved targets and job limits (Phase 9) | none |
 
 Creating a job:
 
@@ -224,6 +225,28 @@ statement:
   others are searchable). It never changes the job's own `status`: a job is fully complete when
   its `status` is `completed` and its indexing `status` is `indexed`.
 - `completed_at`: when the indexing of the finished job was found complete; `null` until then.
+
+**The crawl policy** (Phase 9). `GET /api/v1/crawl-policy` returns what `POST /api/v1/crawls`
+accepts on this server, read from its settings; nothing is resolved or fetched. The dashboard's
+job form uses it to offer the approved targets and to check the limits before it sends:
+
+```json
+{
+  "approved_hosts": ["docs.example.com", "*.example.org"],
+  "allowed_schemes": ["https"],
+  "allowed_ports": [443],
+  "max_depth_limit": 5,
+  "max_pages_limit": 1000
+}
+```
+
+- `approved_hosts` are the normalized patterns of `SITESCOPE_CRAWL_ALLOWED_HOSTS` (ADR-0012):
+  `docs.example.com` approves exactly that host, `*.example.org` its subdomains but not
+  `example.org`. An empty list approves nothing.
+- `allowed_schemes` and `allowed_ports` apply to every approved host; a URL's port is its explicit
+  port or its scheme's default.
+- It is guidance for clients: the server checks every creation request again. Internal fetch
+  origins (`SITESCOPE_FETCH_INTERNAL_ORIGINS`) and every other setting stay private.
 
 ## Search (Phase 8)
 
@@ -385,6 +408,46 @@ pages are known, so an `in_degree` of 0 never proves that nothing links to a URL
 - `most_linked`: the 10 URLs with the most stored internal links to them (one per linking page),
   most first, then by URL.
 
+## Overview (Phase 9)
+
+`GET /api/v1/overview` counts every crawl job by status, every admitted URL by state, the stored
+pages, and the search documents by status, in one read-only REPEATABLE READ snapshot, so the
+numbers agree with each other. It takes no parameters. Errors: `503` with `analysis_timeout` (the
+same time limit as the analysis endpoints) or `dependency_unavailable`.
+
+```json
+{
+  "jobs": {
+    "total": 4,
+    "by_status": {"queued": 0, "running": 1, "cancelling": 0, "completed": 2, "failed": 0, "cancelled": 1}
+  },
+  "urls": {
+    "total": 52,
+    "by_state": {"pending": 3, "queued": 2, "in_progress": 1, "fetched": 40, "failed": 1, "skipped": 2, "cancelled": 3}
+  },
+  "pages_stored": 36,
+  "documents": {
+    "total": 34,
+    "by_status": {"pending": 1, "queued": 2, "indexed": 31, "failed": 0},
+    "active": 1
+  },
+  "counted_at": "2026-11-07T10:15:05.120Z"
+}
+```
+
+- `jobs.by_status` is the crawl's status of each job; indexing is counted in `documents`.
+- `urls.total` counts the URLs every job admitted, seeds included (the sum of `admitted_count`).
+  Link targets a job never admitted are not counted: discovered URLs are a per-job statistic
+  (`crawl.urls_discovered` of `GET /api/v1/crawls/{job_id}/stats`).
+- `documents`: one per stored page except `noindex` pages; `active` counts those an indexer is
+  working on now.
+- `counted_at` is when the snapshot was read, by the database clock.
+- Each count reads its whole table (`crawl_jobs`, `crawl_urls`, `pages`, `search_documents`), so
+  the time grows with the deployment's data. Nothing is cached or estimated.
+
+The job listing (`GET /api/v1/crawls`) still has no totals: a client must not add up a page of
+jobs and call it a total.
+
 ## Health endpoints
 
 | Endpoint | Purpose | Checks dependencies? |
@@ -428,3 +491,8 @@ dashboards parse a single shape:
 Error responses are documented with the `ProblemDetails` schema instead of FastAPI's default
 validation schema. FastAPI lists that schema under `application/json`; the actual responses use
 `application/problem+json`.
+
+The dashboard's TypeScript types are generated from this document (Phase 9): a snapshot is
+committed as `frontend/src/lib/api/openapi.json` (`python -m app.api.openapi_export`), and the
+unit test `tests/unit/api/test_openapi_snapshot.py` fails while it differs from what the API
+serves.

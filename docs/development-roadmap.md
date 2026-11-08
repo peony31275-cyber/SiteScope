@@ -19,7 +19,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 6 | Fault tolerance and recovery | **Done** (2026-11-07) |
 | 7 | Asynchronous search indexing | **Done** (2026-11-08) |
 | 8 | Search and analysis APIs | **Done** (2026-11-08) |
-| 9 | React dashboard | Not started |
+| 9 | React dashboard | **Done** (2026-11-08) |
 | 10 | Testing, benchmarking, and observability | Not started |
 | 11 | Final deployment and documentation | Not started |
 
@@ -38,21 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 8
+## Repository state after Phase 9
 
-Updated on 2026-11-08 (Phase 8). The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08 (Phase 9). The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9). |
 | `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7) and `0005` (two indexes widened for the analysis queries; Phase 8). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 1985 tests: 1373 unit, 612 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container). |
+| `backend/tests/` | 2000 tests: 1382 unit, 618 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
 | `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), and the analysis latency benchmark with its index A/B (Phase 8), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
-| `frontend/` | Empty. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0019, API conventions, development guide. |
+| `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 162 Vitest tests; Playwright end-to-end specs for the real stack. Renamed from the misspelled `fronted/` in Phase 1. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0020, API conventions, development guide. |
 | `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
@@ -1226,22 +1226,126 @@ filters. Each made its test fail; every file was restored and checked by hash.
 
 ### Phase 9: React dashboard
 
-**Needs.** Node.js (installed).
+**Status: done (2026-11-08).** Design: [ADR-0020](adr/0020-dashboard-same-origin-typed-client.md);
+details and commands: `frontend/README.md` and [development.md](development.md), "Dashboard".
 
-**Scope**
+**Delivered**
 
-- A Vite + React + TypeScript app.
-- A jobs list and a create-job form limited to approved targets and caps.
-- A job detail page with polled progress (state counts, current level, budget, indexing progress),
-  the page list, and link reports.
-- A search page with safe highlighting.
-- Loading, error, and empty states.
+- **The dashboard** (`frontend/`): Vite 8, React 19, TypeScript 5.9 (strict), Tailwind CSS 4,
+  React Router 8, TanStack Query 5, Recharts 3, lucide-react. Five views in a shell with a
+  sidebar, a header (page title, job selector, API readiness, auto-refresh interval, refresh) and
+  loading, empty, error and retry states everywhere:
+  - **Overview:** counts over every job (jobs by status, admitted and failed URLs, stored pages,
+    indexed documents), the crawl status and indexing charts, the newest job's HTTP status and
+    BFS depth distributions, the recent jobs.
+  - **Crawl jobs:** the creation form (approved targets offered from the server's crawl policy;
+    every value checked against the policy and sent unchanged; an `Idempotency-Key` per
+    submission, reused when the outcome of a request is unknown), the cursor-paged job list with
+    each row's progress and indexing status, and the job detail (configuration, crawl progress,
+    URL states, indexing progress, failures, timestamps, cancellation).
+  - **Search explorer:** ranked results with plain-text snippets, highlights from code-point
+    ranges, scores, numbered pages up to the deepest page served, stop-word and empty-result
+    states, indexing-in-progress notes.
+  - **Site analysis:** statistics (discovered and admitted URLs, pages, depth, successes and
+    failures; HTTP status classes including 1xx; depth distribution; indexing; links by class with
+    verified and unverified kept apart; most linked URLs), and cursor-paged pages, links (filters:
+    class, verified, internal, redirected, source page) and confirmed broken links.
+  - **Link explorer:** the bounded internal link graph in SVG, laid out by BFS depth, with pan,
+    zoom, node selection (outgoing and incoming links), node details from the API only, a
+    keyboard-reachable node list, a truncation warning with the real totals, and no orphan claim.
+- **Polling** by job lifecycle: the viewer's interval (default 3 s) while the crawl is active,
+  twice that (at least 5 s) while only indexing runs, none once settled; nothing in hidden tabs or
+  after a page is left; a pause, with the reason, when a job shows no change for minutes.
+- **Backend additions** (read-only, with tests): `GET /api/v1/crawl-policy` (approved targets and
+  limits from the settings job creation enforces), `GET /api/v1/overview` (counts over every job
+  in one read-only REPEATABLE READ snapshot under the analysis time limit; `read_only_snapshot`
+  extracted from the analysis service for it), `python -m app.api.openapi_export` (the OpenAPI
+  snapshot the frontend's types are generated from) and a test that fails while the snapshot is
+  stale, `Cluster.api()` and `tests/dashboard_stack.py` (the whole stack on a disposable
+  database for the end-to-end run). No CORS: the dashboard uses the API's origin through a proxy.
 
 **Tests**
 
-- Vitest + Testing Library for components and the API client.
-- `tsc --noEmit`.
-- A production build.
+- **Frontend unit and component tests** (Vitest 5, React Testing Library, jsdom; 162 in 15 files):
+  the API client (URLs and encoding, problem documents, proxy errors, network failures, timeouts,
+  cancellation, readiness 503), error descriptions (reads and actions), Unicode highlights (ASCII,
+  Chinese, emoji, supplementary-plane characters, several, overlapping and out-of-range ranges),
+  the polling rules and their lifecycle on fake timers (interval, stop when settled, hidden tab,
+  unmount, pause and resume, a failed refresh), the job form (policy checks, IPv6, exact values,
+  idempotent retries, server field errors, focus), the job list (cursor pages, page size, outage
+  and retry), the job detail (separate crawl and indexing states, failures, not found) and
+  cancellation (confirmation, 202, 200, a job that ended first, errors, focus, never another
+  job's dialog), search (requests, highlights, markup shown as text, empty and stop-word queries,
+  page limits, validation errors, timeouts, job switch), analysis (statistics, 1xx, link classes,
+  confirmed broken links only, filters and cursors, tabs), the graph (layout, node kinds,
+  selection from the list and the drawing, truncation, limits), the shell (navigation, job
+  selection, API status, not found, drawer, auto-refresh), the overview, and the components
+  (dialog focus and Escape, safe links, meters). The API is a test double of `fetch`
+  (`src/tests/fakeApi.ts`) with fixtures typed by the generated schema.
+- **Backend** (15 more tests; 2000 in all): the crawl policy (defaults, normalization, the limits
+  job creation enforces, nothing private), the overview (counts over four kinds of jobs, an empty
+  deployment, one snapshot under a concurrent commit, the transaction settings, a statement
+  timeout, HTTP), the snapshot test of the OpenAPI document, and the overview in the read-timeout
+  tests.
+- **End to end with the real stack** (`python -m tests.dashboard_stack --e2e`; Playwright 1.65 in
+  the installed Microsoft Edge 157): 8 tests against the API, PostgreSQL, Redis, the scheduler,
+  two crawler workers, the index dispatcher and two indexers on a disposable database, with the
+  demo site and a slow site on 127.0.0.x: the dashboard reaches the API; a job created in the form
+  is crawled and fully indexed while its page follows it, and every number shown equals the API's
+  (14 URLs, 12 pages, 11 indexed); search (a match marked, `noindex` pages absent); the statistics,
+  the one confirmed broken link (`/about.html` to `/missing.html`, 404) and a robots-blocked link
+  shown as unverified; the link graph (15 nodes, 24 links, a selected node's details, the
+  truncation warning at 5 nodes); a running crawl of the slow site cancelled through the dialog
+  and confirmed `cancelled` by the API; no page scrolls sideways at 1440 or 390 pixels; unknown
+  jobs and pages. Opt-in screenshots of every page (`E2E_SCREENSHOTS=1`) served the visual
+  review.
+
+**Visual review.** Screenshots of every page at desktop and phone widths showed tables widening
+the page: screen-reader-only text inside a table (absolutely positioned) escaped its scroll
+container, and a control's full-width class beat the width given to it. Both fixed; the
+end-to-end suite now checks every page for sideways scrolling.
+
+**Independent review** (read-only; it ran the frontend tests, type check and lint, and the backend
+unit tests, ruff and mypy). One high-severity finding, four medium, and low ones; all fixed, the
+confirmed ones with regression tests:
+
+1. **High:** the cancel dialog could cancel another job. On a job's page, with the dialog open,
+   the browser's back button to a job already cached kept the dialog open for that job. The job
+   page now renders one component tree per job (`key`), and the dialog names the job.
+2. Short job IDs were the first 8 characters of UUIDv7 IDs: a timestamp, the same for jobs
+   created within about a minute. They are the random tail now.
+3. The stall guard was a wall-clock timer: a tab hidden for five minutes (no polling) came back
+   paused. It counts unchanged reads now (`useStallWatch`), so hidden time never counts.
+4. Search kept another job's results on screen while the newly selected job's search ran.
+5. An edit that changed nothing replaced the `Idempotency-Key` of an uncertain submission, so a
+   retry could create a second job. Requests are compared by value now.
+6. Low: an approved IPv6 target could not be entered (the server keeps brackets); error texts for
+   actions promised automatic retries (and error notifications vanished after 10 s); prototype
+   keys passed the link-class filter; statistics stopped refreshing while indexing still ran; the
+   graph re-centered on a stale node after a reload and could not fit very tall graphs; the client
+   gave up on slow analysis requests before the server's limit and retried them; every table row
+   re-rendered each second; invalid fields were not focused, and focus was lost after a
+   cancellation; tabs referenced panels that were not rendered; the auto-refresh selector could
+   show another interval than the one in use; clearing the job selection did not stick; never
+   requested targets read "no response"; the stack runner's cleanup could stop early (a second
+   Ctrl+C, a failed migration, a Redis error) and did not pin the API path of the build; two
+   schema descriptions said "the job's" where the overview counts every job.
+
+**Mutation check.** Nine of the review's defects were put back into the code one at a time; each
+made its regression test fail, and every file was restored and checked by hash.
+
+**Known limitations**
+
+- No authentication, and job creation is not rate-limited: a public deployment needs both
+  (Phase 11, architecture section 12.7). The approved-target model is unchanged: the form only
+  guides, the server enforces.
+- A job list page reads one job detail per row (bounded by the page size); the overview counts
+  whole tables under the analysis time limit. Batched summaries would be the next step for much
+  larger deployments.
+- Cursor walks are kept in memory: a reload starts a listing from its first page.
+- The graph is drawn in SVG; at the API's maximum limits (2000 nodes, 10000 links) the first
+  drawing takes noticeably longer than at the defaults (300, 1500).
+- Dark theme only; English only.
 
 ### Phase 10: Testing, benchmarking, and observability
 

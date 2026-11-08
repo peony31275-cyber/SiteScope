@@ -88,7 +88,7 @@ class CrawlJobSummary(BaseModel):
 
 
 class UrlStateCounts(BaseModel):
-    """Number of the job's URLs in each state."""
+    """Number of URLs in each state (of one job, or of every job in the overview)."""
 
     pending: int
     queued: int
@@ -116,7 +116,8 @@ class CrawlProgress(BaseModel):
 
 
 class DocumentStatusCounts(BaseModel):
-    """Number of the job's search documents (one per indexable page) in each status."""
+    """Number of search documents (one per indexable page) in each status (of one job, or of
+    every job in the overview)."""
 
     pending: int = Field(description="Waiting to be published to the indexers.")
     queued: int = Field(description="Published; an indexer has not finished it yet.")

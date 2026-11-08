@@ -33,6 +33,7 @@ Conventions:
 | [0017](0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation | Accepted |
 | [0018](0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes | Accepted; extended by 0019 |
 | [0019](0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs | Accepted |
+| [0020](0020-dashboard-same-origin-typed-client.md) | The dashboard: a same-origin client typed from the OpenAPI document, with bounded polling | Accepted |
 
 ## Template
 

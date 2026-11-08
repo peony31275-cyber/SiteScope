@@ -37,6 +37,9 @@ def test_openapi_document_lists_every_endpoint(client: TestClient) -> None:
         ("GET", "/api/v1/crawls/{job_id}/link-graph"): "get_crawl_link_graph",
         ("GET", "/api/v1/crawls/{job_id}/stats"): "get_crawl_stats",
         ("GET", "/api/v1/search"): "search_pages",
+        # Phase 9: the dashboard's crawl form and overview.
+        ("GET", "/api/v1/crawl-policy"): "get_crawl_policy",
+        ("GET", "/api/v1/overview"): "get_overview",
     }
 
 
@@ -50,6 +53,8 @@ def test_crawl_errors_are_documented_as_problem_details(client: TestClient) -> N
         ("GET", "/api/v1/crawls/{job_id}"): {"200", "404", "422", "503"},
         ("POST", "/api/v1/crawls/{job_id}/cancel"): {"200", "202", "404", "422", "503"},
         **{key: {"200", "404", "422", "503"} for key in ANALYSIS_AND_SEARCH},
+        ("GET", "/api/v1/crawl-policy"): {"200"},  # reads settings only
+        ("GET", "/api/v1/overview"): {"200", "503"},  # no parameters to validate
     }
     for (method, path), statuses in documented.items():
         responses = paths[path][method.lower()]["responses"]

@@ -370,6 +370,20 @@ class Cluster:
     def indexers(self) -> list[ManagedProcess]:
         return [process for process in self.processes if process.name.startswith("indexer")]
 
+    def api(self, port: int) -> ManagedProcess:
+        """The API server (uvicorn) on 127.0.0.1:``port`` (Phase 9: the dashboard's end-to-end
+        run, ``tests/dashboard_stack.py``). It logs no start event: wait for its /health."""
+        return self._spawn(
+            "api",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--no-access-log",
+        )
+
     def _spawn(self, role: str, module: str, *arguments: str) -> ManagedProcess:
         self._counts[role] += 1
         name = f"{role}-{self._counts[role]}"

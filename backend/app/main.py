@@ -25,7 +25,15 @@ logger = logging.getLogger(__name__)
 OPENAPI_TAGS = [
     {"name": "service", "description": "Service index and infrastructure liveness probe."},
     {"name": "health", "description": "Versioned health endpoints."},
-    {"name": "crawls", "description": "Create, inspect and list crawl jobs."},
+    {
+        "name": "crawls",
+        "description": "Create, inspect, list and cancel crawl jobs, and read the crawl policy "
+        "(approved targets and job limits) that job creation enforces.",
+    },
+    {
+        "name": "overview",
+        "description": "Counts over every crawl job, in one snapshot, for the dashboard.",
+    },
     {
         "name": "analysis",
         "description": "Read-only analysis of one crawl job, from its stored results in "
