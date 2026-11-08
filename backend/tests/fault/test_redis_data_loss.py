@@ -157,8 +157,16 @@ async def test_the_crawl_survives_a_redis_that_lost_all_its_data(
     site = tree_site(depth=2, branching=4, delay=0.5)  # 21 pages, about 5 s with 2 per host
     try:
         async with LocalHttpServer(site.routes) as server:
+            # A dispatch window wider than the workers' task slots (as before ADR-0022), so that
+            # dispatched tasks still wait in the stream when Redis loses its data and the
+            # reconciler must publish them again. With the default window (two tasks per
+            # politeness slot) the workers claim every dispatched task at once, and nothing
+            # waits to be lost (docs/performance.md, "Recovery from failures").
             cluster = clusters(
-                hosts=[HOST], ports=[server.port], settings=disposable_redis.settings
+                hosts=[HOST],
+                ports=[server.port],
+                settings=disposable_redis.settings,
+                extra={"SCHEDULER_TASKS_PER_HOST_SLOT": "50"},
             )
             processes = [cluster.scheduler(), cluster.worker(), cluster.worker()]
             await cluster.started(*processes)

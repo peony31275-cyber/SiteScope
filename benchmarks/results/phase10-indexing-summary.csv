@@ -1,0 +1,7 @@
+variant,gin_fastupdate,indexers,pages_per_s_median,min,max,seconds_median,latency_p50_s_median
+current,off,1,143.5,142.9,144.6,13.94,6.81
+current,off,2,193.5,189.6,205.1,10.33,5.01
+current,off,4,236.7,228.1,238.9,8.45,4.43
+current,on,1,151.9,151.5,153.7,13.16,6.77
+current,on,2,217.0,198.5,217.3,9.22,4.88
+current,on,4,266.3,245.3,267.8,7.51,4.06

@@ -206,7 +206,9 @@ async def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        json.dumps({"environment": environment, "runs": runs}, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"environment": environment, "runs": runs}, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
 
 

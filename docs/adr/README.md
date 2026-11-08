@@ -34,6 +34,9 @@ Conventions:
 | [0018](0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes | Accepted; extended by 0019 |
 | [0019](0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs | Accepted |
 | [0020](0020-dashboard-same-origin-typed-client.md) | The dashboard: a same-origin client typed from the OpenAPI document, with bounded polling | Accepted |
+| [0021](0021-operational-metrics-and-process-heartbeats.md) | Operational metrics from the source of truth, and process heartbeats in Redis | Accepted |
+| [0022](0022-dispatch-window-follows-host-politeness.md) | A job's dispatch window follows its host's politeness slots | Accepted |
+| [0023](0023-whole-job-statements-use-hash-joins.md) | The level admission and the analysis reads are planned with hash joins | Accepted |
 
 ## Template
 

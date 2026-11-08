@@ -12,8 +12,15 @@ import pytest
 from app.core.config import Settings
 from app.db.models import JobStatus, UrlState
 from app.queue.messages import CrawlTask
-from app.services.crawl_state import UrlStatus
-from app.workers.crawler import Disposition, Handled, Retry, WorkerConfig, judge_unclaimed
+from app.services.crawl_state import UrlResult, UrlStatus
+from app.workers.crawler import (
+    Disposition,
+    Handled,
+    Retry,
+    WorkerConfig,
+    failure_category,
+    judge_unclaimed,
+)
 
 JOB = uuid.uuid4()
 URL = uuid.uuid4()
@@ -134,3 +141,34 @@ def test_every_worker_config_gets_its_own_name() -> None:
 def test_worker_config_rejects_unsafe_timing(values: dict[str, float]) -> None:
     with pytest.raises(ValueError, match="must"):
         WorkerConfig(**values)  # type: ignore[arg-type]  # parametrized keyword values
+
+
+# --- failure_category (Phase 10) -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("state", "outcome", "http_status", "category"),
+    [
+        (UrlState.FETCHED, "html_stored", 200, None),
+        (UrlState.FETCHED, "redirect", 301, None),
+        (UrlState.FETCHED, "http_error", 404, "http_4xx"),
+        (UrlState.FETCHED, "http_error", 503, "http_5xx"),
+        (UrlState.FETCHED, "too_large", 200, "content"),
+        (UrlState.SKIPPED, "robots_disallowed", None, "policy"),
+        (UrlState.SKIPPED, "target_not_allowed", None, "policy"),
+        (UrlState.FAILED, "read_timeout", None, "timeout"),
+        (UrlState.FAILED, "deadline_exceeded", None, "timeout"),
+        (UrlState.FAILED, "connection_error", None, "network"),
+        (UrlState.FAILED, "tls_error", None, "network"),
+        (UrlState.FAILED, "rate_limited", None, "politeness"),
+        (UrlState.FAILED, "infrastructure_error", None, "infrastructure"),
+        (UrlState.FAILED, "parse_error", 200, "parse"),
+        (UrlState.FAILED, "too_many_redirects", None, "other"),
+    ],
+)
+def test_failure_categories_are_a_small_fixed_set(
+    state: UrlState, outcome: str, http_status: int | None, category: str | None
+) -> None:
+    result = UrlResult(state, outcome, http_status=http_status)
+
+    assert failure_category(result) == category

@@ -64,7 +64,7 @@ import math
 import re
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Final
@@ -127,6 +127,12 @@ class Lease:
     attempt: int  # attempt_count after this claim
     allowed_hosts: tuple[str, ...]  # the job's scope
     takeover: bool  # the claim took over an expired lease
+    # Seconds from the URL's last publish to this claim, by the database clock (Phase 10): only
+    # for a claim of a queued URL (a takeover's delay would include the lost attempt). A
+    # republish by the reconciliation resets dispatched_at, so time lost with a message is not
+    # in it: the reconciliation's republish count shows that. A measurement, not part of the
+    # lease: equality ignores it.
+    queued_seconds: float | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,7 +408,8 @@ _CLAIM_LOCK = text("SELECT 1 FROM crawl_urls WHERE id = :url_id FOR NO KEY UPDAT
 
 # T4 (architecture, section 9). The token is the incremented lease_epoch, returned to the
 # claimant; old.* (PostgreSQL 18) tells a takeover from a first claim. A message names its job,
-# and the claim matches only that job (:job_id NULL matches any).
+# and the claim matches only that job (:job_id NULL matches any). queued_seconds (Phase 10) is
+# the time since the dispatch, by the database clock; the claim does not change dispatched_at.
 _CLAIM = text(
     """
     UPDATE crawl_urls AS u
@@ -421,7 +428,8 @@ _CLAIM = text(
            OR (u.state = 'in_progress' AND u.lease_expires_at < clock_timestamp()))
     RETURNING u.lease_epoch, u.job_id, u.normalized_url, u.depth, u.redirect_hops,
               u.attempt_count, j.allowed_hosts,
-              old.state AS previous_state, old.lease_owner AS previous_owner
+              old.state AS previous_state, old.lease_owner AS previous_owner,
+              extract(epoch FROM clock_timestamp() - u.dispatched_at) AS queued_seconds
     """
 )
 
@@ -499,6 +507,10 @@ _HAS_UNFINISHED = text(
     "SELECT EXISTS (SELECT 1 FROM crawl_urls"  # noqa: S608 - only model constants are inserted
     f" WHERE job_id = :job_id AND {sql_in('state', UNFINISHED_URL_STATES)})"
 )
+
+# Around the admission, in its transaction only (see advance_job).
+_HASH_JOINS_ONLY = text("SET LOCAL enable_nestloop = off")
+_ANY_JOINS = text("SET LOCAL enable_nestloop = DEFAULT")
 
 # T6 admission. Candidates: links of the level's stored pages that are internal and followable,
 # whose targets the job does not know yet. Each target keeps its first occurrence in BFS order
@@ -772,6 +784,11 @@ async def claim_url(
         attempt=row.attempt_count,
         allowed_hosts=tuple(row.allowed_hosts),
         takeover=takeover,
+        queued_seconds=(
+            max(0.0, float(row.queued_seconds))
+            if not takeover and row.queued_seconds is not None
+            else None
+        ),
     )
     if takeover:
         logger.warning(
@@ -1080,6 +1097,12 @@ async def advance_job(session: AsyncSession, job_id: uuid.UUID) -> AdvanceResult
         remaining = job.max_pages - job.admitted_count
         admitted = 0
         if level < job.max_depth and remaining > 0:
+            # Hash joins only (Phase 10): planned from statistics that have not seen this job
+            # yet (they describe earlier jobs), every row count of the job is estimated at one,
+            # and the nested loops chosen then scan the whole job for each link: 5 s for a
+            # 222-page level, over 60 s for a 1,393-page one, instead of 30 ms and 0.4 s
+            # (benchmarks/admission_plans.py, docs/performance.md).
+            await session.execute(_HASH_JOINS_ONLY)
             rows = await session.execute(
                 _ADMIT_NEXT_LEVEL,
                 {
@@ -1090,6 +1113,7 @@ async def advance_job(session: AsyncSession, job_id: uuid.UUID) -> AdvanceResult
                 },
             )
             admitted = len(rows.all())
+            await session.execute(_ANY_JOINS)
         if admitted:
             await session.execute(
                 update(CrawlJob)

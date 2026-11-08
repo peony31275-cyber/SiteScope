@@ -1,0 +1,301 @@
+{
+  "benchmark": "admission_plans",
+  "environment": {
+    "date_utc": "2026-11-08T11:05:43Z",
+    "command": "..\\benchmarks\\admission_plans.py --earlier-pages 2000 --pages 20000 --links 20 --level 3 --output ..\\benchmarks\\results\\phase10-admission-plans-large.json --plans ..\\benchmarks\\results\\phase10-admission-plans-large.txt",
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "machine": {
+      "cpu": "AMD Ryzen 7 5800U with Radeon Graphics",
+      "logical_cpus": 16,
+      "ram_gb": 15.3,
+      "on_ac_power": true,
+      "power_scheme_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    },
+    "wsl_vm": {
+      "cpus": 16,
+      "memory_gb": 7.4,
+      "kernel": "6.18.54.1-microsoft-standard-WSL2"
+    },
+    "postgresql": {
+      "version": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "settings": {
+        "effective_cache_size": "524288 8kB",
+        "fsync": "on",
+        "jit": "on",
+        "max_connections": "100",
+        "max_parallel_workers_per_gather": "2",
+        "random_page_cost": "4",
+        "shared_buffers": "16384 8kB",
+        "synchronous_commit": "on",
+        "work_mem": "4096 kB"
+      }
+    },
+    "redis": {
+      "version": "8.10.3",
+      "aof_enabled": 1,
+      "maxmemory": 0
+    },
+    "code": {}
+  },
+  "configuration": {
+    "earlier_job_pages": 2000,
+    "new_job_generator_pages": 20000,
+    "links_per_page": 20,
+    "admitted_level": 4,
+    "new_job_urls": 2302,
+    "new_job_links": 22220,
+    "level_urls": 1393,
+    "repeat": 3
+  },
+  "results": [
+    {
+      "statistics": "stale",
+      "nested_loops": "allowed",
+      "ms": [],
+      "ms_median": null,
+      "timed_out_after_ms": 60000,
+      "admitted": -1
+    },
+    {
+      "statistics": "stale",
+      "nested_loops": "off",
+      "ms": [
+        338.8,
+        337.1,
+        356.7
+      ],
+      "ms_median": 338.8,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    },
+    {
+      "statistics": "fresh",
+      "nested_loops": "allowed",
+      "ms": [
+        336.9,
+        342.7,
+        340.7
+      ],
+      "ms_median": 340.7,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    },
+    {
+      "statistics": "fresh",
+      "nested_loops": "off",
+      "ms": [
+        346.8,
+        410.2,
+        429.9
+      ],
+      "ms_median": 410.2,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    }
+  ],
+  "reads": {
+    "stale": {
+      "job detail": {
+        "ms": [
+          13.4,
+          7.6,
+          7.9
+        ],
+        "ms_median": 7.9,
+        "error": null
+      },
+      "pages: first 50": {
+        "ms": [
+          9.7,
+          9.2,
+          8.8
+        ],
+        "ms_median": 9.2,
+        "error": null
+      },
+      "pages: 50 after a deep cursor": {
+        "ms": [
+          8.2,
+          8.0,
+          8.1
+        ],
+        "ms_median": 8.1,
+        "error": null
+      },
+      "links: first 50": {
+        "ms": [
+          9.8,
+          8.4,
+          7.8
+        ],
+        "ms_median": 8.4,
+        "error": null
+      },
+      "links: 50 after a deep cursor": {
+        "ms": [
+          8.1,
+          7.9,
+          7.8
+        ],
+        "ms_median": 7.9,
+        "error": null
+      },
+      "links: one source page": {
+        "ms": [
+          7.2,
+          8.4,
+          7.6
+        ],
+        "ms_median": 7.6,
+        "error": null
+      },
+      "links: class broken, first 50": {
+        "ms": [
+          28.9,
+          29.3,
+          27.9
+        ],
+        "ms_median": 28.9,
+        "error": null
+      },
+      "broken links: first 50": {
+        "ms": [
+          20.0,
+          17.9,
+          17.6
+        ],
+        "ms_median": 17.9,
+        "error": null
+      },
+      "link graph: 500 nodes, 2000 edges": {
+        "ms": [
+          82.3,
+          72.0,
+          71.7
+        ],
+        "ms_median": 72.0,
+        "error": null
+      },
+      "link graph: 2000 nodes, 10000 edges": {
+        "ms": [
+          205.6,
+          114.6,
+          117.0
+        ],
+        "ms_median": 117.0,
+        "error": null
+      },
+      "statistics": {
+        "ms": [
+          61.4,
+          53.8,
+          53.9
+        ],
+        "ms_median": 53.9,
+        "error": null
+      }
+    },
+    "fresh": {
+      "job detail": {
+        "ms": [
+          8.7,
+          8.2,
+          8.6
+        ],
+        "ms_median": 8.6,
+        "error": null
+      },
+      "pages: first 50": {
+        "ms": [
+          10.1,
+          9.9,
+          9.7
+        ],
+        "ms_median": 9.9,
+        "error": null
+      },
+      "pages: 50 after a deep cursor": {
+        "ms": [
+          9.3,
+          10.2,
+          9.4
+        ],
+        "ms_median": 9.4,
+        "error": null
+      },
+      "links: first 50": {
+        "ms": [
+          8.3,
+          7.7,
+          8.5
+        ],
+        "ms_median": 8.3,
+        "error": null
+      },
+      "links: 50 after a deep cursor": {
+        "ms": [
+          8.1,
+          8.3,
+          8.0
+        ],
+        "ms_median": 8.1,
+        "error": null
+      },
+      "links: one source page": {
+        "ms": [
+          7.2,
+          7.4,
+          7.4
+        ],
+        "ms_median": 7.4,
+        "error": null
+      },
+      "links: class broken, first 50": {
+        "ms": [
+          32.1,
+          32.0,
+          30.9
+        ],
+        "ms_median": 32.0,
+        "error": null
+      },
+      "broken links: first 50": {
+        "ms": [
+          20.1,
+          20.4,
+          19.8
+        ],
+        "ms_median": 20.1,
+        "error": null
+      },
+      "link graph: 500 nodes, 2000 edges": {
+        "ms": [
+          75.0,
+          74.5,
+          77.5
+        ],
+        "ms_median": 75.0,
+        "error": null
+      },
+      "link graph: 2000 nodes, 10000 edges": {
+        "ms": [
+          115.8,
+          116.9,
+          115.1
+        ],
+        "ms_median": 115.8,
+        "error": null
+      },
+      "statistics": {
+        "ms": [
+          62.7,
+          53.6,
+          51.9
+        ],
+        "ms_median": 53.6,
+        "error": null
+      }
+    }
+  }
+}

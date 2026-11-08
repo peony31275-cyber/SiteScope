@@ -1,0 +1,514 @@
+--- claim: row lock ---
+LockRows  (cost=0.29..8.32 rows=1 width=10) (actual time=0.007..0.008 rows=1.00 loops=1)
+  Buffers: shared hit=6
+  ->  Index Scan using pk_crawl_urls on crawl_urls  (cost=0.29..8.31 rows=1 width=10) (actual time=0.006..0.007 rows=1.00 loops=1)
+        Index Cond: (id = '01a1bb10-993d-719a-a691-e915614225c8'::uuid)
+        Index Searches: 1
+        Buffers: shared hit=5
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.046 ms
+Execution Time: 0.016 ms
+
+--- claim: update ---
+Update on crawl_urls u  (cost=0.29..9.51 rows=1 width=139) (actual time=0.016..0.016 rows=0.00 loops=1)
+  Buffers: shared hit=5
+  ->  Nested Loop  (cost=0.29..9.51 rows=1 width=139) (actual time=0.015..0.015 rows=0.00 loops=1)
+        Buffers: shared hit=5
+        ->  Index Scan using pk_crawl_urls on crawl_urls u  (cost=0.29..8.32 rows=1 width=32) (actual time=0.015..0.015 rows=0.00 loops=1)
+              Index Cond: (id = '01a1bb10-993d-719a-a691-e915614225c8'::uuid)
+              Filter: ((attempt_count < '3'::smallint) AND (job_id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid) AND ((state = 'queued'::text) OR ((state = 'in_progress'::text) AND (lease_expires_at < clock_timestamp()))))
+              Rows Removed by Filter: 1
+              Index Searches: 1
+              Buffers: shared hit=5
+        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.17 rows=1 width=59) (never executed)
+              Filter: ((id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid) AND (status = 'running'::text))
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.203 ms
+Execution Time: 0.042 ms
+
+--- inspect a URL ---
+Nested Loop  (cost=0.29..9.56 rows=1 width=49) (actual time=0.010..0.011 rows=1.00 loops=1)
+  Join Filter: (j.id = u.job_id)
+  Buffers: shared hit=6
+  ->  Index Scan using pk_crawl_urls on crawl_urls u  (cost=0.29..8.31 rows=1 width=47) (actual time=0.004..0.006 rows=1.00 loops=1)
+        Index Cond: (id = '01a1bb10-993d-719a-a691-e915614225c8'::uuid)
+        Index Searches: 1
+        Buffers: shared hit=5
+  ->  Seq Scan on crawl_jobs j  (cost=0.00..1.11 rows=11 width=25) (actual time=0.003..0.003 rows=1.00 loops=1)
+        Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=5
+Planning Time: 0.137 ms
+Execution Time: 0.023 ms
+
+--- dispatch: select ---
+Limit  (cost=12.63..12.80 rows=13 width=36) (actual time=0.742..0.775 rows=100.00 loops=1)
+  Buffers: shared hit=213
+  ->  LockRows  (cost=12.63..12.80 rows=13 width=36) (actual time=0.741..0.768 rows=100.00 loops=1)
+        Buffers: shared hit=213
+        ->  Sort  (cost=12.63..12.67 rows=13 width=36) (actual time=0.740..0.744 rows=100.00 loops=1)
+              Sort Key: c.next_attempt_at, c.id
+              Sort Method: quicksort  Memory: 147kB
+              Buffers: shared hit=50
+              ->  Nested Loop  (cost=0.28..12.39 rows=13 width=36) (actual time=0.021..0.565 rows=1801.00 loops=1)
+                    Join Filter: (j.current_level = c.depth)
+                    Buffers: shared hit=50
+                    ->  Seq Scan on crawl_jobs j  (cost=0.00..1.17 rows=1 width=24) (actual time=0.004..0.005 rows=1.00 loops=1)
+                          Filter: ((id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid) AND (status = 'running'::text))
+                          Rows Removed by Filter: 10
+                          Buffers: shared hit=1
+                    ->  Index Scan using ix_crawl_urls_unfinished on crawl_urls c  (cost=0.28..10.98 rows=20 width=48) (actual time=0.016..0.396 rows=1801.00 loops=1)
+                          Index Cond: (job_id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid)
+                          Filter: ((state = 'pending'::text) AND (next_attempt_at <= clock_timestamp()))
+                          Rows Removed by Filter: 200
+                          Index Searches: 1
+                          Buffers: shared hit=49
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.131 ms
+Execution Time: 0.793 ms
+
+--- admit a level ---
+Insert on crawl_urls  (cost=25456.75..25458.66 rows=85 width=337) (actual time=24.621..24.627 rows=0.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 0
+  Conflicting Tuples: 0
+  Buffers: shared hit=3139
+  ->  Subquery Scan on "*SELECT*"  (cost=25456.75..25458.66 rows=85 width=337) (actual time=24.620..24.626 rows=0.00 loops=1)
+        Buffers: shared hit=3139
+        ->  Subquery Scan on chosen  (cost=25456.75..25456.96 rows=85 width=120) (actual time=24.620..24.625 rows=0.00 loops=1)
+              Buffers: shared hit=3139
+              ->  Limit  (cost=25456.75..25456.96 rows=85 width=70) (actual time=24.619..24.624 rows=0.00 loops=1)
+                    Buffers: shared hit=3139
+                    ->  Sort  (cost=25456.75..25456.96 rows=85 width=70) (actual time=24.618..24.623 rows=0.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 25kB
+                          Buffers: shared hit=3139
+                          ->  Unique  (cost=25017.46..25454.03 rows=85 width=70) (actual time=24.615..24.620 rows=0.00 loops=1)
+                                Buffers: shared hit=3139
+                                ->  Incremental Sort  (cost=25017.46..25453.82 rows=85 width=70) (actual time=24.614..24.619 rows=0.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Presorted Key: l.target_normalized_url
+                                      Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+                                      Buffers: shared hit=3139
+                                      ->  Merge Anti Join  (cost=25012.30..25449.99 rows=85 width=70) (actual time=24.605..24.610 rows=0.00 loops=1)
+                                            Merge Cond: (l.target_normalized_url = e.normalized_url)
+                                            Buffers: shared hit=3139
+                                            ->  Sort  (cost=25011.80..25012.66 rows=343 width=70) (actual time=23.542..23.619 rows=1880.00 loops=1)
+                                                  Sort Key: l.target_normalized_url COLLATE "C"
+                                                  Sort Method: quicksort  Memory: 211kB
+                                                  Buffers: shared hit=2990
+                                                  ->  Hash Join  (cost=8639.61..24997.36 rows=343 width=70) (actual time=7.026..22.994 rows=1880.00 loops=1)
+                                                        Hash Cond: (l.source_page_id = p.id)
+                                                        Buffers: shared hit=2990
+                                                        ->  Bitmap Heap Scan on page_links l  (cost=5078.45..21082.95 rows=94113 width=61) (actual time=4.936..15.873 rows=94967.00 loops=1)
+                                                              Recheck Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                              Filter: (is_internal AND (NOT nofollow))
+                                                              Rows Removed by Filter: 5033
+                                                              Heap Blocks: exact=1477
+                                                              Buffers: shared hit=2556
+                                                              ->  Bitmap Index Scan on ix_page_links_job_id_target  (cost=0.00..5054.93 rows=99000 width=0) (actual time=4.800..4.800 rows=100000.00 loops=1)
+                                                                    Index Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                                    Index Searches: 1
+                                                                    Buffers: shared hit=1079
+                                                        ->  Hash  (cost=3560.93..3560.93 rows=18 width=73) (actual time=2.048..2.051 rows=100.00 loops=1)
+                                                              Buckets: 1024  Batches: 1  Memory Usage: 19kB
+                                                              Buffers: shared hit=434
+                                                              ->  Hash Join  (cost=1873.16..3560.93 rows=18 width=73) (actual time=0.940..2.040 rows=100.00 loops=1)
+                                                                    Hash Cond: (p.crawl_url_id = s.id)
+                                                                    Buffers: shared hit=434
+                                                                    ->  Bitmap Heap Scan on pages p  (cost=214.72..1889.51 rows=4943 width=48) (actual time=0.195..1.012 rows=5000.00 loops=1)
+                                                                          Recheck Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                                          Filter: (NOT robots_nofollow)
+                                                                          Heap Blocks: exact=162
+                                                                          Buffers: shared hit=233
+                                                                          ->  Bitmap Index Scan on ix_pages_job_id_normalized_url  (cost=0.00..213.49 rows=4943 width=0) (actual time=0.176..0.176 rows=5000.00 loops=1)
+                                                                                Index Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                                                Index Searches: 1
+                                                                                Buffers: shared hit=71
+                                                                    ->  Hash  (cost=1655.89..1655.89 rows=204 width=57) (actual time=0.736..0.738 rows=203.00 loops=1)
+                                                                          Buckets: 1024  Batches: 1  Memory Usage: 26kB
+                                                                          Buffers: shared hit=201
+                                                                          ->  Bitmap Heap Scan on crawl_urls s  (cost=337.69..1655.89 rows=204 width=57) (actual time=0.184..0.714 rows=203.00 loops=1)
+                                                                                Recheck Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                                                Filter: ((depth = '2'::smallint) AND (state = 'fetched'::text))
+                                                                                Rows Removed by Filter: 5411
+                                                                                Heap Blocks: exact=122
+                                                                                Buffers: shared hit=201
+                                                                                ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..337.64 rows=5497 width=0) (actual time=0.171..0.171 rows=5614.00 loops=1)
+                                                                                      Index Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                                                      Index Searches: 1
+                                                                                      Buffers: shared hit=79
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.41..434.49 rows=5497 width=25) (actual time=0.016..0.493 rows=5614.00 loops=1)
+                                                  Index Cond: (job_id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                                                  Heap Fetches: 193
+                                                  Index Searches: 1
+                                                  Buffers: shared hit=149
+Planning:
+  Buffers: shared hit=27
+Planning Time: 0.576 ms
+Execution Time: 24.678 ms
+
+--- has unfinished URLs ---
+Result  (cost=0.41..0.42 rows=1 width=1) (actual time=0.016..0.016 rows=1.00 loops=1)
+  Buffers: shared hit=10
+  InitPlan 1
+    ->  Index Only Scan using ix_crawl_urls_unfinished on crawl_urls  (cost=0.28..9.54 rows=72 width=0) (actual time=0.015..0.015 rows=1.00 loops=1)
+          Index Cond: (job_id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid)
+          Heap Fetches: 201
+          Index Searches: 1
+          Buffers: shared hit=10
+Planning Time: 0.073 ms
+Execution Time: 0.026 ms
+
+--- running frontiers ---
+Nested Loop Left Join  (cost=18.15..18.18 rows=1 width=40) (actual time=0.370..0.371 rows=1.00 loops=1)
+  Buffers: shared hit=50
+  ->  Limit  (cost=1.15..1.15 rows=1 width=24) (actual time=0.008..0.009 rows=1.00 loops=1)
+        Buffers: shared hit=1
+        ->  Sort  (cost=1.15..1.15 rows=1 width=24) (actual time=0.008..0.008 rows=1.00 loops=1)
+              Sort Key: crawl_jobs.created_at, crawl_jobs.id
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: shared hit=1
+              ->  Seq Scan on crawl_jobs  (cost=0.00..1.14 rows=1 width=24) (actual time=0.004..0.006 rows=1.00 loops=1)
+                    Filter: (status = 'running'::text)
+                    Rows Removed by Filter: 10
+                    Buffers: shared hit=1
+  ->  Aggregate  (cost=17.00..17.02 rows=1 width=16) (actual time=0.360..0.361 rows=1.00 loops=1)
+        Buffers: shared hit=49
+        ->  Index Scan using ix_crawl_urls_unfinished on crawl_urls u  (cost=0.28..15.59 rows=189 width=7) (actual time=0.014..0.194 rows=2001.00 loops=1)
+              Index Cond: (job_id = crawl_jobs.id)
+              Index Searches: 1
+              Buffers: shared hit=49
+Planning Time: 0.135 ms
+Execution Time: 0.387 ms
+
+--- outstanding tasks (all jobs) ---
+Aggregate  (cost=105.18..105.19 rows=1 width=8) (actual time=0.286..0.286 rows=1.00 loops=1)
+  Buffers: shared hit=52
+  ->  Index Scan using ix_crawl_urls_unfinished on crawl_urls  (cost=0.28..104.66 rows=207 width=0) (actual time=0.240..0.277 rows=200.00 loops=1)
+        Filter: (state = ANY ('{queued,in_progress}'::text[]))
+        Rows Removed by Filter: 1801
+        Index Searches: 1
+        Buffers: shared hit=52
+Planning Time: 0.066 ms
+Execution Time: 0.296 ms
+
+--- reconciliation scan ---
+Limit  (cost=20.54..20.56 rows=2 width=57) (actual time=0.296..0.296 rows=0.00 loops=1)
+  Buffers: shared hit=50
+  ->  LockRows  (cost=20.54..20.56 rows=2 width=57) (actual time=0.295..0.296 rows=0.00 loops=1)
+        Buffers: shared hit=50
+        ->  Sort  (cost=20.54..20.54 rows=2 width=57) (actual time=0.295..0.296 rows=0.00 loops=1)
+              Sort Key: u.dispatched_at, u.id
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: shared hit=50
+              ->  Nested Loop  (cost=0.28..20.52 rows=2 width=57) (actual time=0.294..0.294 rows=0.00 loops=1)
+                    Buffers: shared hit=50
+                    ->  Seq Scan on crawl_jobs j  (cost=0.00..1.14 rows=1 width=22) (actual time=0.005..0.006 rows=1.00 loops=1)
+                          Filter: (status = 'running'::text)
+                          Rows Removed by Filter: 10
+                          Buffers: shared hit=1
+                    ->  Index Scan using ix_crawl_urls_unfinished on crawl_urls u  (cost=0.28..19.37 rows=2 width=51) (actual time=0.287..0.287 rows=0.00 loops=1)
+                          Index Cond: (job_id = j.id)
+                          Filter: ((state = ANY ('{queued,in_progress}'::text[])) AND (dispatched_at < (clock_timestamp() - '00:05:00'::interval)) AND ((state = 'queued'::text) OR (lease_expires_at < (clock_timestamp() - '00:05:00'::interval))))
+                          Rows Removed by Filter: 2001
+                          Index Searches: 1
+                          Buffers: shared hit=49
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.179 ms
+Execution Time: 0.310 ms
+
+--- cancelling jobs ---
+Limit  (cost=1.15..1.15 rows=1 width=24) (actual time=0.007..0.007 rows=0.00 loops=1)
+  Buffers: shared hit=1
+  ->  Sort  (cost=1.15..1.15 rows=1 width=24) (actual time=0.006..0.007 rows=0.00 loops=1)
+        Sort Key: cancel_requested_at, id
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=1
+        ->  Seq Scan on crawl_jobs  (cost=0.00..1.14 rows=1 width=24) (actual time=0.005..0.005 rows=0.00 loops=1)
+              Filter: (status = 'cancelling'::text)
+              Rows Removed by Filter: 11
+              Buffers: shared hit=1
+Planning Time: 0.053 ms
+Execution Time: 0.013 ms
+
+--- index dispatch: select ---
+Limit  (cost=2705.85..2807.74 rows=200 width=56) (actual time=7.608..7.677 rows=200.00 loops=1)
+  Buffers: shared hit=15471
+  ->  LockRows  (cost=2705.85..28178.45 rows=50000 width=56) (actual time=7.608..7.664 rows=200.00 loops=1)
+        Buffers: shared hit=15471
+        ->  Incremental Sort  (cost=2705.85..27678.45 rows=50000 width=56) (actual time=7.606..7.614 rows=200.00 loops=1)
+              Sort Key: d.updated_at, d.page_id
+              Presorted Key: d.updated_at
+              Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+              Pre-sorted Groups: 1  Sort Method: quicksort  Average Memory: 583kB  Peak Memory: 583kB
+              Buffers: shared hit=15071
+              ->  Nested Loop  (cost=0.58..24892.29 rows=50000 width=56) (actual time=0.013..6.872 rows=5001.00 loops=1)
+                    Buffers: shared hit=15071
+                    ->  Index Scan using ix_search_documents_pending on search_documents d  (cost=0.29..1664.29 rows=50000 width=46) (actual time=0.007..1.080 rows=5001.00 loops=1)
+                          Filter: (status = 'pending'::text)
+                          Index Searches: 1
+                          Buffers: shared hit=68
+                    ->  Index Scan using pk_pages on pages p  (cost=0.29..0.45 rows=1 width=42) (actual time=0.001..0.001 rows=1.00 loops=5001)
+                          Index Cond: (id = d.page_id)
+                          Filter: (job_id = d.job_id)
+                          Index Searches: 5001
+                          Buffers: shared hit=15003
+Planning:
+  Buffers: shared hit=15
+Planning Time: 0.191 ms
+Execution Time: 7.701 ms
+
+--- index queued count ---
+Aggregate  (cost=4.14..4.15 rows=1 width=8) (actual time=0.002..0.003 rows=1.00 loops=1)
+  Buffers: shared hit=1
+  ->  Index Only Scan using ix_search_documents_queued_since on search_documents  (cost=0.12..4.14 rows=1 width=0) (actual time=0.002..0.002 rows=0.00 loops=1)
+        Heap Fetches: 0
+        Index Searches: 1
+        Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.054 ms
+Execution Time: 0.010 ms
+
+--- indexing overview (all documents) ---
+Aggregate  (cost=3119.15..3119.17 rows=1 width=112) (actual time=10.754..10.754 rows=1.00 loops=1)
+  Buffers: shared hit=619
+  InitPlan 1
+    ->  Aggregate  (cost=1.14..1.15 rows=1 width=8) (actual time=0.008..0.008 rows=1.00 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on crawl_jobs  (cost=0.00..1.11 rows=10 width=0) (actual time=0.005..0.006 rows=10.00 loops=1)
+                Filter: ((finished_at IS NOT NULL) AND (indexing_completed_at IS NULL))
+                Rows Removed by Filter: 1
+                Buffers: shared hit=1
+  ->  Seq Scan on search_documents  (cost=0.00..1118.00 rows=50000 width=32) (actual time=0.004..2.184 rows=50000.00 loops=1)
+        Buffers: shared hit=618
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.105 ms
+Execution Time: 10.782 ms
+
+--- overview: URLs by state ---
+HashAggregate  (cost=2196.52..2196.58 rows=6 width=15) (actual time=14.425..14.427 rows=6.00 loops=1)
+  Group Key: state
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1291
+  ->  Seq Scan on crawl_urls  (cost=0.00..1894.68 rows=60368 width=7) (actual time=0.007..3.767 rows=57001.00 loops=1)
+        Buffers: shared hit=1291
+Planning Time: 0.096 ms
+Execution Time: 14.451 ms
+
+--- overview: documents by status ---
+HashAggregate  (cost=1868.00..1868.01 rows=1 width=24) (actual time=10.882..10.882 rows=1.00 loops=1)
+  Group Key: status
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=618
+  ->  Seq Scan on search_documents  (cost=0.00..1118.00 rows=50000 width=16) (actual time=0.005..2.406 rows=50000.00 loops=1)
+        Buffers: shared hit=618
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.080 ms
+Execution Time: 10.902 ms
+
+--- metrics: URLs by state ---
+HashAggregate  (cost=3554.80..3554.91 rows=6 width=63) (actual time=14.197..14.201 rows=6.00 loops=1)
+  Group Key: state
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1291
+  ->  Seq Scan on crawl_urls  (cost=0.00..1894.68 rows=60368 width=25) (actual time=0.006..2.906 rows=57001.00 loops=1)
+        Buffers: shared hit=1291
+Planning Time: 0.087 ms
+Execution Time: 14.222 ms
+
+--- GET /metrics: the PostgreSQL snapshot ---
+Result  (cost=0.00..0.01 rows=1 width=32) (actual time=0.003..0.003 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.006 ms
+
+Result  (cost=0.00..0.01 rows=1 width=32) (actual time=0.002..0.002 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.005 ms
+
+Result  (cost=0.00..0.01 rows=1 width=8) (actual time=0.000..0.001 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.004 ms
+
+HashAggregate  (cost=1.17..1.19 rows=2 width=17) (actual time=0.009..0.009 rows=2.00 loops=1)
+  Group Key: status
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1
+  ->  Seq Scan on crawl_jobs  (cost=0.00..1.11 rows=11 width=9) (actual time=0.003..0.004 rows=11.00 loops=1)
+        Buffers: shared hit=1
+Planning Time: 0.034 ms
+Execution Time: 0.020 ms
+
+HashAggregate  (cost=3554.80..3554.91 rows=6 width=63) (actual time=13.786..13.789 rows=6.00 loops=1)
+  Group Key: state
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1291
+  ->  Seq Scan on crawl_urls  (cost=0.00..1894.68 rows=60368 width=25) (actual time=0.006..2.829 rows=57001.00 loops=1)
+        Buffers: shared hit=1291
+Planning Time: 0.081 ms
+Execution Time: 13.808 ms
+
+Aggregate  (cost=3119.15..3119.17 rows=1 width=112) (actual time=9.961..9.962 rows=1.00 loops=1)
+  Buffers: shared hit=619
+  InitPlan 1
+    ->  Aggregate  (cost=1.14..1.15 rows=1 width=8) (actual time=0.007..0.007 rows=1.00 loops=1)
+          Buffers: shared hit=1
+          ->  Seq Scan on crawl_jobs  (cost=0.00..1.11 rows=10 width=0) (actual time=0.004..0.005 rows=10.00 loops=1)
+                Filter: ((finished_at IS NOT NULL) AND (indexing_completed_at IS NULL))
+                Rows Removed by Filter: 1
+                Buffers: shared hit=1
+  ->  Seq Scan on search_documents  (cost=0.00..1118.00 rows=50000 width=32) (actual time=0.003..1.995 rows=50000.00 loops=1)
+        Buffers: shared hit=618
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.087 ms
+Execution Time: 9.980 ms
+
+--- GET /api/v1/overview: the snapshot ---
+Result  (cost=0.00..0.01 rows=1 width=32) (actual time=0.003..0.003 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.006 ms
+
+Result  (cost=0.00..0.01 rows=1 width=32) (actual time=0.002..0.002 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.005 ms
+
+Result  (cost=0.00..0.01 rows=1 width=8) (actual time=0.000..0.000 rows=1.00 loops=1)
+Planning Time: 0.006 ms
+Execution Time: 0.004 ms
+
+HashAggregate  (cost=1.17..1.19 rows=2 width=17) (actual time=0.009..0.009 rows=2.00 loops=1)
+  Group Key: status
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1
+  ->  Seq Scan on crawl_jobs  (cost=0.00..1.11 rows=11 width=9) (actual time=0.003..0.004 rows=11.00 loops=1)
+        Buffers: shared hit=1
+Planning Time: 0.033 ms
+Execution Time: 0.021 ms
+
+HashAggregate  (cost=2196.52..2196.58 rows=6 width=15) (actual time=10.688..10.690 rows=6.00 loops=1)
+  Group Key: state
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=1291
+  ->  Seq Scan on crawl_urls  (cost=0.00..1894.68 rows=60368 width=7) (actual time=0.005..2.824 rows=57001.00 loops=1)
+        Buffers: shared hit=1291
+Planning Time: 0.067 ms
+Execution Time: 10.704 ms
+
+Aggregate  (cost=1651.29..1651.30 rows=1 width=8) (actual time=5.274..5.274 rows=1.00 loops=1)
+  Buffers: shared hit=194
+  ->  Index Only Scan using pk_pages on pages  (cost=0.29..1526.29 rows=50000 width=0) (actual time=0.008..3.213 rows=50000.00 loops=1)
+        Heap Fetches: 0
+        Index Searches: 1
+        Buffers: shared hit=194
+Planning Time: 0.032 ms
+Execution Time: 5.283 ms
+
+HashAggregate  (cost=1868.00..1868.01 rows=1 width=24) (actual time=9.676..9.677 rows=1.00 loops=1)
+  Group Key: status
+  Batches: 1  Memory Usage: 32kB
+  Buffers: shared hit=618
+  ->  Seq Scan on search_documents  (cost=0.00..1118.00 rows=50000 width=16) (actual time=0.004..2.138 rows=50000.00 loops=1)
+        Buffers: shared hit=618
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.052 ms
+Execution Time: 9.691 ms
+
+--- job list (first page of 20) ---
+Limit  (cost=1.30..1.33 rows=11 width=238) (actual time=0.009..0.010 rows=11.00 loops=1)
+  Buffers: shared hit=1
+  ->  Sort  (cost=1.30..1.33 rows=11 width=238) (actual time=0.008..0.009 rows=11.00 loops=1)
+        Sort Key: created_at DESC, id DESC
+        Sort Method: quicksort  Memory: 27kB
+        Buffers: shared hit=1
+        ->  Seq Scan on crawl_jobs  (cost=0.00..1.11 rows=11 width=238) (actual time=0.004..0.005 rows=11.00 loops=1)
+              Buffers: shared hit=1
+Planning Time: 0.048 ms
+Execution Time: 0.017 ms
+
+--- job detail (a completed job) ---
+Nested Loop  (cost=2473.83..2475.03 rows=1 width=342) (actual time=2.977..2.980 rows=1.00 loops=1)
+  Buffers: shared hit=340
+  ->  Nested Loop  (cost=2197.42..2198.59 rows=1 width=334) (actual time=2.346..2.348 rows=1.00 loops=1)
+        Buffers: shared hit=268
+        ->  Nested Loop  (cost=1874.63..1875.78 rows=1 width=294) (actual time=1.284..1.286 rows=1.00 loops=1)
+              Buffers: shared hit=201
+              ->  Seq Scan on crawl_jobs  (cost=0.00..1.14 rows=1 width=238) (actual time=0.004..0.005 rows=1.00 loops=1)
+                    Filter: (id = '01a1bb10-3d53-7848-8c4a-0cbbfab05be9'::uuid)
+                    Rows Removed by Filter: 10
+                    Buffers: shared hit=1
+              ->  Aggregate  (cost=1874.63..1874.64 rows=1 width=56) (actual time=1.279..1.279 rows=1.00 loops=1)
+                    Buffers: shared hit=200
+                    ->  Bitmap Heap Scan on crawl_urls  (cost=322.95..1682.55 rows=5488 width=7) (actual time=0.155..0.501 rows=5500.00 loops=1)
+                          Recheck Cond: (job_id = crawl_jobs.id)
+                          Heap Blocks: exact=121
+                          Buffers: shared hit=200
+                          ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..321.57 rows=5488 width=0) (actual time=0.143..0.143 rows=5614.00 loops=1)
+                                Index Cond: (job_id = crawl_jobs.id)
+                                Index Searches: 1
+                                Buffers: shared hit=79
+        ->  Aggregate  (cost=322.79..322.80 rows=1 width=40) (actual time=1.061..1.061 rows=1.00 loops=1)
+              Buffers: shared hit=67
+              ->  Index Scan using ix_search_documents_job_id on search_documents  (cost=0.29..172.79 rows=5000 width=16) (actual time=0.005..0.406 rows=5000.00 loops=1)
+                    Index Cond: (job_id = crawl_jobs.id)
+                    Index Searches: 1
+                    Buffers: shared hit=67
+  ->  Aggregate  (cost=276.42..276.43 rows=1 width=8) (actual time=0.629..0.629 rows=1.00 loops=1)
+        Buffers: shared hit=72
+        ->  Index Only Scan using ix_pages_job_id_normalized_url on pages  (cost=0.41..263.92 rows=5000 width=0) (actual time=0.007..0.389 rows=5000.00 loops=1)
+              Index Cond: (job_id = crawl_jobs.id)
+              Heap Fetches: 0
+              Index Searches: 1
+              Buffers: shared hit=72
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.175 ms
+Execution Time: 3.014 ms
+
+--- job detail (the running job) ---
+Nested Loop  (cost=2473.83..2475.03 rows=1 width=342) (actual time=0.489..0.491 rows=1.00 loops=1)
+  Buffers: shared hit=77
+  ->  Nested Loop  (cost=2197.42..2198.59 rows=1 width=334) (actual time=0.486..0.488 rows=1.00 loops=1)
+        Buffers: shared hit=74
+        ->  Nested Loop  (cost=1874.63..1875.78 rows=1 width=294) (actual time=0.483..0.484 rows=1.00 loops=1)
+              Buffers: shared hit=72
+              ->  Seq Scan on crawl_jobs  (cost=0.00..1.14 rows=1 width=238) (actual time=0.004..0.004 rows=1.00 loops=1)
+                    Filter: (id = '01a1bb10-98fc-700c-a0f4-5c4b6bbf62ff'::uuid)
+                    Rows Removed by Filter: 10
+                    Buffers: shared hit=1
+              ->  Aggregate  (cost=1874.63..1874.64 rows=1 width=56) (actual time=0.478..0.478 rows=1.00 loops=1)
+                    Buffers: shared hit=71
+                    ->  Bitmap Heap Scan on crawl_urls  (cost=322.95..1682.55 rows=5488 width=7) (actual time=0.064..0.184 rows=2001.00 loops=1)
+                          Recheck Cond: (job_id = crawl_jobs.id)
+                          Heap Blocks: exact=41
+                          Buffers: shared hit=71
+                          ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..321.57 rows=5488 width=0) (actual time=0.056..0.056 rows=2202.00 loops=1)
+                                Index Cond: (job_id = crawl_jobs.id)
+                                Index Searches: 1
+                                Buffers: shared hit=30
+        ->  Aggregate  (cost=322.79..322.80 rows=1 width=40) (actual time=0.002..0.003 rows=1.00 loops=1)
+              Buffers: shared hit=2
+              ->  Index Scan using ix_search_documents_job_id on search_documents  (cost=0.29..172.79 rows=5000 width=16) (actual time=0.002..0.002 rows=0.00 loops=1)
+                    Index Cond: (job_id = crawl_jobs.id)
+                    Index Searches: 1
+                    Buffers: shared hit=2
+  ->  Aggregate  (cost=276.42..276.43 rows=1 width=8) (actual time=0.002..0.002 rows=1.00 loops=1)
+        Buffers: shared hit=3
+        ->  Index Only Scan using ix_pages_job_id_normalized_url on pages  (cost=0.41..263.92 rows=5000 width=0) (actual time=0.002..0.002 rows=0.00 loops=1)
+              Index Cond: (job_id = crawl_jobs.id)
+              Heap Fetches: 0
+              Index Searches: 1
+              Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=1
+Planning Time: 0.181 ms
+Execution Time: 0.524 ms

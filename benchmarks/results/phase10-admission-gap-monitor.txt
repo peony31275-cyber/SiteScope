@@ -1,0 +1,546 @@
+   2.07 jobs [] unfinished []
+   3.11 jobs [('queued', 0)] unfinished [(0, 'pending', 1)]
+   3.62 jobs [('running', 1)] unfinished [(1, 'in_progress', 4), (1, 'queued', 1)]
+   4.14 jobs [('running', 2)] unfinished [(2, 'in_progress', 3), (2, 'queued', 29)]
+   4.66 jobs [('running', 2)] unfinished [(2, 'in_progress', 4), (2, 'queued', 12)]
+   5.17 jobs [('running', 2)] unfinished [(2, 'in_progress', 2)]
+   5.69 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 121), (3, 'queued', 94)]
+   6.21 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 104), (3, 'queued', 96)]
+   6.72 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 92), (3, 'queued', 94)]
+   7.24 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 77), (3, 'queued', 93)]
+   7.75 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 61), (3, 'queued', 96)]
+   8.28 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 46), (3, 'queued', 92)]
+   8.80 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 29), (3, 'queued', 94)]
+   9.31 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 14), (3, 'queued', 94)]
+   9.83 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 92)]
+  10.34 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 75)]
+  10.86 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 1), (3, 'queued', 62)]
+  11.38 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 47)]
+  11.89 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 29)]
+  12.41 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 15)]
+  12.93 jobs [('running', 3)] unfinished [(3, 'in_progress', 4)]
+  13.44 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 670), (4, 'queued', 92)]
+  13.95 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 655), (4, 'queued', 93)]
+  14.48 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 641), (4, 'queued', 92)]
+  15.00 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 622), (4, 'queued', 94)]
+  15.51 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 608), (4, 'queued', 96)]
+  16.02 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 594), (4, 'queued', 94)]
+  16.53 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 579), (4, 'queued', 94)]
+  17.05 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 565), (4, 'queued', 95)]
+  17.56 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 551), (4, 'queued', 92)]
+  18.08 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 536), (4, 'queued', 93)]
+  18.59 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 522), (4, 'queued', 95)]
+  19.11 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 507), (4, 'queued', 95)]
+  19.62 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 493), (4, 'queued', 92)]
+  20.14 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 476), (4, 'queued', 95)]
+  20.65 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 461), (4, 'queued', 94)]
+  21.17 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 447), (4, 'queued', 92)]
+  21.69 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 432), (4, 'queued', 92)]
+  22.20 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 414), (4, 'queued', 95)]
+  22.71 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 396), (4, 'queued', 96)]
+  23.23 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 381), (4, 'queued', 95)]
+  23.75 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 366), (4, 'queued', 94)]
+  24.26 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 348), (4, 'queued', 95)]
+  24.77 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 334), (4, 'queued', 93)]
+  25.29 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 317), (4, 'queued', 95)]
+  25.80 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 302), (4, 'queued', 95)]
+  26.31 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 286), (4, 'queued', 96)]
+  26.83 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 274), (4, 'queued', 93)]
+  27.36 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 260), (4, 'queued', 93)]
+  27.87 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 243), (4, 'queued', 93)]
+  28.39 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 225), (4, 'queued', 96)]
+  28.92 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 212), (4, 'queued', 93)]
+  29.43 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 195), (4, 'queued', 96)]
+  29.94 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 185), (4, 'queued', 96)]
+  30.46 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 173), (4, 'queued', 93)]
+  30.98 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 158), (4, 'queued', 94)]
+  31.50 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 142), (4, 'queued', 96)]
+  32.02 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 130), (4, 'queued', 94)]
+  32.53 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 116), (4, 'queued', 94)]
+  33.04 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 100), (4, 'queued', 95)]
+  33.56 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 87), (4, 'queued', 92)]
+  34.07 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 72), (4, 'queued', 95)]
+  34.58 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 56), (4, 'queued', 95)]
+  35.10 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 39), (4, 'queued', 96)]
+  35.61 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 30), (4, 'queued', 95)]
+  36.12 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 13), (4, 'queued', 93)]
+  36.64 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 91)]
+  37.15 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 76)]
+  37.66 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 1), (4, 'queued', 62)]
+  38.17 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 45)]
+  38.69 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 34)]
+  39.21 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 18)]
+  39.73 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 2), (4, 'queued', 7)]
+  40.25 jobs [('completed', 4)] unfinished []
+  41.79 jobs [] unfinished []
+  43.85 jobs [('queued', 0)] unfinished [(0, 'pending', 1)]
+  44.37 jobs [('running', 1)] unfinished [(1, 'in_progress', 4), (1, 'queued', 2)]
+  44.88 jobs [('running', 2)] unfinished [(2, 'in_progress', 4), (2, 'queued', 33)]
+  45.40 jobs [('running', 2)] unfinished [(2, 'in_progress', 3), (2, 'queued', 18)]
+  45.91 jobs [('running', 2)] unfinished [(2, 'in_progress', 4), (2, 'queued', 5)]
+  46.43 jobs [('running', 2)] unfinished [(2, 'in_progress', 1)]
+  46.95 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 120), (3, 'queued', 93)]
+  47.46 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 104), (3, 'queued', 95)]
+  47.98 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 89), (3, 'queued', 96)]
+  48.49 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 73), (3, 'queued', 96)]
+  49.00 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 62), (3, 'queued', 95)]
+  49.52 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 47), (3, 'queued', 93)]
+  50.03 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 29), (3, 'queued', 96)]
+  50.55 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 17), (3, 'queued', 93)]
+  51.06 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 96)]
+  51.58 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 82)]
+  52.10 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 67)]
+  52.62 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 54)]
+  53.14 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 38)]
+  53.66 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 20)]
+  54.17 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 7)]
+  54.68 jobs [('running', 3)] unfinished [(3, 'in_progress', 1)]
+  55.20 jobs [('running', 3)] unfinished []
+  56.24 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.43'), 'query_s': Decimal('1.43'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+PLAN
+Insert on crawl_urls  (cost=24.28..24.31 rows=1 width=344)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  ->  Subquery Scan on "*SELECT*"  (cost=24.28..24.31 rows=1 width=344)
+        ->  Subquery Scan on chosen  (cost=24.28..24.29 rows=1 width=135)
+              ->  Limit  (cost=24.28..24.29 rows=1 width=85)
+                    ->  Sort  (cost=24.28..24.29 rows=1 width=85)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          ->  Unique  (cost=24.22..24.27 rows=1 width=85)
+                                ->  Incremental Sort  (cost=24.22..24.27 rows=2 width=85)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Presorted Key: l.target_normalized_url
+                                      ->  Nested Loop Anti Join  (cost=1.10..24.21 rows=1 width=85)
+                                            Join Filter: (e.normalized_url = l.target_normalized_url)
+                                            ->  Nested Loop  (cost=0.83..18.16 rows=1 width=85)
+                                                  Join Filter: (p.id = l.source_page_id)
+                                                  ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.28..6.05 rows=1 width=68)
+                                                        Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                        Filter: (is_internal AND (NOT nofollow))
+                                                  ->  Nested Loop  (cost=0.55..12.10 rows=1 width=81)
+                                                        Join Filter: (p.crawl_url_id = s.id)
+                                                        ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.27..6.04 rows=1 width=65)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: ((depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.27..6.04 rows=1 width=48)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.27..6.04 rows=1 width=33)
+                                                  Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+STATS {'relname': 'crawl_urls', 'n_live_tup': 265, 'n_mod_since_analyze': 4283, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 823363, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'pages', 'n_live_tup': 245, 'n_mod_since_analyze': 1020, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 829695, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'page_links', 'n_live_tup': 2452, 'n_mod_since_analyze': 10166, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 839680, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+  57.17 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.37'), 'query_s': Decimal('2.36'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+PLAN
+Insert on crawl_urls  (cost=24.28..24.31 rows=1 width=344)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  ->  Subquery Scan on "*SELECT*"  (cost=24.28..24.31 rows=1 width=344)
+        ->  Subquery Scan on chosen  (cost=24.28..24.29 rows=1 width=135)
+              ->  Limit  (cost=24.28..24.29 rows=1 width=85)
+                    ->  Sort  (cost=24.28..24.29 rows=1 width=85)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          ->  Unique  (cost=24.22..24.27 rows=1 width=85)
+                                ->  Incremental Sort  (cost=24.22..24.27 rows=2 width=85)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Presorted Key: l.target_normalized_url
+                                      ->  Nested Loop Anti Join  (cost=1.10..24.21 rows=1 width=85)
+                                            Join Filter: (e.normalized_url = l.target_normalized_url)
+                                            ->  Nested Loop  (cost=0.83..18.16 rows=1 width=85)
+                                                  Join Filter: (p.id = l.source_page_id)
+                                                  ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.28..6.05 rows=1 width=68)
+                                                        Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                        Filter: (is_internal AND (NOT nofollow))
+                                                  ->  Nested Loop  (cost=0.55..12.10 rows=1 width=81)
+                                                        Join Filter: (p.crawl_url_id = s.id)
+                                                        ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.27..6.04 rows=1 width=65)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: ((depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.27..6.04 rows=1 width=48)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.27..6.04 rows=1 width=33)
+                                                  Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+STATS {'relname': 'crawl_urls', 'n_live_tup': 265, 'n_mod_since_analyze': 4283, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 823363, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'pages', 'n_live_tup': 245, 'n_mod_since_analyze': 1020, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 829695, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'page_links', 'n_live_tup': 2452, 'n_mod_since_analyze': 10166, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 839680, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+  57.69 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.89'), 'query_s': Decimal('2.89'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+PLAN
+Insert on crawl_urls  (cost=24.28..24.31 rows=1 width=344)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  ->  Subquery Scan on "*SELECT*"  (cost=24.28..24.31 rows=1 width=344)
+        ->  Subquery Scan on chosen  (cost=24.28..24.29 rows=1 width=135)
+              ->  Limit  (cost=24.28..24.29 rows=1 width=85)
+                    ->  Sort  (cost=24.28..24.29 rows=1 width=85)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          ->  Unique  (cost=24.22..24.27 rows=1 width=85)
+                                ->  Incremental Sort  (cost=24.22..24.27 rows=2 width=85)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Presorted Key: l.target_normalized_url
+                                      ->  Nested Loop Anti Join  (cost=1.10..24.21 rows=1 width=85)
+                                            Join Filter: (e.normalized_url = l.target_normalized_url)
+                                            ->  Nested Loop  (cost=0.83..18.16 rows=1 width=85)
+                                                  Join Filter: (p.id = l.source_page_id)
+                                                  ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.28..6.05 rows=1 width=68)
+                                                        Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                        Filter: (is_internal AND (NOT nofollow))
+                                                  ->  Nested Loop  (cost=0.55..12.10 rows=1 width=81)
+                                                        Join Filter: (p.crawl_url_id = s.id)
+                                                        ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.27..6.04 rows=1 width=65)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: ((depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.27..6.04 rows=1 width=48)
+                                                              Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.27..6.04 rows=1 width=33)
+                                                  Index Cond: (job_id = '01a1baaa-0a77-707b-ac2c-2d8a8f150b49'::uuid)
+STATS {'relname': 'crawl_urls', 'n_live_tup': 265, 'n_mod_since_analyze': 4283, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 823363, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'pages', 'n_live_tup': 245, 'n_mod_since_analyze': 1020, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 829695, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+STATS {'relname': 'page_links', 'n_live_tup': 2452, 'n_mod_since_analyze': 10166, 'last_autoanalyze': datetime.datetime(2026, 11, 8, 10, 17, 16, 839680, tzinfo=datetime.timezone.utc), 'last_analyze': None, 'reltuples': -1.0}
+  58.21 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.41'), 'query_s': Decimal('3.41'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  58.73 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.93'), 'query_s': Decimal('3.93'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  59.24 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.44'), 'query_s': Decimal('4.44'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  59.76 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.97'), 'query_s': Decimal('4.97'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  60.28 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('5.49'), 'query_s': Decimal('5.49'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  60.80 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.01'), 'query_s': Decimal('6.01'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  61.32 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.53'), 'query_s': Decimal('6.53'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  61.83 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.05'), 'query_s': Decimal('7.05'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  62.35 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.57'), 'query_s': Decimal('7.57'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  62.87 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.09'), 'query_s': Decimal('8.09'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  63.38 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.60'), 'query_s': Decimal('8.60'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  63.90 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.12'), 'query_s': Decimal('9.12'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  64.42 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.64'), 'query_s': Decimal('9.64'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  64.93 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.15'), 'query_s': Decimal('10.15'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  65.45 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.67'), 'query_s': Decimal('10.66'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  65.97 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.19'), 'query_s': Decimal('11.18'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  66.48 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.70'), 'query_s': Decimal('11.69'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  66.99 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.20'), 'query_s': Decimal('12.20'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  67.51 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.72'), 'query_s': Decimal('12.72'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  68.02 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.24'), 'query_s': Decimal('13.23'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  68.54 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.75'), 'query_s': Decimal('13.75'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  69.06 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('14.27'), 'query_s': Decimal('14.27'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  69.58 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('14.78'), 'query_s': Decimal('14.78'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  70.10 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.29'), 'query_s': Decimal('15.29'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  70.62 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.80'), 'query_s': Decimal('15.80'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  71.13 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.31'), 'query_s': Decimal('16.30'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  71.65 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.82'), 'query_s': Decimal('16.82'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  72.17 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.33'), 'query_s': Decimal('17.33'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  72.68 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.85'), 'query_s': Decimal('17.84'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  73.19 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('18.36'), 'query_s': Decimal('18.35'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  73.71 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('18.88'), 'query_s': Decimal('18.88'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  74.22 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('19.39'), 'query_s': Decimal('19.39'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  74.74 SESSION {'pid': 7413, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('19.91'), 'query_s': Decimal('19.91'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+  75.26 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 664), (4, 'queued', 94)]
+  75.78 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 650), (4, 'queued', 96)]
+  76.29 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 638), (4, 'queued', 94)]
+  76.81 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 624), (4, 'queued', 94)]
+  77.32 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 608), (4, 'queued', 95)]
+  77.83 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 594), (4, 'queued', 93)]
+  78.35 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 577), (4, 'queued', 95)]
+  78.86 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 563), (4, 'queued', 96)]
+  79.38 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 551), (4, 'queued', 92)]
+  79.90 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 534), (4, 'queued', 95)]
+  80.41 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 523), (4, 'queued', 93)]
+  80.93 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 509), (4, 'queued', 93)]
+  81.44 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 494), (4, 'queued', 94)]
+  81.95 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 477), (4, 'queued', 96)]
+  82.46 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 464), (4, 'queued', 94)]
+  82.98 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 447), (4, 'queued', 94)]
+  83.49 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 432), (4, 'queued', 95)]
+  84.00 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 415), (4, 'queued', 96)]
+  84.52 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 401), (4, 'queued', 92)]
+  85.03 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 383), (4, 'queued', 94)]
+  85.55 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 369), (4, 'queued', 96)]
+  86.06 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 356), (4, 'queued', 91)]
+  86.57 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 339), (4, 'queued', 92)]
+  87.09 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 321), (4, 'queued', 95)]
+  87.62 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 307), (4, 'queued', 96)]
+  88.13 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 297), (4, 'queued', 93)]
+  88.64 jobs [('running', 4)] unfinished [(4, 'in_progress', 1), (4, 'pending', 283), (4, 'queued', 94)]
+  89.16 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 269), (4, 'queued', 94)]
+  89.67 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 254), (4, 'queued', 95)]
+  90.19 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 240), (4, 'queued', 94)]
+  90.71 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 226), (4, 'queued', 95)]
+  91.23 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 212), (4, 'queued', 95)]
+  91.75 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 199), (4, 'queued', 96)]
+  92.28 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 187), (4, 'queued', 96)]
+  92.79 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 179), (4, 'queued', 93)]
+  93.30 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 164), (4, 'queued', 96)]
+  93.83 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 153), (4, 'queued', 95)]
+  94.35 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 138), (4, 'queued', 95)]
+  94.87 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 124), (4, 'queued', 95)]
+  95.39 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 110), (4, 'queued', 96)]
+  95.91 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 98), (4, 'queued', 93)]
+  96.42 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 83), (4, 'queued', 96)]
+  96.93 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 71), (4, 'queued', 95)]
+  97.44 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 55), (4, 'queued', 96)]
+  97.95 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 40), (4, 'queued', 96)]
+  98.47 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 30), (4, 'queued', 92)]
+  98.99 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 14), (4, 'queued', 93)]
+  99.52 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 91)]
+ 100.03 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 78)]
+ 100.54 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 64)]
+ 101.06 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 50)]
+ 101.57 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 36)]
+ 102.09 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 23)]
+ 102.60 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 3), (4, 'queued', 8)]
+ 103.12 jobs [('running', 4)] unfinished []
+ 103.63 jobs [('completed', 4)] unfinished []
+ 105.16 jobs [] unfinished []
+ 107.74 jobs [('running', 0)] unfinished [(0, 'in_progress', 1)]
+ 108.26 jobs [('running', 1)] unfinished [(1, 'in_progress', 1)]
+ 108.77 jobs [('running', 2)] unfinished [(2, 'in_progress', 4), (2, 'queued', 24)]
+ 109.28 jobs [('running', 2)] unfinished [(2, 'in_progress', 4), (2, 'queued', 11)]
+ 109.81 jobs [('running', 2)] unfinished [(2, 'in_progress', 2)]
+ 110.32 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 121), (3, 'queued', 96)]
+ 110.84 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 106), (3, 'queued', 94)]
+ 111.35 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 91), (3, 'queued', 96)]
+ 111.88 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 79), (3, 'queued', 92)]
+ 112.39 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 63), (3, 'queued', 94)]
+ 112.91 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 46), (3, 'queued', 94)]
+ 113.43 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 31), (3, 'queued', 93)]
+ 113.95 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 14), (3, 'queued', 95)]
+ 114.46 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 93)]
+ 114.98 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 78)]
+ 115.49 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 66)]
+ 116.01 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 51)]
+ 116.53 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 33)]
+ 117.05 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 1), (3, 'queued', 18)]
+ 117.57 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 3)]
+ 118.08 jobs [('running', 3)] unfinished []
+ 119.12 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.04'), 'query_s': Decimal('1.04'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 119.63 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.55'), 'query_s': Decimal('1.55'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 120.15 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.07'), 'query_s': Decimal('2.07'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 120.67 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.60'), 'query_s': Decimal('2.59'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 121.18 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.11'), 'query_s': Decimal('3.11'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 121.70 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.64'), 'query_s': Decimal('3.63'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 122.21 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.15'), 'query_s': Decimal('4.14'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 122.72 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.66'), 'query_s': Decimal('4.65'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 123.24 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('5.18'), 'query_s': Decimal('5.17'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 123.76 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('5.70'), 'query_s': Decimal('5.70'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 124.29 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.23'), 'query_s': Decimal('6.23'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 124.81 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.76'), 'query_s': Decimal('6.75'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 125.32 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.27'), 'query_s': Decimal('7.27'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 125.84 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.79'), 'query_s': Decimal('7.79'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 126.36 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.31'), 'query_s': Decimal('8.31'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 126.88 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.83'), 'query_s': Decimal('8.83'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 127.39 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.34'), 'query_s': Decimal('9.33'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 127.90 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.85'), 'query_s': Decimal('9.84'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 128.42 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.36'), 'query_s': Decimal('10.36'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 128.94 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.88'), 'query_s': Decimal('10.87'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 129.45 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.39'), 'query_s': Decimal('11.39'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 129.97 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.91'), 'query_s': Decimal('11.91'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 130.48 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.42'), 'query_s': Decimal('12.42'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 130.99 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.93'), 'query_s': Decimal('12.93'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 131.51 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.45'), 'query_s': Decimal('13.45'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 132.03 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.97'), 'query_s': Decimal('13.97'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 132.54 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('14.49'), 'query_s': Decimal('14.49'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 133.05 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.00'), 'query_s': Decimal('14.99'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 133.58 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.52'), 'query_s': Decimal('15.52'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 134.09 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.03'), 'query_s': Decimal('16.02'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 134.61 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.55'), 'query_s': Decimal('16.55'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 135.13 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.06'), 'query_s': Decimal('17.06'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 135.64 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.57'), 'query_s': Decimal('17.56'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 136.15 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('18.07'), 'query_s': Decimal('18.07'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 136.67 SESSION {'pid': 7518, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('18.59'), 'query_s': Decimal('18.58'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 137.19 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 670), (4, 'queued', 94)]
+ 137.70 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 655), (4, 'queued', 95)]
+ 138.22 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 642), (4, 'queued', 95)]
+ 138.74 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 624), (4, 'queued', 96)]
+ 139.26 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 613), (4, 'queued', 93)]
+ 139.78 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 595), (4, 'queued', 94)]
+ 140.29 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 580), (4, 'queued', 95)]
+ 140.81 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 569), (4, 'queued', 93)]
+ 141.33 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 552), (4, 'queued', 94)]
+ 141.84 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 535), (4, 'queued', 94)]
+ 142.36 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 522), (4, 'queued', 94)]
+ 142.87 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 508), (4, 'queued', 94)]
+ 143.40 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 491), (4, 'queued', 93)]
+ 143.91 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 474), (4, 'queued', 94)]
+ 144.43 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 461), (4, 'queued', 93)]
+ 144.94 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 444), (4, 'queued', 94)]
+ 145.46 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 427), (4, 'queued', 94)]
+ 145.97 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 414), (4, 'queued', 93)]
+ 146.49 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 395), (4, 'queued', 95)]
+ 147.01 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 377), (4, 'queued', 94)]
+ 147.53 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 363), (4, 'queued', 95)]
+ 148.04 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 348), (4, 'queued', 93)]
+ 148.56 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 331), (4, 'queued', 94)]
+ 149.08 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 314), (4, 'queued', 95)]
+ 149.59 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 301), (4, 'queued', 93)]
+ 150.10 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 285), (4, 'queued', 95)]
+ 150.62 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 270), (4, 'queued', 96)]
+ 151.14 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 258), (4, 'queued', 93)]
+ 151.66 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 242), (4, 'queued', 93)]
+ 152.18 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 226), (4, 'queued', 94)]
+ 152.69 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 211), (4, 'queued', 95)]
+ 153.21 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 199), (4, 'queued', 93)]
+ 153.72 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 185), (4, 'queued', 96)]
+ 154.24 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 172), (4, 'queued', 95)]
+ 154.76 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 159), (4, 'queued', 95)]
+ 155.27 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 147), (4, 'queued', 92)]
+ 155.79 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 130), (4, 'queued', 94)]
+ 156.31 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 116), (4, 'queued', 95)]
+ 156.83 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 102), (4, 'queued', 93)]
+ 157.35 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 86), (4, 'queued', 93)]
+ 157.86 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 72), (4, 'queued', 96)]
+ 158.38 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 56), (4, 'queued', 96)]
+ 158.90 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 41), (4, 'queued', 94)]
+ 159.42 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 30), (4, 'queued', 95)]
+ 159.94 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 12), (4, 'queued', 94)]
+ 160.45 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 1), (4, 'queued', 90)]
+ 160.96 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 78)]
+ 161.47 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 62)]
+ 161.99 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 44)]
+ 162.51 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'queued', 31)]
+ 163.03 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 15)]
+ 163.55 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'queued', 4)]
+ 164.07 jobs [('completed', 4)] unfinished []
+ 165.61 jobs [] unfinished []
+ 167.17 jobs [('running', 0)] unfinished [(0, 'in_progress', 1)]
+ 167.69 jobs [('running', 1)] unfinished [(1, 'in_progress', 4)]
+ 168.20 jobs [('running', 2)] unfinished [(2, 'in_progress', 3), (2, 'queued', 31)]
+ 168.72 jobs [('running', 2)] unfinished [(2, 'in_progress', 3), (2, 'queued', 15)]
+ 169.24 jobs [('running', 2)] unfinished [(2, 'in_progress', 3), (2, 'queued', 1)]
+ 169.75 jobs [('running', 2)] unfinished []
+ 170.27 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 109), (3, 'queued', 96)]
+ 170.78 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 97), (3, 'queued', 93)]
+ 171.31 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 83), (3, 'queued', 92)]
+ 171.82 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'pending', 65), (3, 'queued', 96)]
+ 172.34 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 51), (3, 'queued', 94)]
+ 172.86 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 34), (3, 'queued', 95)]
+ 173.37 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 18), (3, 'queued', 95)]
+ 173.89 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'pending', 6), (3, 'queued', 92)]
+ 174.41 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 84)]
+ 174.93 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 69)]
+ 175.44 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 57)]
+ 175.94 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 39)]
+ 176.45 jobs [('running', 3)] unfinished [(3, 'in_progress', 4), (3, 'queued', 23)]
+ 176.96 jobs [('running', 3)] unfinished [(3, 'in_progress', 3), (3, 'queued', 10)]
+ 177.47 jobs [('running', 3)] unfinished [(3, 'in_progress', 1)]
+ 177.99 jobs [('running', 3)] unfinished []
+ 179.03 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.41'), 'query_s': Decimal('1.40'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 179.54 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.92'), 'query_s': Decimal('1.92'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 180.06 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.43'), 'query_s': Decimal('2.43'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 180.57 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.94'), 'query_s': Decimal('2.94'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 181.09 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.46'), 'query_s': Decimal('3.46'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 181.60 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.97'), 'query_s': Decimal('3.97'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 182.12 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.49'), 'query_s': Decimal('4.49'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 182.64 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('5.01'), 'query_s': Decimal('5.01'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 183.16 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('5.53'), 'query_s': Decimal('5.52'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 183.68 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.05'), 'query_s': Decimal('6.04'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 184.19 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('6.56'), 'query_s': Decimal('6.56'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 184.71 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.08'), 'query_s': Decimal('7.08'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 185.22 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('7.59'), 'query_s': Decimal('7.59'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 185.72 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.11'), 'query_s': Decimal('8.10'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 186.24 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('8.63'), 'query_s': Decimal('8.63'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 186.75 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.14'), 'query_s': Decimal('9.14'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 187.27 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('9.66'), 'query_s': Decimal('9.66'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 187.79 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.18'), 'query_s': Decimal('10.18'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 188.31 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('10.70'), 'query_s': Decimal('10.70'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 188.82 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.21'), 'query_s': Decimal('11.21'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 189.33 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('11.73'), 'query_s': Decimal('11.72'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 189.84 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.24'), 'query_s': Decimal('12.24'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 190.36 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('12.76'), 'query_s': Decimal('12.76'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 190.88 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.29'), 'query_s': Decimal('13.28'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 191.40 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('13.80'), 'query_s': Decimal('13.80'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 191.92 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('14.32'), 'query_s': Decimal('14.32'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 192.43 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('14.83'), 'query_s': Decimal('14.83'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 192.95 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.35'), 'query_s': Decimal('15.35'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 193.46 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('15.86'), 'query_s': Decimal('15.86'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 193.96 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.37'), 'query_s': Decimal('16.36'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 194.47 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('16.88'), 'query_s': Decimal('16.87'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 194.99 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.39'), 'query_s': Decimal('17.39'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 195.51 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('17.91'), 'query_s': Decimal('17.91'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 196.03 SESSION {'pid': 7624, 'app': 'sitescope-scheduler', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('18.43'), 'query_s': Decimal('18.43'), 'query': ' WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url AS source_url, l.position'}
+ 196.55 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 662), (4, 'queued', 96)]
+ 197.06 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 650), (4, 'queued', 95)]
+ 197.56 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 637), (4, 'queued', 95)]
+ 198.08 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 620), (4, 'queued', 95)]
+ 198.60 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 603), (4, 'queued', 95)]
+ 199.11 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 591), (4, 'queued', 94)]
+ 199.63 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 575), (4, 'queued', 94)]
+ 200.15 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 562), (4, 'queued', 94)]
+ 200.67 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 547), (4, 'queued', 93)]
+ 201.20 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 533), (4, 'queued', 94)]
+ 201.72 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 520), (4, 'queued', 93)]
+ 202.23 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 505), (4, 'queued', 95)]
+ 202.74 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 486), (4, 'queued', 96)]
+ 203.26 jobs [('running', 4)] unfinished [(4, 'in_progress', 2), (4, 'pending', 473), (4, 'queued', 93)]
+ 203.78 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 456), (4, 'queued', 94)]
+ 204.29 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 441), (4, 'queued', 95)]
+ 204.80 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 427), (4, 'queued', 93)]
+ 205.31 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 412), (4, 'queued', 95)]
+ 205.83 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 396), (4, 'queued', 93)]
+ 206.34 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 379), (4, 'queued', 93)]
+ 206.86 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 364), (4, 'queued', 93)]
+ 207.38 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 344), (4, 'queued', 96)]
+ 207.89 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 331), (4, 'queued', 95)]
+ 208.41 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 316), (4, 'queued', 94)]
+ 208.92 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 300), (4, 'queued', 96)]
+ 209.44 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 289), (4, 'queued', 92)]
+ 209.95 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 272), (4, 'queued', 95)]
+ 210.48 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 258), (4, 'queued', 94)]
+ 211.00 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 245), (4, 'queued', 91)]
+ 211.51 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 228), (4, 'queued', 93)]
+ 212.03 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 211), (4, 'queued', 95)]
+ 212.55 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 195), (4, 'queued', 96)]
+ 213.07 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 185), (4, 'queued', 96)]
+ 213.58 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 172), (4, 'queued', 95)]
+ 214.09 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 159), (4, 'queued', 96)]
+ 214.61 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 146), (4, 'queued', 93)]
+ 215.12 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 130), (4, 'queued', 94)]
+ 215.64 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 117), (4, 'queued', 96)]
+ 216.15 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 105), (4, 'queued', 93)]
+ 216.67 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 90), (4, 'queued', 94)]
+ 217.18 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 77), (4, 'queued', 94)]
+ 217.71 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 60), (4, 'queued', 95)]
+ 218.22 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 46), (4, 'queued', 92)]
+ 218.74 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 33), (4, 'queued', 94)]
+ 219.26 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 14), (4, 'queued', 96)]
+ 219.77 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 91)]
+ 220.29 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 78)]
+ 220.81 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 1), (4, 'queued', 62)]
+ 221.32 jobs [('running', 4)] unfinished [(4, 'in_progress', 3), (4, 'pending', 1), (4, 'queued', 46)]
+ 221.84 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 32)]
+ 222.35 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'queued', 17)]
+ 222.86 jobs [('running', 4)] unfinished [(4, 'in_progress', 4), (4, 'pending', 2), (4, 'queued', 2)]
+ 223.38 jobs [('completed', 4)] unfinished []
+ 256.49 jobs [] unfinished []
+ 257.01 jobs [('completed', 4)] unfinished []
+ 257.53 jobs [('completed', 4), ('running', 2)] unfinished []
+ 259.08 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.35'), 'query_s': Decimal('1.35'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 259.60 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.87'), 'query_s': Decimal('1.87'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 260.11 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.38'), 'query_s': Decimal('2.38'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 260.61 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.89'), 'query_s': Decimal('2.88'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 261.13 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.40'), 'query_s': Decimal('3.40'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 261.65 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.92'), 'query_s': Decimal('3.92'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 262.16 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.43'), 'query_s': Decimal('4.43'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 262.68 SESSION {'pid': 7812, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.95'), 'query_s': Decimal('4.95'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 272.39 jobs [('running', 0)] unfinished [(0, 'pending', 1)]
+ 272.91 jobs [('completed', 4)] unfinished []
+ 273.43 jobs [('completed', 4), ('running', 2)] unfinished []
+ 274.99 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.52'), 'query_s': Decimal('1.52'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 275.50 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.03'), 'query_s': Decimal('2.03'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 276.01 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.54'), 'query_s': Decimal('2.54'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 276.52 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.05'), 'query_s': Decimal('3.04'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 277.04 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.56'), 'query_s': Decimal('3.56'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 277.56 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.08'), 'query_s': Decimal('4.08'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 278.08 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.60'), 'query_s': Decimal('4.60'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 279.64 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.10'), 'query_s': Decimal('1.09'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 280.16 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.61'), 'query_s': Decimal('1.61'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 280.67 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.13'), 'query_s': Decimal('2.13'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 281.19 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.65'), 'query_s': Decimal('2.65'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 281.70 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.15'), 'query_s': Decimal('3.15'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 282.21 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.66'), 'query_s': Decimal('3.66'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 282.73 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.18'), 'query_s': Decimal('4.17'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 283.25 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.69'), 'query_s': Decimal('4.69'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 284.79 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.25'), 'query_s': Decimal('1.25'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 285.31 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('1.77'), 'query_s': Decimal('1.76'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 285.82 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.27'), 'query_s': Decimal('2.27'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 286.34 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('2.79'), 'query_s': Decimal('2.79'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 286.86 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.31'), 'query_s': Decimal('3.31'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 287.38 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('3.83'), 'query_s': Decimal('3.83'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 287.90 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.35'), 'query_s': Decimal('4.35'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}
+ 288.42 SESSION {'pid': 7851, 'app': 'sitescope-benchmark', 'state': 'active', 'wtype': None, 'wevent': None, 'xact_s': Decimal('4.87'), 'query_s': Decimal('4.86'), 'query': 'EXPLAIN (ANALYZE, BUFFERS) WITH candidates AS ( SELECT DISTINCT ON (l.target_normalized_url) l.target_normalized_url AS url, s.id AS source_id, s.normalized_url'}

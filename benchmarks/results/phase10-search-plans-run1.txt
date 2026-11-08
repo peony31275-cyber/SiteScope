@@ -1,0 +1,214 @@
+--- 2000 documents, common_term: 'babaduzo' ---
+Sort  (cost=1352.46..1352.48 rows=10 width=147) (actual time=26.963..26.968 rows=10.00 loops=1)
+  Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+  Sort Method: quicksort  Memory: 31kB
+  Buffers: shared hit=12866
+  CTE matches
+    ->  Hash Join  (cost=310.35..1133.85 rows=2000 width=51) (actual time=8.397..16.723 rows=2000.00 loops=1)
+          Hash Cond: ((p_1.id = d_1.page_id) AND (p_1.content_version = d_1.indexed_content_version))
+          Buffers: shared hit=12776
+          ->  Bitmap Heap Scan on pages p_1  (cost=83.78..891.78 rows=2000 width=67) (actual time=0.087..0.912 rows=2000.00 loops=1)
+                Recheck Cond: (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid)
+                Heap Blocks: exact=131
+                Buffers: shared hit=149
+                ->  Bitmap Index Scan on ix_pages_job_id_normalized_url  (cost=0.00..83.28 rows=2000 width=0) (actual time=0.071..0.072 rows=2000.00 loops=1)
+                      Index Cond: (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid)
+                      Index Searches: 1
+                      Buffers: shared hit=18
+          ->  Hash  (cost=196.56..196.56 rows=2000 width=54) (actual time=8.299..8.300 rows=2000.00 loops=1)
+                Buckets: 2048  Batches: 1  Memory Usage: 188kB
+                Buffers: shared hit=6349
+                ->  Index Scan using ix_search_documents_job_id on search_documents d_1  (cost=0.29..196.56 rows=2000 width=54) (actual time=0.017..7.949 rows=2000.00 loops=1)
+                      Index Cond: (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid)
+                      Filter: (search_vector @@ '''babaduzo'''::tsquery)
+                      Index Searches: 1
+                      Buffers: shared hit=6349
+  ->  Nested Loop Left Join  (cost=128.79..218.44 rows=10 width=147) (actual time=18.467..26.951 rows=10.00 loops=1)
+        Buffers: shared hit=12866
+        ->  Aggregate  (cost=45.00..45.01 rows=1 width=8) (actual time=17.288..17.289 rows=1.00 loops=1)
+              Buffers: shared hit=12776
+              ->  CTE Scan on matches  (cost=0.00..40.00 rows=2000 width=0) (actual time=8.399..17.164 rows=2000.00 loops=1)
+                    Storage: Memory  Maximum Storage: 173kB
+                    Buffers: shared hit=12776
+        ->  Nested Loop  (cost=83.79..173.33 rows=10 width=139) (actual time=1.174..9.656 rows=10.00 loops=1)
+              Buffers: shared hit=90
+              ->  Nested Loop  (cost=83.50..168.85 rows=10 width=143) (actual time=1.165..9.582 rows=10.00 loops=1)
+                    Buffers: shared hit=60
+                    ->  Limit  (cost=83.22..83.24 rows=10 width=52) (actual time=0.205..0.209 rows=10.00 loops=1)
+                          ->  Sort  (cost=83.22..88.22 rows=2000 width=52) (actual time=0.205..0.207 rows=10.00 loops=1)
+                                Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+                                Sort Method: top-N heapsort  Memory: 27kB
+                                ->  CTE Scan on matches matches_1  (cost=0.00..40.00 rows=2000 width=52) (actual time=0.000..0.087 rows=2000.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 173kB
+                    ->  Index Scan using uq_pages_id_job_id on pages p  (cost=0.29..8.56 rows=1 width=91) (actual time=0.936..0.936 rows=1.00 loops=10)
+                          Index Cond: (id = matches_1.page_id)
+                          Index Searches: 10
+                          Buffers: shared hit=60
+              ->  Index Scan using pk_search_documents on search_documents d  (cost=0.29..0.45 rows=1 width=28) (actual time=0.006..0.006 rows=1.00 loops=10)
+                    Index Cond: (page_id = p.id)
+                    Index Searches: 10
+                    Buffers: shared hit=30
+Planning:
+  Buffers: shared hit=37
+Planning Time: 0.596 ms
+Execution Time: 27.012 ms
+
+--- 2000 documents, rare_term: 'pegupu' ---
+Sort  (cost=262.13..262.16 rows=10 width=147) (actual time=9.211..9.216 rows=10.00 loops=1)
+  Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+  Sort Method: quicksort  Memory: 28kB
+  Buffers: shared hit=411
+  CTE matches
+    ->  Nested Loop  (cost=53.19..171.15 rows=10 width=51) (actual time=0.132..0.585 rows=45.00 loops=1)
+          Buffers: shared hit=321
+          ->  Bitmap Heap Scan on search_documents d_1  (cost=52.91..87.95 rows=10 width=54) (actual time=0.097..0.140 rows=45.00 loops=1)
+                Recheck Cond: ((search_vector @@ '''pegupu'''::tsquery) AND (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid))
+                Heap Blocks: exact=36
+                Buffers: shared hit=46
+                ->  BitmapAnd  (cost=52.91..52.91 rows=10 width=0) (actual time=0.087..0.089 rows=0.00 loops=1)
+                      Buffers: shared hit=10
+                      ->  Bitmap Index Scan on ix_search_documents_search_vector  (cost=0.00..17.37 rows=60 width=0) (actual time=0.037..0.037 rows=282.00 loops=1)
+                            Index Cond: (search_vector @@ '''pegupu'''::tsquery)
+                            Index Searches: 1
+                            Buffers: shared hit=4
+                      ->  Bitmap Index Scan on ix_search_documents_job_id  (cost=0.00..35.28 rows=2000 width=0) (actual time=0.041..0.042 rows=2000.00 loops=1)
+                            Index Cond: (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid)
+                            Index Searches: 1
+                            Buffers: shared hit=6
+          ->  Index Scan using uq_pages_id_job_id on pages p_1  (cost=0.29..8.31 rows=1 width=67) (actual time=0.003..0.003 rows=1.00 loops=45)
+                Index Cond: ((id = d_1.page_id) AND (job_id = '01a1bad9-f9c7-70c3-b2ba-f384f46e56e1'::uuid))
+                Filter: (content_version = d_1.indexed_content_version)
+                Index Searches: 45
+                Buffers: shared hit=135
+  ->  Nested Loop Left Join  (cost=1.16..90.82 rows=10 width=147) (actual time=1.473..9.199 rows=10.00 loops=1)
+        Buffers: shared hit=411
+        ->  Aggregate  (cost=0.23..0.24 rows=1 width=8) (actual time=0.604..0.605 rows=1.00 loops=1)
+              Buffers: shared hit=321
+              ->  CTE Scan on matches  (cost=0.00..0.20 rows=10 width=0) (actual time=0.133..0.597 rows=45.00 loops=1)
+                    Storage: Memory  Maximum Storage: 20kB
+                    Buffers: shared hit=321
+        ->  Nested Loop  (cost=0.94..90.48 rows=10 width=139) (actual time=0.868..8.591 rows=10.00 loops=1)
+              Buffers: shared hit=90
+              ->  Nested Loop  (cost=0.65..85.99 rows=10 width=143) (actual time=0.862..8.536 rows=10.00 loops=1)
+                    Buffers: shared hit=60
+                    ->  Limit  (cost=0.37..0.39 rows=10 width=52) (actual time=0.014..0.017 rows=10.00 loops=1)
+                          ->  Sort  (cost=0.37..0.39 rows=10 width=52) (actual time=0.014..0.016 rows=10.00 loops=1)
+                                Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+                                Sort Method: top-N heapsort  Memory: 27kB
+                                ->  CTE Scan on matches matches_1  (cost=0.00..0.20 rows=10 width=52) (actual time=0.000..0.003 rows=45.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 20kB
+                    ->  Index Scan using uq_pages_id_job_id on pages p  (cost=0.29..8.56 rows=1 width=91) (actual time=0.851..0.851 rows=1.00 loops=10)
+                          Index Cond: (id = matches_1.page_id)
+                          Index Searches: 10
+                          Buffers: shared hit=60
+              ->  Index Scan using pk_search_documents on search_documents d  (cost=0.29..0.45 rows=1 width=28) (actual time=0.004..0.004 rows=1.00 loops=10)
+                    Index Cond: (page_id = p.id)
+                    Index Searches: 10
+                    Buffers: shared hit=30
+Planning:
+  Buffers: shared hit=37
+Planning Time: 0.692 ms
+Execution Time: 9.264 ms
+
+--- 10000 documents, common_term: 'babaduzo' ---
+Sort  (cost=2417.00..2417.02 rows=10 width=147) (actual time=110.304..110.307 rows=10.00 loops=1)
+  Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+  Sort Method: quicksort  Memory: 31kB
+  Buffers: shared hit=70566
+  CTE matches
+    ->  Hash Join  (cost=675.00..1685.51 rows=10000 width=51) (actual time=50.278..96.625 rows=10000.00 loops=1)
+          Hash Cond: ((p_1.id = d_1.page_id) AND (p_1.content_version = d_1.indexed_content_version))
+          Buffers: shared hit=70476
+          ->  Seq Scan on pages p_1  (cost=0.00..933.00 rows=10000 width=67) (actual time=0.018..4.716 rows=10000.00 loops=1)
+                Filter: (job_id = '01a1bada-088f-7997-9ca3-e811d20eb8d4'::uuid)
+                Rows Removed by Filter: 2000
+                Buffers: shared hit=783
+          ->  Hash  (cost=525.00..525.00 rows=10000 width=54) (actual time=50.238..50.238 rows=10000.00 loops=1)
+                Buckets: 16384  Batches: 1  Memory Usage: 988kB
+                Buffers: shared hit=38158
+                ->  Seq Scan on search_documents d_1  (cost=0.00..525.00 rows=10000 width=54) (actual time=0.019..48.034 rows=10000.00 loops=1)
+                      Filter: ((search_vector @@ '''babaduzo'''::tsquery) AND (job_id = '01a1bada-088f-7997-9ca3-e811d20eb8d4'::uuid))
+                      Rows Removed by Filter: 2000
+                      Buffers: shared hit=38158
+  ->  Nested Loop Left Join  (cost=641.67..731.32 rows=10 width=147) (actual time=101.679..110.291 rows=10.00 loops=1)
+        Buffers: shared hit=70566
+        ->  Aggregate  (cost=225.00..225.01 rows=1 width=8) (actual time=99.624..99.624 rows=1.00 loops=1)
+              Buffers: shared hit=70476
+              ->  CTE Scan on matches  (cost=0.00..200.00 rows=10000 width=0) (actual time=50.280..99.005 rows=10000.00 loops=1)
+                    Storage: Memory  Maximum Storage: 910kB
+                    Buffers: shared hit=70476
+        ->  Nested Loop  (cost=416.67..506.21 rows=10 width=139) (actual time=2.051..10.659 rows=10.00 loops=1)
+              Buffers: shared hit=90
+              ->  Nested Loop  (cost=416.38..501.72 rows=10 width=143) (actual time=2.040..10.570 rows=10.00 loops=1)
+                    Buffers: shared hit=60
+                    ->  Limit  (cost=416.10..416.12 rows=10 width=52) (actual time=1.030..1.033 rows=10.00 loops=1)
+                          ->  Sort  (cost=416.10..441.10 rows=10000 width=52) (actual time=1.029..1.031 rows=10.00 loops=1)
+                                Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+                                Sort Method: top-N heapsort  Memory: 26kB
+                                ->  CTE Scan on matches matches_1  (cost=0.00..200.00 rows=10000 width=52) (actual time=0.001..0.433 rows=10000.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 910kB
+                    ->  Index Scan using uq_pages_id_job_id on pages p  (cost=0.29..8.56 rows=1 width=91) (actual time=0.952..0.952 rows=1.00 loops=10)
+                          Index Cond: (id = matches_1.page_id)
+                          Index Searches: 10
+                          Buffers: shared hit=60
+              ->  Index Scan using pk_search_documents on search_documents d  (cost=0.29..0.45 rows=1 width=28) (actual time=0.007..0.007 rows=1.00 loops=10)
+                    Index Cond: (page_id = p.id)
+                    Index Searches: 10
+                    Buffers: shared hit=30
+Planning:
+  Buffers: shared hit=37
+Planning Time: 0.546 ms
+Execution Time: 110.365 ms
+
+--- 10000 documents, rare_term: 'pegupu' ---
+Sort  (cost=612.19..612.22 rows=10 width=147) (actual time=10.508..10.511 rows=10.00 loops=1)
+  Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+  Sort Method: quicksort  Memory: 27kB
+  Buffers: shared hit=1753
+  CTE matches
+    ->  Nested Loop  (cost=17.66..518.59 rows=50 width=51) (actual time=0.061..1.904 rows=237.00 loops=1)
+          Buffers: shared hit=1662
+          ->  Bitmap Heap Scan on search_documents d_1  (cost=17.38..174.59 rows=50 width=54) (actual time=0.047..0.251 rows=237.00 loops=1)
+                Recheck Cond: (search_vector @@ '''pegupu'''::tsquery)
+                Filter: (job_id = '01a1bada-088f-7997-9ca3-e811d20eb8d4'::uuid)
+                Rows Removed by Filter: 45
+                Heap Blocks: exact=198
+                Buffers: shared hit=202
+                ->  Bitmap Index Scan on ix_search_documents_search_vector  (cost=0.00..17.37 rows=60 width=0) (actual time=0.028..0.028 rows=282.00 loops=1)
+                      Index Cond: (search_vector @@ '''pegupu'''::tsquery)
+                      Index Searches: 1
+                      Buffers: shared hit=4
+          ->  Index Scan using pk_pages on pages p_1  (cost=0.29..6.87 rows=1 width=67) (actual time=0.002..0.002 rows=1.00 loops=237)
+                Index Cond: (id = d_1.page_id)
+                Filter: ((job_id = '01a1bada-088f-7997-9ca3-e811d20eb8d4'::uuid) AND (content_version = d_1.indexed_content_version))
+                Index Searches: 237
+                Buffers: shared hit=711
+  ->  Nested Loop Left Join  (cost=3.78..93.43 rows=10 width=147) (actual time=2.869..10.498 rows=10.00 loops=1)
+        Buffers: shared hit=1753
+        ->  Aggregate  (cost=1.12..1.14 rows=1 width=8) (actual time=1.974..1.975 rows=1.00 loops=1)
+              Buffers: shared hit=1662
+              ->  CTE Scan on matches  (cost=0.00..1.00 rows=50 width=0) (actual time=0.062..1.957 rows=237.00 loops=1)
+                    Storage: Memory  Maximum Storage: 35kB
+                    Buffers: shared hit=1662
+        ->  Nested Loop  (cost=2.65..92.20 rows=10 width=139) (actual time=0.893..8.519 rows=10.00 loops=1)
+              Buffers: shared hit=91
+              ->  Nested Loop  (cost=2.37..87.71 rows=10 width=143) (actual time=0.886..8.466 rows=10.00 loops=1)
+                    Buffers: shared hit=61
+                    ->  Limit  (cost=2.08..2.11 rows=10 width=52) (actual time=0.037..0.040 rows=10.00 loops=1)
+                          ->  Sort  (cost=2.08..2.21 rows=50 width=52) (actual time=0.037..0.039 rows=10.00 loops=1)
+                                Sort Key: matches_1.rank DESC, matches_1.normalized_url COLLATE "C", matches_1.page_id
+                                Sort Method: top-N heapsort  Memory: 27kB
+                                ->  CTE Scan on matches matches_1  (cost=0.00..1.00 rows=50 width=52) (actual time=0.000..0.011 rows=237.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 35kB
+                    ->  Index Scan using uq_pages_id_job_id on pages p  (cost=0.29..8.56 rows=1 width=91) (actual time=0.841..0.841 rows=1.00 loops=10)
+                          Index Cond: (id = matches_1.page_id)
+                          Index Searches: 10
+                          Buffers: shared hit=61
+              ->  Index Scan using pk_search_documents on search_documents d  (cost=0.29..0.45 rows=1 width=28) (actual time=0.004..0.004 rows=1.00 loops=10)
+                    Index Cond: (page_id = p.id)
+                    Index Searches: 10
+                    Buffers: shared hit=30
+Planning:
+  Buffers: shared hit=37
+Planning Time: 0.418 ms
+Execution Time: 10.542 ms

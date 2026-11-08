@@ -35,6 +35,12 @@
 >   types generated from the OpenAPI document; two read-only endpoints for it,
 >   `GET /api/v1/crawl-policy` and `GET /api/v1/overview` (sections 3, 12.6, 12.7, 15, 18,
 >   ADR-0020).
+> - Phase 10: measured performance, reliability and observability: reproducible benchmarks
+>   (`benchmarks/`, [`performance.md`](performance.md)); process heartbeats and metrics,
+>   `GET /metrics`, health assessment in the status command ([`observability.md`](observability.md),
+>   ADR-0021); a job's dispatch window bounded by its host's politeness slots (ADR-0022); the
+>   level admission and the analysis reads planned with hash joins, since the statistics may not
+>   have seen a new job (ADR-0023; sections 3, 6, 14, 19).
 >
 > [`development-roadmap.md`](development-roadmap.md) tracks what has been built. Details will be
 > refined during implementation. Changing an invariant requires a new ADR in
@@ -175,9 +181,14 @@ PostgreSQL through a guarded transaction. That is why Redis can be treated as di
   is eligible when its state is `pending`, its depth equals the job's `current_level`, and
   `next_attempt_at <= now()`; a URL waiting for a retry becomes eligible when its backoff ends
   (Phase 6). Backpressure: a per-job in-flight window
-  (`SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`), a cap on queued and in-progress URLs over all jobs
-  (`SITESCOPE_SCHEDULER_MAX_OUTSTANDING`), and a batch size per job and pass. The free room is shared
-  fairly among jobs, oldest first.
+  (`SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`, and since Phase 10 at most
+  `SITESCOPE_SCHEDULER_TASKS_PER_HOST_SLOT` per politeness slot of the job's host: ADR-0022), a cap
+  on queued and in-progress URLs over all jobs (`SITESCOPE_SCHEDULER_MAX_OUTSTANDING`), and a batch
+  size per job and pass. The free room is shared fairly among jobs, oldest first.
+- *Level advancer*: admits a job's next BFS level under its row lock (T6). Since Phase 10 the
+  admission statement runs with hash joins only (`enable_nestloop = off` for that statement,
+  ADR-0023): with statistics that have not seen the job yet, nested loops made a level transition
+  take seconds to minutes (docs/performance.md).
 - *Reconciler*: every `reconcile_after / 4` (at most 30 s), publishes again the tasks without progress
   for `SITESCOPE_SCHEDULER_RECONCILE_AFTER_SECONDS` whose stream entry is gone (F7 in section 10.4).
   Abandoned leases and exhausted attempts are recovered by the workers, through `XAUTOCLAIM` and the
@@ -535,6 +546,8 @@ recoverable. The full list of windows is in section 10.4.
 | `sitescope:rate:{<host>}:seen` | sorted set with TTL | when each waiter last asked, to drop waiters of crashed processes (Phase 4) |
 | `sitescope:rate:{<host>}:delay` | string with TTL | the host's crawl delay: the largest robots.txt `Crawl-delay` of its origins (Phase 4) |
 | `sitescope:robots:<crawler name>:<origin>` | string with TTL | a cached robots.txt result, not authoritative: status, the crawler's rules, crawl delay (Phase 4) |
+| `sitescope:process:<name>` | hash with TTL | a process's heartbeat: `payload` (JSON: role, version, uptime, state, metric snapshot) and `seen_ms` (Redis `TIME`); expires after three heartbeat intervals, removed by a graceful stop (Phase 10, ADR-0021) |
+| `sitescope:processes` | sorted set | the heartbeat names, scored by their last `seen_ms`, so readers need no `SCAN`; entries older than an hour are removed by the writers (Phase 10) |
 
 - Messages are small and versioned (`v`). Consumers re-read state from PostgreSQL.
 - Consumer groups are created idempotently at startup with `XGROUP CREATE <stream> <group> 0 MKSTREAM`,
@@ -1438,7 +1451,9 @@ the visibility rule, the ranking and the time limit are the service's. Details:
 [ADR-0019](adr/0019-website-analysis-from-stored-crawl-results.md)). Computed in SQL from the
 job's stored rows (`crawl_urls`, `pages`, `page_links`, `search_documents`); nothing is fetched
 again, and nothing is written. Each request is one read-only REPEATABLE READ transaction with a
-time limit (`SITESCOPE_ANALYSIS_TIMEOUT_SECONDS`, 10 s by default).
+time limit (`SITESCOPE_ANALYSIS_TIMEOUT_SECONDS`, 10 s by default), planned with hash joins only
+since Phase 10 (ADR-0023: with statistics that have not seen a job yet, nested loops ran into
+the time limit).
 
 - **Classification.** Every stored link gets one class from the crawl result of its target in the
   same job (`page_links.target_normalized_url` = `crawl_urls.normalized_url`, within the job):
@@ -1506,14 +1521,36 @@ text.
   is not complete, the index stream's length and pending messages), and the status command adds
   the same from PostgreSQL (`indexing`) and the index stream (`index_stream`). Every figure is
   counted from PostgreSQL or Redis when it is reported. Compose health checks arrive in Phase 11.
+- Since Phase 10 the status command also lists every live process from its heartbeat
+  (`processes`) and assesses health (`assessment`: PostgreSQL, Redis, the API, crawl progress,
+  crawler workers, indexing, repeated failures, recovery), from PostgreSQL counts and heartbeats
+  only, never from configured worker counts; a source it cannot read makes its answers
+  `unknown`. Details: [observability.md](observability.md).
+
+**Metrics and heartbeats** (Phase 10, ADR-0021)
+
+- Every long-running process writes a heartbeat to Redis every
+  `SITESCOPE_HEARTBEAT_INTERVAL_SECONDS` (default 10): its role, version, uptime, a small state
+  (tasks in flight, time since its last finished task, or since its last pass and its last pass
+  that did work, error backoff, jobs whose step failed in the last pass) and a snapshot of its
+  metrics. It expires after three intervals; a graceful stop removes it. Nothing decides from
+  heartbeats.
+- `GET /metrics` (on the API, outside `/api`, not in the OpenAPI document) renders the Prometheus
+  text format: state counted from PostgreSQL in one snapshot (jobs, URLs by state, retries waiting,
+  expired leases, the oldest queued task, documents by status), the streams' statistics from
+  Redis, and every live process's own counters and histograms with its `role` and `process`
+  labels. Nothing is summed across processes before exposure, so nothing is counted twice; labels
+  come from fixed sets.
+- A message's `task.handled` line carries its stage times and queue delay (last publish to
+  claim, by the PostgreSQL clock), and on an error the stage that failed.
 
 **Progress views**
 
 - Job detail shows, from PostgreSQL: counts per URL state, the current level, admitted vs. maximum pages,
   and (Phase 7) indexing progress: documents per status, attempts running, the derived indexing
   status and `completed_at`, read in the same statement as the URL counts.
-- A system endpoint shows, from Redis and therefore approximately: stream length, pending count, and
-  consumers per group.
+- `GET /metrics` shows the streams' statistics, from Redis and therefore approximately: length,
+  undelivered and pending entries, consumers and dead letters (Phase 10).
 
 **Configuration**
 
@@ -1797,6 +1834,13 @@ the development Redis, whose test database 15 would not isolate it.
   deployment needs both (Phase 11). A job list page reads one job detail per row (at most one page
   of rows); the overview counts whole tables under the analysis time limit; listing walks are kept
   in memory (a reload starts from the first page).
+- Measured limits and risks (Phase 10, [performance.md](performance.md)): one host's politeness
+  slots bound its crawl rate whatever the number of workers, and with more tasks than slots a
+  waiting task learns of a freed slot within the gate's 100 ms poll; PostgreSQL plans per-job
+  statements from statistics that may not have seen a new job yet (the level admission is
+  protected; other per-job reads were measured, see performance.md); `GET /metrics` counts whole
+  tables; process metrics live in memory and restart with their process; every benchmark ran on
+  one laptop, with every process and both databases on the same machine.
 
 ## 20. Decision records
 
@@ -1822,3 +1866,6 @@ the development Redis, whose test database 15 would not isolate it.
 | [0018](adr/0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes |
 | [0019](adr/0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs |
 | [0020](adr/0020-dashboard-same-origin-typed-client.md) | The dashboard: a same-origin client typed from the OpenAPI document, with bounded polling |
+| [0021](adr/0021-operational-metrics-and-process-heartbeats.md) | Operational metrics from the source of truth, and process heartbeats in Redis |
+| [0022](adr/0022-dispatch-window-follows-host-politeness.md) | A job's dispatch window follows its host's politeness slots |
+| [0023](adr/0023-whole-job-statements-use-hash-joins.md) | The level admission and the analysis reads are planned with hash joins |

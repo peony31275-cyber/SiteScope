@@ -1,5 +1,6 @@
 """FastAPI application factory and the ASGI entrypoint (``uvicorn app.main:app``)."""
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -11,14 +12,18 @@ from fastapi.routing import APIRoute
 
 from app import __version__
 from app.api import SERVICE_NAME
+from app.api.metrics import router as metrics_router
 from app.api.root import router as root_router
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.process import process_name
 from app.core.redis import create_redis_client
+from app.core.tasks import cancel_and_wait
 from app.db.session import Database
+from app.observability.heartbeat import HeartbeatPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +90,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "redis": f"{settings.redis_host}:{settings.redis_port}/{settings.redis_db}",
         },
     )
+    # The API process's heartbeat (Phase 10): only the server's application publishes one, not
+    # the applications tests build (create_app's publish_heartbeat).
+    heartbeat: HeartbeatPublisher | None = None
+    beating: asyncio.Task[None] | None = None
+    if app.state.publish_heartbeat:
+        heartbeat = HeartbeatPublisher(
+            redis,
+            key_prefix=settings.redis_key_prefix,
+            name=process_name("api"),
+            role="api",
+            interval=settings.heartbeat_interval_seconds,
+        )
+        beating = asyncio.create_task(heartbeat.run())
     try:
         yield
     finally:
         try:
-            await redis.aclose()
+            if beating is not None:
+                await cancel_and_wait(beating)
+            if heartbeat is not None:
+                await heartbeat.retire()
         finally:
-            await database.dispose()
+            try:
+                await redis.aclose()
+            finally:
+                await database.dispose()
         logger.info(
             "Application stopped",
             extra={
@@ -106,8 +130,11 @@ def _operation_id(route: APIRoute) -> str:
     return route.name
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build a configured application. Tests pass explicit settings; servers use the environment."""
+def create_app(settings: Settings | None = None, *, publish_heartbeat: bool = False) -> FastAPI:
+    """Build a configured application. Tests pass explicit settings; servers use the environment.
+
+    ``publish_heartbeat``: write the process's heartbeat to Redis while the application runs
+    (the server's application does; tests ask for it only when they test it)."""
     settings = settings or get_settings()
     configure_logging(settings.log_level, service=SERVICE_NAME)
 
@@ -120,14 +147,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.publish_heartbeat = publish_heartbeat
 
     register_exception_handlers(app)
     # Must remain the last (outermost) middleware added; see RequestContextMiddleware.
     app.add_middleware(RequestContextMiddleware)
 
     app.include_router(root_router)
+    app.include_router(metrics_router)
     app.include_router(api_v1_router)
     return app
 
 
-app = create_app()
+app = create_app(publish_heartbeat=True)

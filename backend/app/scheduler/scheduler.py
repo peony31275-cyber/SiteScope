@@ -18,10 +18,11 @@ Every ``SITESCOPE_SCHEDULER_INTERVAL_SECONDS``, one pass, each step its own shor
 3. **Dispatch** (T3) pending URLs of each job's current level. The rows are locked
    (``FOR UPDATE SKIP LOCKED``), published (``XADD``, one message per URL), and marked
    ``queued`` with their entry IDs in the same transaction. Backpressure: at most
-   ``SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`` URLs of a job are queued or in progress, at
-   most ``SITESCOPE_SCHEDULER_MAX_OUTSTANDING`` over all jobs, and at most
-   ``SITESCOPE_SCHEDULER_DISPATCH_BATCH_SIZE`` per job and pass. The jobs share the free room
-   fairly, oldest first.
+   ``SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB`` URLs of a job are queued or in progress, and
+   at most ``SITESCOPE_SCHEDULER_TASKS_PER_HOST_SLOT`` per politeness slot of its host (Phase 10,
+   ``in_flight_per_job``), at most ``SITESCOPE_SCHEDULER_MAX_OUTSTANDING`` over all jobs, and at
+   most ``SITESCOPE_SCHEDULER_DISPATCH_BATCH_SIZE`` per job and pass. The jobs share the free
+   room fairly, oldest first.
 4. **Settle cancellations** (Phase 6) of each ``cancelling`` job: cancel its pending and queued
    URLs, and its in-progress URLs whose lease expired, then mark it ``cancelled`` once none is
    unfinished (``crawl_cancellation.settle_cancellation``).
@@ -68,6 +69,7 @@ from app.core.process import process_name
 from app.core.redis import create_redis_client
 from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.session import Database
+from app.observability.heartbeat import HeartbeatPublisher
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream
 from app.scheduler.passes import PassLoop, run_until_stopped
@@ -93,6 +95,20 @@ logger = logging.getLogger(__name__)
 # cancelling jobs settled per pass.
 FRONTIER_SCAN_LIMIT: Final = 1000
 _EXPIRED_KEYS_PER_PASS: Final = 500
+
+
+def in_flight_per_job(settings: Settings) -> int:
+    """A job's tasks queued or in progress at most: ``SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB``,
+    and at most ``SITESCOPE_SCHEDULER_TASKS_PER_HOST_SLOT`` per politeness slot of its host.
+
+    A job crawls one host (its seed's), which serves at most
+    ``SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST`` requests at once. Tasks beyond a few per slot
+    only wait for a slot inside a worker, holding one of its task slots, while the stream's next
+    messages (other jobs, other hosts) wait behind them: Phase 10 measured five hosts crawled
+    about one at a time with the old limit of 100 (ADR-0022, docs/performance.md).
+    """
+    per_host = settings.scheduler_tasks_per_host_slot * settings.politeness_max_concurrent_per_host
+    return min(settings.scheduler_max_in_flight_per_job, per_host)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +137,7 @@ class SchedulerConfig:
         return cls(
             interval=settings.scheduler_interval_seconds,
             dispatch_batch=settings.scheduler_dispatch_batch_size,
-            max_in_flight_per_job=settings.scheduler_max_in_flight_per_job,
+            max_in_flight_per_job=in_flight_per_job(settings),
             max_outstanding=settings.scheduler_max_outstanding,
             max_running_jobs=settings.scheduler_max_running_jobs,
             reconcile_after=settings.scheduler_reconcile_after_seconds,
@@ -145,7 +161,9 @@ class PassReport:
     cancelled: int = 0  # cancelling jobs whose cancellation finished in this pass
 
     @property
-    def busy(self) -> bool:
+    def progressed(self) -> bool:
+        """It did work. A job's failed step is not work: a job failing in every pass must not
+        look like progress (found by the Phase 10 review)."""
         return any(
             (
                 self.activated,
@@ -153,10 +171,14 @@ class PassReport:
                 self.finished,
                 self.dispatched,
                 self.republished,
-                self.failed_jobs,
                 self.cancelled,
             )
         )
+
+    @property
+    def busy(self) -> bool:
+        """Worth a log line: it did work, or a job's step failed."""
+        return self.progressed or bool(self.failed_jobs)
 
 
 class Scheduler(PassLoop[PassReport]):
@@ -165,6 +187,15 @@ class Scheduler(PassLoop[PassReport]):
     ROLE = "scheduler"
     ID_FIELD = "scheduler_id"
     DISPLAY_NAME = "Scheduler"
+    COUNTED_FIELDS = (
+        "activated",
+        "advanced",
+        "finished",
+        "dispatched",
+        "republished",
+        "failed_jobs",
+        "cancelled",
+    )
 
     def __init__(
         self,
@@ -387,7 +418,15 @@ async def run(settings: Settings, signals: StopSignals) -> None:
             CrawlStream(redis, key_prefix=settings.redis_key_prefix),
             SchedulerConfig.from_settings(settings),
         )
-        await run_until_stopped(scheduler, signals)
+        heartbeat = HeartbeatPublisher(
+            redis,
+            key_prefix=settings.redis_key_prefix,
+            name=scheduler.name,
+            role="scheduler",
+            interval=settings.heartbeat_interval_seconds,
+            state=scheduler.heartbeat_state,
+        )
+        await run_until_stopped(scheduler, signals, heartbeat=heartbeat)
     finally:
         await redis.aclose()
         await database.dispose()

@@ -4,21 +4,28 @@ For every HTTP request this middleware:
 
 * assigns a request ID and returns it in the ``X-Request-ID`` response header;
 * writes one structured access-log line;
-* converts any unhandled exception into a problem+json 500 response.
+* converts any unhandled exception into a problem+json 500 response;
+* records the request's duration (Phase 10) in ``sitescope_http_request_duration_seconds``,
+  labelled by method, route template (never the path itself: ``unmatched`` when no route
+  matched) and status class, so that a client cannot create new series.
 """
 
 import logging
 import re
 import time
 import uuid
+from typing import Final
 
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.errors import internal_error_response
 from app.core.logging import request_id_var
+from app.observability.metrics import REGISTRY, Registry
 
 REQUEST_ID_HEADER = "X-Request-ID"
+# Methods recorded by name; any other token a client sends counts as "other".
+_METHODS: Final = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
 
 # A client-supplied request ID is reused only if it is short and contains only safe characters.
 # Anything else, such as control characters, would allow log injection, so a new ID is generated.
@@ -36,8 +43,14 @@ class RequestContextMiddleware:
     this one (e.g. FastAPI's telemetry hook) does not see them; SiteScope's logs are the record.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, registry: Registry = REGISTRY) -> None:
         self.app = app
+        self._duration = registry.histogram(
+            "sitescope_http_request_duration_seconds",
+            "API request durations, by method, route template and status class.",
+            ("method", "route", "status_class"),
+            max_series=256,
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -67,6 +80,16 @@ class RequestContextMiddleware:
                 raise  # The response has already started, so no error response can be sent.
             await internal_error_response(scope["path"])(scope, receive, send_with_request_id)
         finally:
+            elapsed = time.perf_counter() - started
+            # The route that matched (FastAPI puts it in the scope), by its template.
+            route = getattr(scope.get("route"), "path", None)
+            method = scope["method"]
+            self._duration.observe(
+                elapsed,
+                method=method if method in _METHODS else "other",
+                route=route if isinstance(route, str) else "unmatched",
+                status_class=f"{status_code // 100}xx" if status_code else "none",
+            )
             # The path is logged without its query string, which may contain sensitive values.
             logger.info(
                 "%s %s %s",
@@ -78,7 +101,7 @@ class RequestContextMiddleware:
                     "method": scope["method"],
                     "path": scope["path"],
                     "status_code": status_code,
-                    "duration_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "duration_ms": round(elapsed * 1000, 2),
                 },
             )
             request_id_var.reset(token)

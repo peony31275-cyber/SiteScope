@@ -5,7 +5,9 @@
  * and node layers are memoized and do not re-render on pan, zoom or selection (pan and zoom
  * set one `transform` attribute directly); a selection draws its own small layer on top. Above
  * ARROWS_UP_TO edges, the edges are drawn as two combined paths instead of one element each.
- * Listeners and the resize observer are removed on unmount.
+ * Labels have their own layer: zoomed in, only the nodes in and around the view get one
+ * (`viewport.ts`; Phase 10 measured the cost of labelling all 2,000), and a small graph labels
+ * every node. Listeners and the resize observer are removed on unmount.
  *
  * The drawing is presentational for assistive technology (a figure with a summary as its name):
  * the node list beside it reaches every node with the keyboard, and selecting there selects
@@ -27,22 +29,27 @@ import type { GraphEdgeItem } from '../../lib/api/types';
 import { pathOf } from '../../lib/format';
 import { edgePath, type GraphLayout, type PositionedNode } from './layout';
 import { nodeAppearance } from './nodeStyle';
+import {
+  covers,
+  grown,
+  LABEL_MARGIN,
+  nodesForLabels,
+  visibleRegion,
+  type Region,
+  type ViewTransform,
+} from './viewport';
 
 // Low enough to fit the tallest graph the API returns (2000 nodes in one column, 30 px apart).
 const MIN_SCALE = 0.005;
 const MAX_SCALE = 4;
 const LABEL_SCALE = 0.6;
+/** Up to this many nodes, every node is labelled at every scale. */
+const LABEL_ALL_UP_TO = 40;
 /** Up to this many edges, each is its own path with an arrowhead. */
 const ARROWS_UP_TO = 1500;
 const SURFACE = '#0d0e10';
 const OUTGOING = '#3987e5';
 const INCOMING = '#d95926';
-
-interface Transform {
-  x: number;
-  y: number;
-  k: number;
-}
 
 function clampScale(value: number): number {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
@@ -77,32 +84,54 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<SVGGElement>(null);
-  const transform = useRef<Transform>({ x: 0, y: 0, k: 1 });
+  const transform = useRef<ViewTransform>({ x: 0, y: 0, k: 1 });
   const fitted = useRef(false);
   const frame = useRef(0);
   const drag = useRef<{
     pointerId: number;
     x: number;
     y: number;
-    origin: Transform;
+    origin: ViewTransform;
     moved: boolean;
     node: number | null;
   } | null>(null);
-  const [showLabels, setShowLabels] = useState(false);
+  // The region whose nodes are labelled (null: below the label scale), and the same in a ref
+  // for the frame callback, which must not re-render while the view stays inside it.
+  const [labelRegion, setLabelRegion] = useState<Region | null>(null);
+  const heldRegion = useRef<Region | null>(null);
   const rawId = useId();
   const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '');
 
-  const apply = useCallback((next: Transform) => {
-    transform.current = next;
-    viewportRef.current?.setAttribute(
-      'transform',
-      `translate(${String(next.x)} ${String(next.y)}) scale(${String(next.k)})`,
-    );
-    cancelAnimationFrame(frame.current);
-    frame.current = requestAnimationFrame(() => {
-      setShowLabels(next.k >= LABEL_SCALE);
-    });
+  const updateLabels = useCallback((next: ViewTransform) => {
+    const container = containerRef.current;
+    let region: Region | null = null;
+    if (next.k >= LABEL_SCALE && container !== null) {
+      const { width, height } = container.getBoundingClientRect();
+      const view = visibleRegion(next, width, height);
+      const held = heldRegion.current;
+      if (held !== null && covers(held, view)) return; // its labels are drawn already
+      region = grown(view, LABEL_MARGIN);
+    } else if (heldRegion.current === null) {
+      return; // below the label scale, and no label drawn
+    }
+    heldRegion.current = region;
+    setLabelRegion(region);
   }, []);
+
+  const apply = useCallback(
+    (next: ViewTransform) => {
+      transform.current = next;
+      viewportRef.current?.setAttribute(
+        'transform',
+        `translate(${String(next.x)} ${String(next.y)}) scale(${String(next.k)})`,
+      );
+      cancelAnimationFrame(frame.current);
+      frame.current = requestAnimationFrame(() => {
+        updateLabels(next);
+      });
+    },
+    [updateLabels],
+  );
 
   const fit = useCallback(() => {
     const container = containerRef.current;
@@ -140,6 +169,7 @@ export function GraphCanvas({
   );
 
   // A new graph is fitted to the view; a view that had no size yet is fitted once it has one.
+  // (A labelled region stays valid for a new graph: it labels the new graph's nodes in it.)
   useEffect(() => {
     fitted.current = false;
     fit();
@@ -150,6 +180,7 @@ export function GraphCanvas({
     if (container === null) return undefined;
     const observer = new ResizeObserver(() => {
       if (!fitted.current) fit();
+      else updateLabels(transform.current); // a larger view may leave the labelled region
     });
     observer.observe(container);
     const onWheel = (event: WheelEvent) => {
@@ -166,7 +197,7 @@ export function GraphCanvas({
       container.removeEventListener('wheel', onWheel);
       cancelAnimationFrame(frame.current);
     };
-  }, [fit, zoomBy]);
+  }, [fit, zoomBy, updateLabels]);
 
   useEffect(() => {
     if (focus === null) return;
@@ -180,8 +211,12 @@ export function GraphCanvas({
 
   function onPointerDown(event: PointerEvent<SVGSVGElement>) {
     if (event.button !== 0) return;
-    const target = event.target instanceof Element ? event.target.closest('[data-node]') : null;
-    const node = target?.getAttribute('data-node');
+    // A node's mark, or its label (labels have their own layer).
+    const target =
+      event.target instanceof Element
+        ? event.target.closest('[data-node], [data-node-label]')
+        : null;
+    const node = target?.getAttribute('data-node') ?? target?.getAttribute('data-node-label');
     drag.current = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -211,6 +246,7 @@ export function GraphCanvas({
   }
 
   const selected = selectedId === null ? undefined : layout.nodes[selectedId];
+  const labelAll = layout.nodes.length <= LABEL_ALL_UP_TO;
 
   return (
     <figure
@@ -237,7 +273,10 @@ export function GraphCanvas({
           <ColumnLabels layout={layout} />
           <g opacity={selected === undefined ? 1 : 0.3}>
             <EdgesLayer layout={layout} edges={edges} marker={`url(#${id}-muted)`} />
-            <NodesLayer layout={layout} showLabels={showLabels || layout.nodes.length <= 40} />
+            <NodesLayer layout={layout} />
+            {(labelAll || labelRegion !== null) && (
+              <LabelsLayer layout={layout} region={labelAll ? null : labelRegion} />
+            )}
           </g>
           {selected !== undefined && (
             <SelectionLayer selected={selected} layout={layout} edges={allEdges} markerId={id} />
@@ -376,23 +415,43 @@ const EdgesLayer = memo(function EdgesLayer({
   );
 });
 
-const NodesLayer = memo(function NodesLayer({
-  layout,
-  showLabels,
-}: {
-  layout: GraphLayout;
-  showLabels: boolean;
-}) {
+const NodesLayer = memo(function NodesLayer({ layout }: { layout: GraphLayout }) {
   return (
     <g>
       {layout.nodes.map((item) => (
-        <NodeMark key={item.node.id} item={item} showLabel={showLabels} />
+        <NodeMark key={item.node.id} item={item} />
       ))}
     </g>
   );
 });
 
-function NodeMark({ item, showLabel }: { item: PositionedNode; showLabel: boolean }) {
+/** The labels of the nodes in `region`, or of every node (`region` null). */
+const LabelsLayer = memo(function LabelsLayer({
+  layout,
+  region,
+}: {
+  layout: GraphLayout;
+  region: Region | null;
+}) {
+  const items = region === null ? layout.nodes : nodesForLabels(layout, region);
+  return (
+    <g fontSize={11} fill="#aab0ba">
+      {items.map((item) => (
+        <text
+          key={item.node.id}
+          data-node-label={item.node.id}
+          x={item.x + item.radius + 6}
+          y={item.y + 4}
+          className="cursor-pointer"
+        >
+          {shortLabel(item.node.url)}
+        </text>
+      ))}
+    </g>
+  );
+});
+
+function NodeMark({ item, showLabel = false }: { item: PositionedNode; showLabel?: boolean }) {
   const look = nodeAppearance(item.node);
   const { x, y, radius } = item;
   return (

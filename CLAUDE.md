@@ -28,6 +28,8 @@ React dashboard (same origin, /api proxied) -> FastAPI -> PostgreSQL (jobs, URL 
   starting any work.
 - Decision records: [docs/adr/](docs/adr/README.md). To change a decision, add a new ADR that supersedes
   the old one. Never rewrite an accepted ADR.
+- Measurements and their method: [docs/performance.md](docs/performance.md); metrics, heartbeats and
+  diagnostics: [docs/observability.md](docs/observability.md) (Phase 10).
 
 ## Working agreement
 
@@ -70,7 +72,8 @@ explanations for the project owner in Chinese.
 ## Architecture invariants (changing one requires a new ADR)
 
 1. **PostgreSQL is the source of truth** for job, URL, page, link, and index state.
-   - Redis holds only deliverable messages, rate-limit state, and caches.
+   - Redis holds only deliverable messages, rate-limit state, caches, and process heartbeats
+     (ADR-0021). No decision reads a heartbeat: they are observability only.
    - Losing Redis data must never lose work (ADR-0001).
 2. **At-least-once processing with idempotent effects.** Every consumer tolerates duplicate and
    redelivered messages (ADR-0003).
@@ -161,6 +164,13 @@ explanations for the project owner in Chinese.
     - Polling stops for settled jobs (crawl over and `indexing.completed_at` set), hidden tabs and
       unmounted pages, and pauses when a job shows no change; a cancellation is shown as the
       server answered it, never optimistically.
+15. **Metrics never count twice** (ADR-0021).
+    - State (jobs, URLs, documents) is counted from PostgreSQL in one snapshot per scrape, never
+      added up from processes.
+    - Process metrics stay per process (labels `role`, `process`) and are summed only in queries,
+      after `rate()`. Labels come from fixed sets: never a URL, a path, a query or an ID.
+    - Worker status comes from the workers' heartbeats, never from a configured count.
+    - `GET /metrics` is internal: outside `/api`, not proxied, not in the OpenAPI document.
 
 ## Code conventions
 
@@ -178,6 +188,9 @@ explanations for the project owner in Chinese.
     pure too (Phase 7: document rules, query handling). `api` may use `indexing`'s query rules
     (bounds, normalization) to validate its parameters (Phase 8).
   - Analytical SQL lives in `services` (`services/site_analysis.py`), never in route handlers.
+  - `observability` (Phase 10: metrics registry, heartbeats, the Prometheus text format) depends
+    on `core` only; every role may use it. `services/system_metrics.py` reads stream statistics
+    and heartbeats for `GET /metrics`.
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
   fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
   when measurements show a need. HTML parsing is such work: call `parse_html` with
@@ -188,6 +201,10 @@ explanations for the project owner in Chinese.
   - Lock a URL row before its job row.
   - Transactions that lock the job row first (cancel, level advancement) must not lock `in_progress` URL
     rows.
+  - Statements that join a whole job's rows (the level admission, the analysis reads) run with
+    `SET LOCAL enable_nestloop = off`: the statistics may not have seen a new job yet, and nested
+    loops then go quadratic (ADR-0023). Measure a new per-job statement with stale statistics
+    (`benchmarks/admission_plans.py`).
 - **Schema.** Change the schema only through Alembic migrations, and never edit a migration that has
   already been applied.
 - **Configuration.** Use pydantic-settings with the `SITESCOPE_` environment prefix, validated at startup.
@@ -241,6 +258,9 @@ explanations for the project owner in Chinese.
 - `tests/dashboard_stack.py` (Phase 9) runs the whole stack for the dashboard's end-to-end
   tests on its own disposable database, `<db>_test_ui`, and Redis database 15 under its own key
   prefix; it drops the database and deletes its keys at the end.
+- Benchmarks (`benchmarks/`, Phase 10) use their own disposable database `<db>_test_bench`, Redis
+  database 15 under fresh key prefixes, and disposable WSL containers for the Redis and
+  PostgreSQL outages; a number is reported only with its command and raw output.
 - Never send `FLUSHALL` (or `FLUSHDB`) to the development Redis; database 15 does not isolate
   it. Destructive Redis tests start their own disposable container and check that it is not
   the development server first (`tests/fault/test_redis_data_loss.py`).
@@ -275,7 +295,10 @@ explanations for the project owner in Chinese.
   | Run a crawler worker (one per window) | `.\.venv\Scripts\python.exe -m app.workers.crawler` |
   | Run the index dispatcher (starts no job) | `.\.venv\Scripts\python.exe -m app.scheduler.index_dispatcher` |
   | Run an indexer (one per window) | `.\.venv\Scripts\python.exe -m app.workers.indexer` |
-  | Read-only crawl and index status | `.\.venv\Scripts\python.exe -m app.scheduler.status` |
+  | Read-only crawl and index status, live processes, health assessment | `.\.venv\Scripts\python.exe -m app.scheduler.status` |
+  | Metrics (Prometheus text, internal) | `GET http://127.0.0.1:8000/metrics` |
+  | Benchmarks (disposable database; commands in `benchmarks/README.md`) | `.\.venv\Scripts\python.exe ..\benchmarks\crawl_scaling.py --experiment multi-host --output <file>` |
+  | Lint the benchmark scripts | `.\.venv\Scripts\python.exe -m ruff check --config pyproject.toml ..\benchmarks` |
   | Read-only search of one job | `.\.venv\Scripts\python.exe -m app.scheduler.search <job-id> "query"` |
   | Lint | `.\.venv\Scripts\python.exe -m ruff check .` |
   | Format check | `.\.venv\Scripts\python.exe -m ruff format --check .` |
@@ -302,7 +325,9 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
                   search.py, indexing/ (Phase 7); api/v1/search.py and analysis.py,
                   services/site_analysis.py (Phase 8: search and website-analysis APIs);
                   api/v1/crawl_policy.py and overview.py, services/overview.py,
-                  api/openapi_export.py (Phase 9: the dashboard's endpoints and its types)
+                  api/openapi_export.py (Phase 9: the dashboard's endpoints and its types);
+                  observability/, api/metrics.py, services/system_metrics.py (Phase 10:
+                  metrics, heartbeats, GET /metrics)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes);
@@ -313,7 +338,8 @@ frontend/         React + TypeScript dashboard (Phase 9): src/app (shell, routes
                   system), features (overview, crawls, search, analysis, graph), hooks, lib/api
                   (client, generated types); e2e/ (Playwright)
 demo-site/        controlled static website: the approved demo crawl target
-benchmarks/       reproducible benchmark scripts and raw results (crawl, indexing, analysis)
+benchmarks/       reproducible benchmark scripts and raw results (crawl, indexing, search, analysis,
+                  database plans, recovery, the dashboard's graph; Phase 10: docs/performance.md)
 docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/
 ```
 

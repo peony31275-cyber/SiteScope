@@ -75,6 +75,22 @@ describe('Link explorer', () => {
     expect(within(details).getByText('About')).toBeInTheDocument();
   });
 
+  it('labels every node of a small graph, and a click on a label selects its node', async () => {
+    graphApi();
+    const { user } = renderApp(`/graph?job=${JOB_ID}`);
+    const figure = await screen.findByRole('figure');
+    for (const path of ['/', '/about.html', '/missing.html', '/docs/legacy.html']) {
+      expect(within(figure).getByText(path, { selector: 'text' })).toBeInTheDocument();
+    }
+    const label = within(figure).getByText('/about.html', { selector: 'text' });
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: label },
+      { keys: '[/MouseLeft]', target: label },
+    ]);
+    const details = screen.getByRole('region', { name: 'Node details' });
+    expect(within(details).getByText('About')).toBeInTheDocument();
+  });
+
   it('warns when the graph was cut at the limits, with the real totals', async () => {
     graphApi(() =>
       json(

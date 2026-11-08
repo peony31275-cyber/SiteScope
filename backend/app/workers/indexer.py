@@ -57,6 +57,12 @@ and waits up to ``SITESCOPE_SHUTDOWN_GRACE_SECONDS`` for running tasks, then can
 second signal cancels them at once. A cancelled task's transaction rolls back and its message
 stays pending, to be recovered like a crashed one; killing the process is safe for the same
 reason.
+
+**Observability** (Phase 10, ADR-0021). A message's ``task.handled`` line has its stage times
+(``start_ms``: the attempt's start; ``index_ms``: building and storing the vector) and, for a
+first attempt, its queue delay (``queue_delay_ms``: dispatch to start, by the database clock).
+The same go to the process's metrics, with results by outcome and lease takeovers; the process
+writes a heartbeat.
 """
 
 import argparse
@@ -76,6 +82,8 @@ from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.models import IndexStatus
 from app.db.session import Database
 from app.indexing.documents import DEADLINE_EXCEEDED, MAX_ATTEMPTS_EXCEEDED
+from app.observability.heartbeat import HeartbeatPublisher
+from app.observability.metrics import QUEUE_DELAY_BUCKETS, REGISTRY, Registry
 from app.queue.messages import IndexTask
 from app.queue.streams import Delivery, IndexStream
 from app.services.search_index import (
@@ -215,6 +223,24 @@ class IndexerConfig:
         )
 
 
+class IndexMetrics:
+    """The metric families of an indexer, beyond the consumer's."""
+
+    def __init__(self, registry: Registry) -> None:
+        self.queue_delay = registry.histogram(
+            "sitescope_queue_delay_seconds",
+            "Time from a task's last publish (its dispatch, or a republish by the reconciliation) "
+            "to its claim or first attempt, by the database clock.",
+            buckets=QUEUE_DELAY_BUCKETS,
+        )
+        self.results = registry.counter(
+            "sitescope_index_results_total",
+            "Results of index attempts, by outcome (indexed, failed, not_queued, "
+            "deadline_exceeded).",
+            ("outcome",),
+        )
+
+
 class IndexWorker(StreamConsumer[IndexTask, IndexerConfig]):
     """The consumer loop of one indexer process. See the module docstring."""
 
@@ -227,8 +253,10 @@ class IndexWorker(StreamConsumer[IndexTask, IndexerConfig]):
         config: IndexerConfig,
         *,
         clock: Callable[[], float] = time.monotonic,
+        registry: Registry = REGISTRY,
     ) -> None:
-        super().__init__(database, stream, config, clock=clock)
+        super().__init__(database, stream, config, clock=clock, registry=registry)
+        self._index_metrics = IndexMetrics(registry)
 
     def _started_fields(self) -> dict[str, object]:
         config = self._config
@@ -249,31 +277,44 @@ class IndexWorker(StreamConsumer[IndexTask, IndexerConfig]):
         config = self._config
         ref = IndexTaskRef(task.job_id, task.page_id, task.content_version)
         for _ in range(_START_ROUNDS):
-            async with self._database.session() as session:
-                attempt = await start_index_attempt(
-                    session,
-                    ref,
-                    owner=self.name,
-                    lease_seconds=config.lease_seconds,
-                    max_attempts=config.max_attempts,
-                )
+            progress.stage = "start_attempt"
+            start_started = self._clock()
+            with self._timed("start_attempt"):
+                async with self._database.session() as session:
+                    attempt = await start_index_attempt(
+                        session,
+                        ref,
+                        owner=self.name,
+                        lease_seconds=config.lease_seconds,
+                        max_attempts=config.max_attempts,
+                    )
             if attempt is not None:
                 progress.claimed = True
-                return await self._index(ref, attempt)
-            async with self._database.session() as session:
-                status = await inspect_document(session, task.page_id)
+                return await self._index(
+                    ref, attempt, progress, start_seconds=self._clock() - start_started
+                )
+            progress.stage = "inspect"
+            with self._timed("inspect"):
+                async with self._database.session() as session:
+                    status = await inspect_document(session, task.page_id)
             verdict = judge_unstarted(status, task, max_attempts=config.max_attempts)
             if isinstance(verdict, Handled):
                 return verdict
             if verdict is Retry.FAIL:
-                async with self._database.session() as session:
-                    if await fail_exhausted_document(
-                        session, ref, max_attempts=config.max_attempts, worker_id=self.name
-                    ):
-                        return Handled(Disposition.ACK, MAX_ATTEMPTS_EXCEEDED)
+                progress.stage = "fail_exhausted"
+                with self._timed("fail_exhausted"):
+                    async with self._database.session() as session:
+                        failed = await fail_exhausted_document(
+                            session, ref, max_attempts=config.max_attempts, worker_id=self.name
+                        )
+                if failed:
+                    self._metrics.recoveries.inc(kind="exhausted_document_failed")
+                    return Handled(Disposition.ACK, MAX_ATTEMPTS_EXCEEDED)
         return Handled(Disposition.KEEP, "start_contended")
 
-    async def _index(self, ref: IndexTaskRef, attempt: IndexAttempt) -> Handled:
+    async def _index(
+        self, ref: IndexTaskRef, attempt: IndexAttempt, progress: Progress, *, start_seconds: float
+    ) -> Handled:
         """The started attempt: build and store the vector, then decide the message's fate."""
         config = self._config
         task_context_var.set(
@@ -283,25 +324,40 @@ class IndexWorker(StreamConsumer[IndexTask, IndexerConfig]):
                 "content_version": attempt.content_version,
             }
         )
-        details: dict[str, object] = {"attempt": attempt.attempt, "takeover": attempt.takeover}
+        details: dict[str, object] = {
+            "attempt": attempt.attempt,
+            "takeover": attempt.takeover,
+            "start_ms": round(start_seconds * 1000, 1),
+        }
+        if attempt.takeover:
+            self._metrics.recoveries.inc(kind="index_lease_takeover")
+        if attempt.queued_seconds is not None:
+            self._index_metrics.queue_delay.observe(attempt.queued_seconds)
+            details["queue_delay_ms"] = round(attempt.queued_seconds * 1000, 1)
+        progress.stage = "index_document"
+        index_started = self._clock()
         try:
             # The whole attempt ends by its deadline: PostgreSQL stops each statement when the
             # budget is spent, and this timeout abandons the transaction (it rolls back) if the
             # server does not answer in time. The lease lasts longer.
-            async with asyncio.timeout(config.task_deadline):
-                async with self._database.session() as session:
-                    result = await index_document(
-                        session,
-                        ref,
-                        max_body_chars=config.max_body_chars,
-                        budget_seconds=config.task_deadline,
-                        worker_id=self.name,
-                    )
+            with self._timed("index_document"):
+                async with asyncio.timeout(config.task_deadline):
+                    async with self._database.session() as session:
+                        result = await index_document(
+                            session,
+                            ref,
+                            max_body_chars=config.max_body_chars,
+                            budget_seconds=config.task_deadline,
+                            worker_id=self.name,
+                        )
         except Exception as exc:
             if not isinstance(exc, TimeoutError) and sqlstate(exc) != _QUERY_CANCELED:
                 raise  # transient or unexpected: the message stays pending
+            self._index_metrics.results.inc(outcome=DEADLINE_EXCEEDED)
             await self._note_error(ref, DEADLINE_EXCEEDED)
             return Handled(Disposition.KEEP, DEADLINE_EXCEEDED, details)
+        details["index_ms"] = round((self._clock() - index_started) * 1000, 1)
+        self._index_metrics.results.inc(outcome=result.outcome.value)
         if result.outcome is IndexOutcome.INDEXED:
             return Handled(
                 Disposition.ACK,
@@ -323,8 +379,9 @@ class IndexWorker(StreamConsumer[IndexTask, IndexerConfig]):
         """Record why the attempt failed and release its lease; best effort (the lease also
         expires on its own)."""
         try:
-            async with self._database.session() as session:
-                await note_attempt_error(session, ref.page_id, owner=self.name, reason=reason)
+            with self._timed("note_error"):
+                async with self._database.session() as session:
+                    await note_attempt_error(session, ref.page_id, owner=self.name, reason=reason)
         except Exception as exc:
             logger.debug(
                 "Could not record an attempt's error",
@@ -355,7 +412,15 @@ async def run(settings: Settings, signals: StopSignals, *, concurrency: int | No
         worker = IndexWorker(
             database, IndexStream(redis, key_prefix=settings.redis_key_prefix), config
         )
-        await worker.run(signals.stop, signals.force)
+        heartbeat = HeartbeatPublisher(
+            redis,
+            key_prefix=settings.redis_key_prefix,
+            name=config.name,
+            role="indexer",
+            interval=settings.heartbeat_interval_seconds,
+            state=worker.heartbeat_state,
+        )
+        await worker.run(signals.stop, signals.force, heartbeat=heartbeat)
     finally:
         await redis.aclose()
         await database.dispose()

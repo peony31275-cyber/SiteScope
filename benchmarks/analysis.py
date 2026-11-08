@@ -229,8 +229,17 @@ Call = Callable[[AsyncSession], Awaitable[Any]]
 
 async def cases(database: Database, job_id: uuid.UUID) -> dict[str, Call]:
     async with database.session() as session:
-        listing = await analysis.list_pages(session, job_id, limit=200)
-        source = listing.pages[0].page_id
+        # The first page in BFS order (as list_pages orders them), read directly: the cases must
+        # not depend on the plans they measure (Phase 10 measures them with stale statistics).
+        source = (
+            await session.execute(
+                text(
+                    "SELECT p.id FROM pages AS p JOIN crawl_urls AS u ON u.id = p.crawl_url_id"
+                    " WHERE p.job_id = :id ORDER BY u.depth, p.normalized_url LIMIT 1"
+                ),
+                {"id": job_id},
+            )
+        ).scalar_one()
         deep_url = (
             await session.execute(
                 text(
@@ -448,9 +457,9 @@ async def main() -> None:
         await database.dispose()
         await helpers.drop_database(settings)
     if args.output:
-        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")
     if args.plans:
-        args.plans.write_text("\n".join(plan_text), encoding="utf-8")
+        args.plans.write_text("\n".join(plan_text), encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

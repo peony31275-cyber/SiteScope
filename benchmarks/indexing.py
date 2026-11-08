@@ -392,8 +392,9 @@ async def main() -> None:
         )
         + "\n",
         encoding="utf-8",
+        newline="\n",
     )
-    args.plans.write_text(plan_text, encoding="utf-8")
+    args.plans.write_text(plan_text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

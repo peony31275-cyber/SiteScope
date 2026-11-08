@@ -21,6 +21,11 @@ ADR-0018):
 * **Stopping.** ``run`` returns when ``stop`` is set, after the running tasks finish, for at most
   ``grace_seconds`` (or until ``force``); the rest are cancelled and their messages stay pending,
   to be recovered like those of a crashed process.
+* **Observability** (Phase 10, ADR-0021). Each message's ``task.handled`` line carries its
+  duration, and on an error the stage it failed in. The loop counts messages by reason, their
+  durations, reclaimed messages and errors in the process's metrics registry, and, given a
+  ``HeartbeatPublisher``, writes a heartbeat with its state (tasks in flight, the time since its
+  last finished task, its error backoff) until it stops; a graceful stop removes it.
 """
 
 import abc
@@ -29,7 +34,7 @@ import contextlib
 import logging
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import partial
@@ -40,6 +45,8 @@ from app.core.logging import task_context_var
 from app.core.process import error_type, is_transient
 from app.core.tasks import cancel_and_wait
 from app.db.session import Database
+from app.observability.heartbeat import HeartbeatPublisher
+from app.observability.metrics import REGISTRY, Registry
 from app.queue.messages import StreamMessage
 from app.queue.streams import Delivery, TaskStream
 
@@ -72,9 +79,52 @@ class Handled:
 
 @dataclass
 class Progress:
-    """How far one message got: once its work was claimed, an error is not retried here."""
+    """How far one message got: once its work was claimed, an error is not retried here.
+    ``stage`` names the step running now (``claim``, ``crawl``, ``record``...): an error's
+    ``task.handled`` line reports it."""
 
     claimed: bool = False
+    stage: str = "start"
+
+
+class ConsumerMetrics:
+    """The metric families every consumer records (``app.observability.metrics``)."""
+
+    def __init__(self, registry: Registry) -> None:
+        self.handled = registry.counter(
+            "sitescope_tasks_handled_total",
+            "Messages handled, by reason and disposition (ack, keep, dead_letter).",
+            ("reason", "disposition"),
+        )
+        self.duration = registry.histogram(
+            "sitescope_task_duration_seconds",
+            "Time to handle one message, from its start to its settlement, by disposition.",
+            ("disposition",),
+        )
+        self.reclaimed = registry.counter(
+            "sitescope_messages_reclaimed_total",
+            "Messages taken over from the consumer group's pending list (XAUTOCLAIM).",
+        )
+        self.errors = registry.counter(
+            "sitescope_worker_errors_total",
+            "Errors that paused the consumer, by source (stream: reading; task: a message).",
+            ("source",),
+        )
+        self.settle_failures = registry.counter(
+            "sitescope_settle_failures_total",
+            "Messages that could not be acknowledged or dead-lettered (they stay pending).",
+        )
+        self.db_seconds = registry.histogram(
+            "sitescope_db_operation_seconds",
+            "Duration of one database transaction, by operation.",
+            ("operation",),
+        )
+        self.recoveries = registry.counter(
+            "sitescope_recoveries_total",
+            "Recoveries by kind: expired leases taken over, exhausted work failed, poison "
+            "messages quarantined.",
+            ("kind",),
+        )
 
 
 class ConsumerConfig(Protocol):
@@ -115,6 +165,7 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
         config: C,
         *,
         clock: Callable[[], float] = time.monotonic,
+        registry: Registry = REGISTRY,
     ) -> None:
         self._database = database
         self._stream = stream
@@ -124,7 +175,10 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
         self._stream_backoff = Backoff()
         self._task_backoff = Backoff()
         self._paused_until = 0.0
+        self._last_progress: float | None = None  # when a message was last settled
+        self._last_recovered: float | None = None  # when an outage last ended
         self.handled: Counter[str] = Counter()  # messages handled, by reason
+        self._metrics = ConsumerMetrics(registry)
 
     @property
     def name(self) -> str:
@@ -134,8 +188,51 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
     def in_flight(self) -> int:
         return len(self._tasks)
 
-    async def run(self, stop: asyncio.Event, force: asyncio.Event | None = None) -> None:
+    def heartbeat_state(self) -> dict[str, object]:
+        """This consumer's part of its process's heartbeat (``app.observability.heartbeat``)."""
+        now = self._clock()
+
+        def ago(moment: float | None) -> float | None:
+            return round(now - moment, 3) if moment is not None else None
+
+        return {
+            "in_flight": len(self._tasks),
+            "concurrency": self._config.concurrency,
+            "handled": dict(self.handled),
+            "last_progress_seconds_ago": ago(self._last_progress),
+            "last_recovered_seconds_ago": ago(self._last_recovered),
+            "paused_seconds": round(max(0.0, self._paused_until - now), 3),
+            "stream_failures": self._stream_backoff.failures,
+            "task_failures": self._task_backoff.failures,
+        }
+
+    @contextlib.contextmanager
+    def _timed(self, operation: str) -> Iterator[None]:
+        """Record the duration of a database transaction (``sitescope_db_operation_seconds``)."""
+        started = self._clock()
+        try:
+            yield
+        finally:
+            self._metrics.db_seconds.observe(self._clock() - started, operation=operation)
+
+    async def run(
+        self,
+        stop: asyncio.Event,
+        force: asyncio.Event | None = None,
+        *,
+        heartbeat: HeartbeatPublisher | None = None,
+    ) -> None:
         """Consume messages until ``stop`` is set, then drain (see the module docstring)."""
+        beating = asyncio.create_task(heartbeat.run()) if heartbeat is not None else None
+        try:
+            await self._consume(stop, force)
+        finally:
+            if beating is not None:
+                await cancel_and_wait(beating)
+            if heartbeat is not None:
+                await heartbeat.retire()
+
+    async def _consume(self, stop: asyncio.Event, force: asyncio.Event | None) -> None:
         config = self._config
         force = force if force is not None else asyncio.Event()
         if not await self._prepare(stop):
@@ -177,6 +274,7 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
                     self._pause(self._stream_backoff, "stream", exc)
                     continue
                 if self._stream_backoff.reset():
+                    self._last_recovered = self._clock()
                     logger.info(
                         "The task stream is reachable again",
                         extra={"event": "worker.recovered", "source": "stream"},
@@ -276,6 +374,7 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
                         "error_type": error_type(exc),
                     },
                 )
+            self._metrics.reclaimed.inc(len(reclaimed.deliveries))
             logger.info(
                 "Took over messages idle in the consumer group",
                 extra={
@@ -320,6 +419,7 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
         """Stop reading for a backoff delay after an error."""
         delay = backoff.next_delay()
         self._paused_until = max(self._paused_until, self._clock() + delay)
+        self._metrics.errors.inc(source=source)
         transient = is_transient(error)
         logger.log(
             logging.WARNING if transient else logging.ERROR,
@@ -398,15 +498,21 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
             )
             raise
         settled = await self._settle(delivery, handled, deliveries)
+        elapsed = self._clock() - started
         self.handled[handled.reason] += 1
+        disposition = handled.disposition.value
+        self._metrics.handled.inc(reason=handled.reason, disposition=disposition)
+        self._metrics.duration.observe(elapsed, disposition=disposition)
+        if settled:
+            self._last_progress = self._clock()
         extra: dict[str, object] = {
             "event": "task.handled",
-            "disposition": handled.disposition.value,
+            "disposition": disposition,
             "reason": handled.reason,
             "settled": settled,
             "reclaimed": reclaimed,
             "deliveries": deliveries,
-            "duration_ms": round((self._clock() - started) * 1000),
+            "duration_ms": round(elapsed * 1000),
             **(handled.details or {}),
         }
         if delivery.error is not None:
@@ -434,10 +540,15 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
                     or local_try == LOCAL_RETRIES
                     or self._clock() + wait >= give_up_at
                 ):
-                    return Handled(Disposition.KEEP, "error")
+                    return Handled(
+                        Disposition.KEEP,
+                        "error",
+                        {"stage": progress.stage, "error_type": error_type(exc)},
+                    )
                 await asyncio.sleep(wait)
                 continue
             if self._task_backoff.reset():
+                self._last_recovered = self._clock()
                 logger.info(
                     "Tasks succeed again", extra={"event": "worker.recovered", "source": "task"}
                 )
@@ -462,6 +573,7 @@ class StreamConsumer[T: StreamMessage, C: ConsumerConfig](abc.ABC):
         except Exception as exc:
             # The message stays pending. Its redelivery finds the work done and is acknowledged
             # then.
+            self._metrics.settle_failures.inc()
             logger.warning(
                 "Could not settle a message; it stays pending",
                 extra={

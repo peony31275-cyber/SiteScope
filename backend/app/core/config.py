@@ -185,6 +185,12 @@ class Settings(BaseSettings):
     # Tasks of one job queued or in progress at a time, and of all jobs together (backpressure).
     scheduler_max_in_flight_per_job: int = Field(default=100, ge=1, le=100_000)
     scheduler_max_outstanding: int = Field(default=1000, ge=1, le=1_000_000)
+    # A job's tasks queued or in progress are also limited to this many per politeness slot of
+    # its host (SITESCOPE_POLITENESS_MAX_CONCURRENT_PER_HOST); the smaller limit applies. A job
+    # crawls one host, and more tasks than its host can serve would only wait for a slot while
+    # holding a worker's task slot, with other hosts' tasks queued behind them (Phase 10,
+    # ADR-0022: docs/performance.md).
+    scheduler_tasks_per_host_slot: int = Field(default=2, ge=1, le=1000)
     # Jobs running at the same time; the oldest queued jobs start first.
     scheduler_max_running_jobs: int = Field(default=10, ge=1, le=10_000)
     # A queued task, or an expired lease, that has made no progress this long is published
@@ -239,6 +245,11 @@ class Settings(BaseSettings):
     # --- Process shutdown ------------------------------------------------------------------------
     # On SIGINT or SIGTERM, how long a worker lets its running tasks finish before it stops them.
     shutdown_grace_seconds: float = Field(default=30.0, ge=0, le=3600)
+
+    # --- Observability (Phase 10, ADR-0021) ------------------------------------------------------
+    # Every long-running process writes a heartbeat to Redis this often: its state and a snapshot
+    # of its metrics, which GET /metrics renders. A heartbeat expires after three intervals.
+    heartbeat_interval_seconds: float = Field(default=10.0, ge=1, le=300)
 
     # --- Politeness (app/crawler/politeness.py, app/crawler/robots.py) ---------------------------
     # Minimum seconds between the starts of two requests to one host, shared by every crawler

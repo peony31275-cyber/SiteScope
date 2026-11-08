@@ -1,21 +1,53 @@
 """What every crawl process (a crawler worker, the single-process driver) does the same way."""
 
 import asyncio
+import contextlib
+import time
+from collections.abc import AsyncIterator, Callable
 
 from redis.asyncio import Redis
 
 from app.core.config import Settings
-from app.crawler.fetcher import build_fetcher
+from app.crawler.fetcher import RequestGate, build_fetcher
 from app.crawler.html_parser import ParseLimits
 from app.crawler.politeness import build_gate
 from app.crawler.robots import build_robots_policy
+from app.crawler.urls import NormalizedUrl
 from app.db.models import UrlState
 from app.db.session import Database
+from app.observability.timing import task_timings_var
 from app.services.crawl_jobs import target_policy
 from app.services.crawl_state import Lease, UrlResult
 from app.workers.crawl_task import CrawlContext, crawl_url
 
 DEADLINE_EXCEEDED = "deadline_exceeded"
+
+
+class TimedGate:
+    """A request gate that times each slot's wait (Phase 10): the wait, granted or refused, is
+    added to the running task's ``TaskTimings`` (``app.observability.timing``), if it set one.
+    Admission itself is the wrapped gate's, unchanged."""
+
+    def __init__(self, gate: RequestGate, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self._gate = gate
+        self._clock = clock
+
+    @contextlib.asynccontextmanager
+    async def slot(self, url: NormalizedUrl) -> AsyncIterator[None]:
+        timings = task_timings_var.get()
+        started = self._clock()
+        granted = False
+        try:
+            async with self._gate.slot(url):
+                granted = True
+                if timings is not None:
+                    timings.politeness_wait += self._clock() - started
+                    timings.slots += 1
+                yield
+        finally:
+            if not granted and timings is not None:
+                timings.politeness_wait += self._clock() - started
+                timings.slots += 1
 
 
 def idle_transaction_timeout_ms(settings: Settings) -> int:
@@ -49,7 +81,7 @@ def build_crawl_context(settings: Settings, redis: Redis) -> CrawlContext:
     shares them (ADR-0015).
     """
     gate = build_gate(settings, redis)
-    fetcher = build_fetcher(settings, gate=gate)
+    fetcher = build_fetcher(settings, gate=TimedGate(gate))
     return CrawlContext(
         fetcher=fetcher,
         robots=build_robots_policy(settings, fetcher=fetcher, redis=redis, delay_sink=gate),

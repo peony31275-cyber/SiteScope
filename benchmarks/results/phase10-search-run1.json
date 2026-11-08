@@ -1,0 +1,1353 @@
+{
+  "benchmark": "search_latency",
+  "environment": {
+    "date_utc": "2026-11-08T11:10:00Z",
+    "command": "..\\benchmarks\\search_latency.py --output ..\\benchmarks\\results\\phase10-search.json --plans ..\\benchmarks\\results\\phase10-search-plans.txt",
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "machine": {
+      "cpu": "AMD Ryzen 7 5800U with Radeon Graphics",
+      "logical_cpus": 16,
+      "ram_gb": 15.3,
+      "on_ac_power": true,
+      "power_scheme_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    },
+    "wsl_vm": {
+      "cpus": 16,
+      "memory_gb": 7.4,
+      "kernel": "6.18.54.1-microsoft-standard-WSL2"
+    },
+    "postgresql": {
+      "version": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "settings": {
+        "effective_cache_size": "524288 8kB",
+        "fsync": "on",
+        "jit": "on",
+        "max_connections": "100",
+        "max_parallel_workers_per_gather": "2",
+        "random_page_cost": "4",
+        "shared_buffers": "16384 8kB",
+        "synchronous_commit": "on",
+        "work_mem": "4096 kB"
+      }
+    },
+    "redis": {
+      "version": "8.10.3",
+      "aof_enabled": 1,
+      "maxmemory": 0
+    },
+    "code": {
+      "current": {
+        "commit": "37ee3013af709bc2044348e10f3ddfa711b2ae02",
+        "tracked_changes": true
+      }
+    }
+  },
+  "configuration": {
+    "documents_per_job": [
+      2000,
+      10000
+    ],
+    "body_words": 1000,
+    "calls_per_query": 200,
+    "warm_up_calls_discarded": 5,
+    "results_per_page": 10,
+    "api_clients": "1,4,16",
+    "seconds_per_client_count": 15.0,
+    "search_documents_total": "115 MB",
+    "gin_index": "16 MB",
+    "variant": {
+      "current": "C:\\Users\\24419\\Desktop\\SITESCOPE\\backend"
+    }
+  },
+  "queries": {
+    "common_term": "babaduzo",
+    "medium_term": "belila",
+    "rare_term": "pegupu",
+    "very_rare_term": "zopomuse",
+    "two_terms": "babaduzo belila",
+    "three_terms": "badafibo belila fokora",
+    "or_terms": "belila or pegupu",
+    "phrase": "\"gebome baze\"",
+    "no_match": "zzzqqqxxx",
+    "stop_words_only": "the and of"
+  },
+  "service": [
+    {
+      "documents": 2000,
+      "query_kind": "common_term",
+      "query": "babaduzo",
+      "matches": 2000,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 32.65,
+        "p50": 34.24,
+        "p95": 37.79,
+        "p99": 42.02,
+        "max": 59.5,
+        "mean": 34.84
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "medium_term",
+      "query": "belila",
+      "matches": 1287,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 25.98,
+        "p50": 27.12,
+        "p95": 30.26,
+        "p99": 32.93,
+        "max": 37.95,
+        "mean": 27.6
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "rare_term",
+      "query": "pegupu",
+      "matches": 45,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 16.03,
+        "p50": 17.05,
+        "p95": 19.81,
+        "p99": 25.97,
+        "max": 32.67,
+        "mean": 17.54
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "very_rare_term",
+      "query": "zopomuse",
+      "matches": 28,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 15.68,
+        "p50": 16.74,
+        "p95": 19.47,
+        "p99": 20.45,
+        "max": 21.06,
+        "mean": 16.98
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "two_terms",
+      "query": "babaduzo belila",
+      "matches": 1287,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 30.16,
+        "p50": 31.5,
+        "p95": 41.63,
+        "p99": 45.64,
+        "max": 54.54,
+        "mean": 32.85
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "three_terms",
+      "query": "badafibo belila fokora",
+      "matches": 101,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 17.52,
+        "p50": 18.57,
+        "p95": 26.12,
+        "p99": 30.76,
+        "max": 34.41,
+        "mean": 19.91
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "or_terms",
+      "query": "belila or pegupu",
+      "matches": 1301,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 32.19,
+        "p50": 35.86,
+        "p95": 47.36,
+        "p99": 52.92,
+        "max": 67.38,
+        "mean": 37.62
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "phrase",
+      "query": "\"gebome baze\"",
+      "matches": 2,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 11.17,
+        "p50": 15.04,
+        "p95": 17.94,
+        "p99": 19.13,
+        "max": 24.79,
+        "mean": 14.77
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "no_match",
+      "query": "zzzqqqxxx",
+      "matches": 0,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 5.87,
+        "p50": 6.4,
+        "p95": 7.2,
+        "p99": 7.56,
+        "max": 8.09,
+        "mean": 6.49
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "stop_words_only",
+      "query": "the and of",
+      "matches": 0,
+      "searchable": false,
+      "ms": {
+        "n": 200,
+        "min": 5.06,
+        "p50": 5.5,
+        "p95": 6.14,
+        "p99": 6.22,
+        "max": 6.48,
+        "mean": 5.56
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "common_term",
+      "query": "babaduzo",
+      "matches": 10000,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 89.65,
+        "p50": 93.64,
+        "p95": 113.75,
+        "p99": 120.45,
+        "max": 140.29,
+        "mean": 96.14
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "medium_term",
+      "query": "belila",
+      "matches": 6431,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 62.51,
+        "p50": 75.8,
+        "p95": 100.57,
+        "p99": 114.96,
+        "max": 121.81,
+        "mean": 78.03
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "rare_term",
+      "query": "pegupu",
+      "matches": 237,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 18.6,
+        "p50": 19.89,
+        "p95": 21.58,
+        "p99": 22.98,
+        "max": 23.52,
+        "mean": 20.01
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "very_rare_term",
+      "query": "zopomuse",
+      "matches": 142,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 17.74,
+        "p50": 18.91,
+        "p95": 21.95,
+        "p99": 25.1,
+        "max": 29.74,
+        "mean": 19.31
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "two_terms",
+      "query": "babaduzo belila",
+      "matches": 6431,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 76.99,
+        "p50": 80.29,
+        "p95": 89.45,
+        "p99": 99.17,
+        "max": 132.49,
+        "mean": 81.34
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "three_terms",
+      "query": "badafibo belila fokora",
+      "matches": 521,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 24.12,
+        "p50": 25.39,
+        "p95": 28.26,
+        "p99": 34.86,
+        "max": 39.63,
+        "mean": 25.82
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "or_terms",
+      "query": "belila or pegupu",
+      "matches": 6525,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 76.93,
+        "p50": 85.48,
+        "p95": 114.51,
+        "p99": 138.62,
+        "max": 141.74,
+        "mean": 89.03
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "phrase",
+      "query": "\"gebome baze\"",
+      "matches": 2,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 14.58,
+        "p50": 15.81,
+        "p95": 19.8,
+        "p99": 22.76,
+        "max": 30.61,
+        "mean": 16.31
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "no_match",
+      "query": "zzzqqqxxx",
+      "matches": 0,
+      "searchable": true,
+      "ms": {
+        "n": 200,
+        "min": 9.42,
+        "p50": 10.86,
+        "p95": 14.52,
+        "p99": 16.46,
+        "max": 18.01,
+        "mean": 11.33
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "stop_words_only",
+      "query": "the and of",
+      "matches": 0,
+      "searchable": false,
+      "ms": {
+        "n": 200,
+        "min": 7.83,
+        "p50": 8.82,
+        "p95": 9.93,
+        "p99": 10.57,
+        "max": 11.14,
+        "mean": 8.89
+      }
+    }
+  ],
+  "pagination": [
+    {
+      "documents": 2000,
+      "offset": 0,
+      "matches": 2000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 36.64,
+        "p50": 37.84,
+        "p95": 39.38,
+        "p99": 42.42,
+        "max": 44.17,
+        "mean": 38.01
+      }
+    },
+    {
+      "documents": 2000,
+      "offset": 100,
+      "matches": 2000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 36.96,
+        "p50": 39.36,
+        "p95": 48.55,
+        "p99": 57.81,
+        "max": 77.44,
+        "mean": 41.22
+      }
+    },
+    {
+      "documents": 2000,
+      "offset": 500,
+      "matches": 2000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 36.89,
+        "p50": 38.09,
+        "p95": 42.03,
+        "p99": 49.69,
+        "max": 58.38,
+        "mean": 38.78
+      }
+    },
+    {
+      "documents": 2000,
+      "offset": 1000,
+      "matches": 2000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 36.97,
+        "p50": 38.35,
+        "p95": 40.85,
+        "p99": 43.26,
+        "max": 43.36,
+        "mean": 38.62
+      }
+    },
+    {
+      "documents": 10000,
+      "offset": 0,
+      "matches": 10000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 96.76,
+        "p50": 101.7,
+        "p95": 107.12,
+        "p99": 110.76,
+        "max": 132.43,
+        "mean": 102.07
+      }
+    },
+    {
+      "documents": 10000,
+      "offset": 100,
+      "matches": 10000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 96.95,
+        "p50": 101.46,
+        "p95": 111.17,
+        "p99": 118.96,
+        "max": 143.29,
+        "mean": 102.7
+      }
+    },
+    {
+      "documents": 10000,
+      "offset": 500,
+      "matches": 10000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 96.29,
+        "p50": 101.17,
+        "p95": 120.88,
+        "p99": 144.63,
+        "max": 148.85,
+        "mean": 104.31
+      }
+    },
+    {
+      "documents": 10000,
+      "offset": 1000,
+      "matches": 10000,
+      "searchable": true,
+      "ms": {
+        "n": 100,
+        "min": 95.45,
+        "p50": 101.91,
+        "p95": 112.47,
+        "p99": 118.1,
+        "max": 118.95,
+        "mean": 102.39
+      }
+    }
+  ],
+  "plans": [
+    {
+      "documents": 2000,
+      "query_kind": "common_term",
+      "planning_ms": 0.612,
+      "execution_ms": 27.588,
+      "gin_used": false,
+      "scans": [
+        "Bitmap Heap Scan pages",
+        "Bitmap Index Scan ix_pages_job_id_normalized_url",
+        "CTE Scan",
+        "Index Scan ix_search_documents_job_id",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "medium_term",
+      "planning_ms": 0.511,
+      "execution_ms": 23.341,
+      "gin_used": false,
+      "scans": [
+        "Bitmap Heap Scan pages",
+        "Bitmap Index Scan ix_pages_job_id_normalized_url",
+        "CTE Scan",
+        "Index Scan ix_search_documents_job_id",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "rare_term",
+      "planning_ms": 0.519,
+      "execution_ms": 9.306,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_job_id",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "very_rare_term",
+      "planning_ms": 0.599,
+      "execution_ms": 10.084,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_job_id",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "two_terms",
+      "planning_ms": 0.542,
+      "execution_ms": 25.492,
+      "gin_used": false,
+      "scans": [
+        "Bitmap Heap Scan pages",
+        "Bitmap Index Scan ix_pages_job_id_normalized_url",
+        "CTE Scan",
+        "Index Scan ix_search_documents_job_id",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "three_terms",
+      "planning_ms": 0.879,
+      "execution_ms": 27.284,
+      "gin_used": false,
+      "scans": [
+        "CTE Scan",
+        "Index Scan ix_search_documents_job_id",
+        "Index Scan pk_pages",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "or_terms",
+      "planning_ms": 0.704,
+      "execution_ms": 28.098,
+      "gin_used": false,
+      "scans": [
+        "Bitmap Heap Scan pages",
+        "Bitmap Index Scan ix_pages_job_id_normalized_url",
+        "CTE Scan",
+        "Index Scan ix_search_documents_job_id",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "phrase",
+      "planning_ms": 0.522,
+      "execution_ms": 2.335,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_job_id",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 2000,
+      "query_kind": "no_match",
+      "planning_ms": 0.503,
+      "execution_ms": 0.048,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_job_id",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "common_term",
+      "planning_ms": 0.571,
+      "execution_ms": 112.444,
+      "gin_used": false,
+      "scans": [
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id",
+        "Seq Scan pages",
+        "Seq Scan search_documents"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "medium_term",
+      "planning_ms": 0.524,
+      "execution_ms": 88.989,
+      "gin_used": false,
+      "scans": [
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id",
+        "Seq Scan pages",
+        "Seq Scan search_documents"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "rare_term",
+      "planning_ms": 0.503,
+      "execution_ms": 11.171,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_pages",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "very_rare_term",
+      "planning_ms": 0.527,
+      "execution_ms": 10.166,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_pages",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "two_terms",
+      "planning_ms": 0.523,
+      "execution_ms": 104.047,
+      "gin_used": false,
+      "scans": [
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id",
+        "Seq Scan pages",
+        "Seq Scan search_documents"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "three_terms",
+      "planning_ms": 0.601,
+      "execution_ms": 16.995,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id",
+        "Seq Scan pages"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "or_terms",
+      "planning_ms": 0.536,
+      "execution_ms": 98.765,
+      "gin_used": false,
+      "scans": [
+        "CTE Scan",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id",
+        "Seq Scan pages",
+        "Seq Scan search_documents"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "phrase",
+      "planning_ms": 0.563,
+      "execution_ms": 5.427,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_pages",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    },
+    {
+      "documents": 10000,
+      "query_kind": "no_match",
+      "planning_ms": 0.596,
+      "execution_ms": 0.057,
+      "gin_used": true,
+      "scans": [
+        "Bitmap Heap Scan search_documents",
+        "Bitmap Index Scan ix_search_documents_search_vector",
+        "CTE Scan",
+        "Index Scan pk_pages",
+        "Index Scan pk_search_documents",
+        "Index Scan uq_pages_id_job_id"
+      ]
+    }
+  ],
+  "api_sequential": [
+    {
+      "documents": 2000,
+      "query_kind": "common_term",
+      "ms": {
+        "n": 200,
+        "min": 39.75,
+        "p50": 56.27,
+        "p95": 158.91,
+        "p99": 220.73,
+        "max": 231.25,
+        "mean": 73.77
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "medium_term",
+      "ms": {
+        "n": 200,
+        "min": 37.47,
+        "p50": 46.87,
+        "p95": 138.27,
+        "p99": 152.13,
+        "max": 167.89,
+        "mean": 58.22
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "rare_term",
+      "ms": {
+        "n": 200,
+        "min": 17.69,
+        "p50": 23.32,
+        "p95": 28.48,
+        "p99": 31.77,
+        "max": 34.28,
+        "mean": 22.94
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "very_rare_term",
+      "ms": {
+        "n": 200,
+        "min": 17.39,
+        "p50": 20.83,
+        "p95": 27.05,
+        "p99": 28.59,
+        "max": 29.71,
+        "mean": 21.34
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "two_terms",
+      "ms": {
+        "n": 200,
+        "min": 32.1,
+        "p50": 33.11,
+        "p95": 34.55,
+        "p99": 36.63,
+        "max": 38.97,
+        "mean": 33.23
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "three_terms",
+      "ms": {
+        "n": 200,
+        "min": 19.58,
+        "p50": 22.91,
+        "p95": 32.43,
+        "p99": 40.47,
+        "max": 51.33,
+        "mean": 24.27
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "or_terms",
+      "ms": {
+        "n": 200,
+        "min": 29.99,
+        "p50": 31.35,
+        "p95": 34.16,
+        "p99": 39.07,
+        "max": 45.78,
+        "mean": 31.7
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "phrase",
+      "ms": {
+        "n": 200,
+        "min": 13.92,
+        "p50": 15.18,
+        "p95": 17.5,
+        "p99": 23.44,
+        "max": 25.96,
+        "mean": 15.58
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "no_match",
+      "ms": {
+        "n": 200,
+        "min": 7.85,
+        "p50": 8.7,
+        "p95": 9.99,
+        "p99": 11.05,
+        "max": 11.92,
+        "mean": 8.83
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 2000,
+      "query_kind": "stop_words_only",
+      "ms": {
+        "n": 200,
+        "min": 7.05,
+        "p50": 7.95,
+        "p95": 11.03,
+        "p99": 13.3,
+        "max": 14.69,
+        "mean": 8.34
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "common_term",
+      "ms": {
+        "n": 200,
+        "min": 92.05,
+        "p50": 94.84,
+        "p95": 111.19,
+        "p99": 138.13,
+        "max": 148.92,
+        "mean": 97.19
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "medium_term",
+      "ms": {
+        "n": 200,
+        "min": 65.41,
+        "p50": 67.6,
+        "p95": 73.11,
+        "p99": 84.35,
+        "max": 104.62,
+        "mean": 68.55
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "rare_term",
+      "ms": {
+        "n": 200,
+        "min": 21.16,
+        "p50": 22.57,
+        "p95": 28.31,
+        "p99": 36.48,
+        "max": 46.87,
+        "mean": 23.29
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "very_rare_term",
+      "ms": {
+        "n": 200,
+        "min": 20.81,
+        "p50": 22.03,
+        "p95": 25.09,
+        "p99": 28.8,
+        "max": 31.5,
+        "mean": 22.42
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "two_terms",
+      "ms": {
+        "n": 200,
+        "min": 80.03,
+        "p50": 82.65,
+        "p95": 88.49,
+        "p99": 93.82,
+        "max": 116.02,
+        "mean": 83.26
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "three_terms",
+      "ms": {
+        "n": 200,
+        "min": 25.68,
+        "p50": 27.21,
+        "p95": 30.38,
+        "p99": 30.93,
+        "max": 31.39,
+        "mean": 27.53
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "or_terms",
+      "ms": {
+        "n": 200,
+        "min": 72.01,
+        "p50": 75.73,
+        "p95": 88.3,
+        "p99": 106.13,
+        "max": 127.0,
+        "mean": 77.74
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "phrase",
+      "ms": {
+        "n": 200,
+        "min": 16.76,
+        "p50": 17.83,
+        "p95": 19.82,
+        "p99": 23.09,
+        "max": 24.39,
+        "mean": 18.09
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "no_match",
+      "ms": {
+        "n": 200,
+        "min": 10.47,
+        "p50": 11.43,
+        "p95": 13.73,
+        "p99": 19.05,
+        "max": 20.77,
+        "mean": 11.74
+      },
+      "statuses": {
+        "200": 200
+      }
+    },
+    {
+      "documents": 10000,
+      "query_kind": "stop_words_only",
+      "ms": {
+        "n": 200,
+        "min": 9.58,
+        "p50": 11.07,
+        "p95": 16.21,
+        "p99": 18.38,
+        "max": 20.05,
+        "mean": 12.05
+      },
+      "statuses": {
+        "200": 200
+      }
+    }
+  ],
+  "api_concurrent": [
+    {
+      "clients": 1,
+      "seconds": 15.03,
+      "requests": 415,
+      "requests_per_second": 27.6,
+      "ms": {
+        "n": 415,
+        "min": 7.37,
+        "p50": 26.34,
+        "p95": 96.41,
+        "p99": 118.24,
+        "max": 139.53,
+        "mean": 36.22
+      },
+      "statuses": {
+        "200": 415
+      },
+      "activity": {
+        "samples": 30,
+        "connections_max": 1,
+        "active_mean": 0.57,
+        "active_max": 1,
+        "lock_waits_max": 0,
+        "samples_with_lock_waits": 0
+      },
+      "processes": {
+        "benchmark": {
+          "cpu_seconds": 0.5,
+          "cpu_cores": 0.033,
+          "working_set_mb_start": 174.7,
+          "working_set_mb_end": 174.8,
+          "working_set_mb_peak": 174.8,
+          "private_mb_end": 161.7
+        },
+        "api": {
+          "cpu_seconds": 2.23,
+          "cpu_cores": 0.149,
+          "working_set_mb_start": 88.2,
+          "working_set_mb_end": 88.3,
+          "working_set_mb_peak": 88.3,
+          "private_mb_end": 73.0
+        }
+      },
+      "machine": {
+        "windows_samples": 14,
+        "processor_performance_pct": {
+          "mean": 176.9,
+          "min": 144.2,
+          "max": 196.6
+        },
+        "processor_utility_pct": {
+          "mean": 27.0,
+          "min": 18.7,
+          "max": 42.2
+        },
+        "performance_limit_pct": {
+          "mean": 100.0,
+          "min": 100.0,
+          "max": 100.0
+        },
+        "processor_time_pct": {
+          "mean": 14.1,
+          "min": 7.9,
+          "max": 28.5
+        },
+        "wsl_vm_busy_pct": {
+          "mean": 5.7,
+          "max": 6.7
+        },
+        "postgres_cpu_cores": {
+          "mean": 0.76,
+          "max": 0.85,
+          "cpu_seconds": 10.74
+        },
+        "redis_cpu_cores": {
+          "mean": 0.01,
+          "max": 0.05,
+          "cpu_seconds": 0.14
+        }
+      }
+    },
+    {
+      "clients": 4,
+      "seconds": 15.05,
+      "requests": 1104,
+      "requests_per_second": 73.4,
+      "ms": {
+        "n": 1104,
+        "min": 11.25,
+        "p50": 38.31,
+        "p95": 144.4,
+        "p99": 182.33,
+        "max": 215.74,
+        "mean": 54.44
+      },
+      "statuses": {
+        "200": 1104
+      },
+      "activity": {
+        "samples": 30,
+        "connections_max": 4,
+        "active_mean": 2.83,
+        "active_max": 4,
+        "lock_waits_max": 0,
+        "samples_with_lock_waits": 0
+      },
+      "processes": {
+        "benchmark": {
+          "cpu_seconds": 2.27,
+          "cpu_cores": 0.151,
+          "working_set_mb_start": 174.8,
+          "working_set_mb_end": 174.9,
+          "working_set_mb_peak": 174.9,
+          "private_mb_end": 161.7
+        },
+        "api": {
+          "cpu_seconds": 6.89,
+          "cpu_cores": 0.458,
+          "working_set_mb_start": 88.3,
+          "working_set_mb_end": 89.8,
+          "working_set_mb_peak": 89.8,
+          "private_mb_end": 74.4
+        }
+      },
+      "machine": {
+        "windows_samples": 14,
+        "processor_performance_pct": {
+          "mean": 130.8,
+          "min": 117.6,
+          "max": 139.1
+        },
+        "processor_utility_pct": {
+          "mean": 48.3,
+          "min": 41.8,
+          "max": 57.9
+        },
+        "performance_limit_pct": {
+          "mean": 100.0,
+          "min": 100.0,
+          "max": 100.0
+        },
+        "processor_time_pct": {
+          "mean": 34.5,
+          "min": 27.7,
+          "max": 47.4
+        },
+        "wsl_vm_busy_pct": {
+          "mean": 21.8,
+          "max": 23.4
+        },
+        "postgres_cpu_cores": {
+          "mean": 2.96,
+          "max": 3.13,
+          "cpu_seconds": 41.9
+        },
+        "redis_cpu_cores": {
+          "mean": 0.01,
+          "max": 0.06,
+          "cpu_seconds": 0.2
+        }
+      }
+    },
+    {
+      "clients": 16,
+      "seconds": 15.22,
+      "requests": 1593,
+      "requests_per_second": 104.6,
+      "ms": {
+        "n": 1593,
+        "min": 20.16,
+        "p50": 128.18,
+        "p95": 303.65,
+        "p99": 342.67,
+        "max": 452.13,
+        "mean": 151.46
+      },
+      "statuses": {
+        "200": 1593
+      },
+      "activity": {
+        "samples": 30,
+        "connections_max": 10,
+        "active_mean": 6.6,
+        "active_max": 8,
+        "lock_waits_max": 0,
+        "samples_with_lock_waits": 0
+      },
+      "processes": {
+        "benchmark": {
+          "cpu_seconds": 3.95,
+          "cpu_cores": 0.26,
+          "working_set_mb_start": 174.9,
+          "working_set_mb_end": 175.2,
+          "working_set_mb_peak": 175.2,
+          "private_mb_end": 161.7
+        },
+        "api": {
+          "cpu_seconds": 13.73,
+          "cpu_cores": 0.902,
+          "working_set_mb_start": 89.8,
+          "working_set_mb_end": 92.3,
+          "working_set_mb_peak": 92.3,
+          "private_mb_end": 77.0
+        }
+      },
+      "machine": {
+        "windows_samples": 15,
+        "processor_performance_pct": {
+          "mean": 106.8,
+          "min": 103.8,
+          "max": 109.5
+        },
+        "processor_utility_pct": {
+          "mean": 70.7,
+          "min": 66.9,
+          "max": 76.6
+        },
+        "performance_limit_pct": {
+          "mean": 100.0,
+          "min": 100.0,
+          "max": 100.0
+        },
+        "processor_time_pct": {
+          "mean": 63.0,
+          "min": 58.3,
+          "max": 71.8
+        },
+        "wsl_vm_busy_pct": {
+          "mean": 48.8,
+          "max": 51.4
+        },
+        "postgres_cpu_cores": {
+          "mean": 6.8,
+          "max": 7.27,
+          "cpu_seconds": 97.1
+        },
+        "redis_cpu_cores": {
+          "mean": 0.02,
+          "max": 0.08,
+          "cpu_seconds": 0.27
+        }
+      }
+    }
+  ]
+}

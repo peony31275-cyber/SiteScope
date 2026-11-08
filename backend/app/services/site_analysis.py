@@ -307,6 +307,15 @@ class CrawlStats:
 # --- SQL -----------------------------------------------------------------------------------------
 
 _SNAPSHOT = text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+# Every analysis read is planned without nested loops (Phase 10, ADR-0023). When the statistics
+# have not seen a job yet (it is newer than the tables' last ANALYZE), the planner estimates each
+# of its tables at one row and chains nested loops that scan the job's rows again for every row,
+# the join conditions as filters: the statistics read took 5.6 s instead of 15 ms for a job of
+# 372 URLs, and for one of 11,111 pages every read but the graph ran into the 10 s time limit
+# (benchmarks/admission_plans.py). Hash joins are linear in the job whatever the estimates. The
+# price: a page of links, which nested loops read through the indexes in under a millisecond,
+# joins all of the job's links (its statement: 19.5 ms for 22,220 links, 181 ms for 222,220).
+_HASH_JOINS_ONLY = text("SET LOCAL enable_nestloop = off")
 _STATEMENT_TIMEOUT = text("SELECT set_config('statement_timeout', :timeout, true)")
 # Plan every execution with its parameters. asyncpg prepares a statement once per connection, and
 # after five executions PostgreSQL may switch to a generic plan, which cannot drop the optional
@@ -926,11 +935,13 @@ async def _read_only(
     session: AsyncSession, job_id: uuid.UUID, timeout_seconds: float
 ) -> AsyncIterator[Any]:
     """``read_only_snapshot`` for one job that must exist (``NotFoundError`` otherwise); yields
-    the job row."""
+    the job row. The job's statements are planned with hash joins only (``_HASH_JOINS_ONLY``,
+    ADR-0023) until the transaction ends."""
     async with read_only_snapshot(session, timeout_seconds):
         job = (await session.execute(_JOB, {"job_id": job_id})).one_or_none()
         if job is None:
             raise NotFoundError(f"Crawl job {job_id} does not exist.")
+        await session.execute(_HASH_JOINS_ONLY)
         yield job
 
 

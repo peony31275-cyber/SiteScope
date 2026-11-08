@@ -38,6 +38,9 @@ def test_an_index_pass_is_busy_only_when_it_changed_something() -> None:
     assert IndexPassReport(republished=1).busy
     assert IndexPassReport(completed_jobs=1).busy
     assert IndexPassReport(failed_jobs=1).busy
+    # A failed job is worth a log line, but it is not progress (Phase 10 review).
+    assert IndexPassReport(completed_jobs=1).progressed
+    assert not IndexPassReport(failed_jobs=1).progressed
 
 
 def test_the_search_command_prints_ascii_json_with_highlights_and_freshness() -> None:

@@ -1,0 +1,1311 @@
+{
+  "benchmark": "admission_plans",
+  "environment": {
+    "date_utc": "2026-11-08T11:53:05Z",
+    "command": "..\\benchmarks\\admission_plans.py --earlier-pages 2000 --pages 20000 --links 20 --level 3 --output ..\\benchmarks\\results\\phase10-analysis-reads-large.json --plans ..\\benchmarks\\results\\phase10-analysis-reads-large.txt",
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "machine": {
+      "cpu": "AMD Ryzen 7 5800U with Radeon Graphics",
+      "logical_cpus": 16,
+      "ram_gb": 15.3,
+      "on_ac_power": true,
+      "power_scheme_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    },
+    "wsl_vm": {
+      "cpus": 16,
+      "memory_gb": 7.4,
+      "kernel": "6.18.54.1-microsoft-standard-WSL2"
+    },
+    "postgresql": {
+      "version": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "settings": {
+        "effective_cache_size": "524288 8kB",
+        "fsync": "on",
+        "jit": "on",
+        "max_connections": "100",
+        "max_parallel_workers_per_gather": "2",
+        "random_page_cost": "4",
+        "shared_buffers": "16384 8kB",
+        "synchronous_commit": "on",
+        "work_mem": "4096 kB"
+      }
+    },
+    "redis": {
+      "version": "8.10.3",
+      "aof_enabled": 1,
+      "maxmemory": 0
+    },
+    "code": {}
+  },
+  "configuration": {
+    "earlier_job_pages": 2000,
+    "new_job_generator_pages": 20000,
+    "links_per_page": 20,
+    "admitted_level": 4,
+    "new_job_urls": 2302,
+    "new_job_links": 22220,
+    "level_urls": 1393,
+    "repeat": 3,
+    "autovacuum": "off on crawl_urls, pages and page_links after the earlier job"
+  },
+  "results": [
+    {
+      "statistics": "stale",
+      "nested_loops": "allowed",
+      "ms": [],
+      "ms_median": null,
+      "timed_out_after_ms": 60000,
+      "admitted": -1
+    },
+    {
+      "statistics": "stale",
+      "nested_loops": "off",
+      "ms": [
+        442.8,
+        564.2,
+        445.3
+      ],
+      "ms_median": 445.3,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    },
+    {
+      "statistics": "fresh",
+      "nested_loops": "allowed",
+      "ms": [
+        330.5,
+        333.6,
+        329.6
+      ],
+      "ms_median": 330.5,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    },
+    {
+      "statistics": "fresh",
+      "nested_loops": "off",
+      "ms": [
+        351.6,
+        331.8,
+        334.0
+      ],
+      "ms_median": 334.0,
+      "timed_out_after_ms": null,
+      "admitted": 11866
+    }
+  ],
+  "reads": {
+    "stale": {
+      "job detail": {
+        "ms": [
+          16.1,
+          8.2,
+          8.9
+        ],
+        "ms_median": 8.9,
+        "error": null
+      },
+      "pages: first 50": {
+        "ms": [
+          313.2,
+          313.4,
+          286.3
+        ],
+        "ms_median": 313.2,
+        "error": null
+      },
+      "pages: 50 after a deep cursor": {
+        "ms": [
+          8.8,
+          8.3,
+          7.8
+        ],
+        "ms_median": 8.3,
+        "error": null
+      },
+      "links: first 50": {
+        "ms": [
+          242.0,
+          248.6,
+          238.0
+        ],
+        "ms_median": 242.0,
+        "error": null
+      },
+      "links: 50 after a deep cursor": {
+        "ms": [
+          254.8,
+          261.0,
+          363.3
+        ],
+        "ms_median": 261.0,
+        "error": null
+      },
+      "links: one source page": {
+        "ms": [
+          230.0,
+          220.4,
+          284.5
+        ],
+        "ms_median": 230.0,
+        "error": null
+      },
+      "links: class broken, first 50": {
+        "ms": [
+          83.4,
+          72.1,
+          70.3
+        ],
+        "ms_median": 72.1,
+        "error": null
+      },
+      "broken links: first 50": {
+        "ms": [
+          17.4,
+          15.8,
+          15.7
+        ],
+        "ms_median": 15.8,
+        "error": null
+      },
+      "link graph: 500 nodes, 2000 edges": {
+        "ms": [
+          115.8,
+          104.0,
+          105.8
+        ],
+        "ms_median": 105.8,
+        "error": null
+      },
+      "link graph: 2000 nodes, 10000 edges": {
+        "ms": [
+          651.6,
+          685.9,
+          674.4
+        ],
+        "ms_median": 674.4,
+        "error": null
+      },
+      "statistics": {
+        "ms": [
+          106.4,
+          99.3,
+          99.0
+        ],
+        "ms_median": 99.3,
+        "error": null
+      }
+    },
+    "fresh": {
+      "job detail": {
+        "ms": [
+          8.2,
+          8.0,
+          7.6
+        ],
+        "ms_median": 8.0,
+        "error": null
+      },
+      "pages: first 50": {
+        "ms": [
+          10.9,
+          10.2,
+          10.0
+        ],
+        "ms_median": 10.2,
+        "error": null
+      },
+      "pages: 50 after a deep cursor": {
+        "ms": [
+          9.7,
+          9.5,
+          9.2
+        ],
+        "ms_median": 9.5,
+        "error": null
+      },
+      "links: first 50": {
+        "ms": [
+          8.1,
+          7.8,
+          7.9
+        ],
+        "ms_median": 7.9,
+        "error": null
+      },
+      "links: 50 after a deep cursor": {
+        "ms": [
+          7.8,
+          7.8,
+          7.4
+        ],
+        "ms_median": 7.8,
+        "error": null
+      },
+      "links: one source page": {
+        "ms": [
+          6.8,
+          7.3,
+          6.9
+        ],
+        "ms_median": 6.9,
+        "error": null
+      },
+      "links: class broken, first 50": {
+        "ms": [
+          33.9,
+          34.0,
+          33.3
+        ],
+        "ms_median": 33.9,
+        "error": null
+      },
+      "broken links: first 50": {
+        "ms": [
+          30.4,
+          28.8,
+          29.0
+        ],
+        "ms_median": 29.0,
+        "error": null
+      },
+      "link graph: 500 nodes, 2000 edges": {
+        "ms": [
+          82.4,
+          79.1,
+          84.2
+        ],
+        "ms_median": 82.4,
+        "error": null
+      },
+      "link graph: 2000 nodes, 10000 edges": {
+        "ms": [
+          95.1,
+          172.6,
+          122.7
+        ],
+        "ms_median": 122.7,
+        "error": null
+      },
+      "statistics": {
+        "ms": [
+          79.9,
+          78.5,
+          77.1
+        ],
+        "ms_median": 78.5,
+        "error": null
+      }
+    }
+  },
+  "read_plans": {
+    "stale": {
+      "job detail": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 0,
+          "sql": "SELECT crawl_jobs.id, crawl_jobs.seed_url, crawl_jobs.allowed_hosts, crawl_jobs.",
+          "execution_ms": 1.9,
+          "nested_loops": 3
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 0,
+          "sql": "SELECT crawl_jobs.id, crawl_jobs.seed_url, crawl_jobs.allowed_hosts, crawl_jobs.",
+          "execution_ms": 1.9,
+          "nested_loops": 3
+        }
+      ],
+      "pages: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 304.9,
+          "nested_loops": 2
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.1,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 2.1,
+          "nested_loops": 0
+        }
+      ],
+      "pages: 50 after a deep cursor": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 1.6,
+          "nested_loops": 2
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 1.6,
+          "nested_loops": 0
+        }
+      ],
+      "links: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 370.4,
+          "nested_loops": 6
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 22.2,
+          "nested_loops": 1
+        }
+      ],
+      "links: 50 after a deep cursor": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 377.0,
+          "nested_loops": 6
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 12.7,
+          "nested_loops": 1
+        }
+      ],
+      "links: one source page": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 322.9,
+          "nested_loops": 6
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 9.3,
+          "nested_loops": 2
+        }
+      ],
+      "links: class broken, first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "error": "QueryCanceledError"
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 77.1,
+          "nested_loops": 1
+        }
+      ],
+      "broken links: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "error": "QueryCanceledError"
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 9.1,
+          "nested_loops": 2
+        }
+      ],
+      "link graph: 500 nodes, 2000 edges": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 90.8,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 18.4,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 11.2,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 36.5,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 16.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 11.9,
+          "nested_loops": 0
+        }
+      ],
+      "link graph: 2000 nodes, 10000 edges": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 201.0,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 821.3,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 8.4,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 34.8,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 11.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 6.3,
+          "nested_loops": 0
+        }
+      ],
+      "statistics": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "SELECT state, count(*) AS n FROM crawl_urls WHERE job_id = $1 GROUP BY state",
+          "execution_ms": 1.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FILTER (WHERE http_status BETWEEN 100 AND 199) AS s1, count(*) F",
+          "execution_ms": 0.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 7,
+          "sql": "SELECT u.depth, count(*) AS urls, count(*) FILTER (WHERE u.state = 'fetched') AS",
+          "execution_ms": 316.0,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 8,
+          "sql": "SELECT j.indexing_completed_at, c.* FROM crawl_jobs AS j CROSS JOIN LATERAL ( SE",
+          "execution_ms": 0.1,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 9,
+          "sql": "SELECT count(*) AS total, count(*) FILTER (WHERE is_internal) AS internal, count",
+          "execution_ms": 22.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 10,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 9017.9,
+          "nested_loops": 4
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 11,
+          "sql": "SELECT l.target_normalized_url AS url, p.id AS page_id, count(*) AS in_links FRO",
+          "error": "QueryCanceledError"
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "SELECT state, count(*) AS n FROM crawl_urls WHERE job_id = $1 GROUP BY state",
+          "execution_ms": 0.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FILTER (WHERE http_status BETWEEN 100 AND 199) AS s1, count(*) F",
+          "execution_ms": 0.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 7,
+          "sql": "SELECT u.depth, count(*) AS urls, count(*) FILTER (WHERE u.state = 'fetched') AS",
+          "execution_ms": 1.6,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 8,
+          "sql": "SELECT j.indexing_completed_at, c.* FROM crawl_jobs AS j CROSS JOIN LATERAL ( SE",
+          "execution_ms": 0.1,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 9,
+          "sql": "SELECT count(*) AS total, count(*) FILTER (WHERE is_internal) AS internal, count",
+          "execution_ms": 22.5,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 10,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 60.0,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 11,
+          "sql": "SELECT l.target_normalized_url AS url, p.id AS page_id, count(*) AS in_links FRO",
+          "execution_ms": 20.3,
+          "nested_loops": 0
+        }
+      ]
+    },
+    "fresh": {
+      "job detail": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 0,
+          "sql": "SELECT crawl_jobs.id, crawl_jobs.seed_url, crawl_jobs.allowed_hosts, crawl_jobs.",
+          "execution_ms": 3.1,
+          "nested_loops": 3
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 0,
+          "sql": "SELECT crawl_jobs.id, crawl_jobs.seed_url, crawl_jobs.allowed_hosts, crawl_jobs.",
+          "execution_ms": 2.9,
+          "nested_loops": 3
+        }
+      ],
+      "pages: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 3.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 3.8,
+          "nested_loops": 0
+        }
+      ],
+      "pages: 50 after a deep cursor": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 3.1,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "SELECT p.id, p.normalized_url, p.title, p.meta_description, p.http_status, p.con",
+          "execution_ms": 3.7,
+          "nested_loops": 0
+        }
+      ],
+      "links: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 0.5,
+          "nested_loops": 7
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 19.5,
+          "nested_loops": 1
+        }
+      ],
+      "links: 50 after a deep cursor": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 0.5,
+          "nested_loops": 7
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 14.4,
+          "nested_loops": 1
+        }
+      ],
+      "links: one source page": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 0.3,
+          "nested_loops": 7
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH RECURSIVE candidates AS MATERIALIZED ( SELECT l.source_page_id, sp.normaliz",
+          "execution_ms": 8.5,
+          "nested_loops": 2
+        }
+      ],
+      "links: class broken, first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 23.1,
+          "nested_loops": 4
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 26.5,
+          "nested_loops": 1
+        }
+      ],
+      "broken links: first 50": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 11.5,
+          "nested_loops": 8
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 20.7,
+          "nested_loops": 2
+        }
+      ],
+      "link graph: 500 nodes, 2000 edges": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 25.7,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 0.5,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 5.1,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 26.2,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 5.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 4.8,
+          "nested_loops": 0
+        }
+      ],
+      "link graph: 2000 nodes, 10000 edges": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 53.6,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 6.1,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 4.9,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 4,
+          "sql": "WITH node_urls AS ( SELECT normalized_url AS url FROM crawl_urls WHERE job_id = ",
+          "execution_ms": 54.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "WITH targets AS MATERIALIZED (SELECT url FROM unnest(CAST($1 AS text[])) AS t(ur",
+          "execution_ms": 10.4,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FROM page_links WHERE job_id = $1 AND is_internal",
+          "execution_ms": 5.0,
+          "nested_loops": 0
+        }
+      ],
+      "statistics": [
+        {
+          "variant": "nested loops allowed",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 5,
+          "sql": "SELECT state, count(*) AS n FROM crawl_urls WHERE job_id = $1 GROUP BY state",
+          "execution_ms": 3.1,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 6,
+          "sql": "SELECT count(*) FILTER (WHERE http_status BETWEEN 100 AND 199) AS s1, count(*) F",
+          "execution_ms": 3.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 7,
+          "sql": "SELECT u.depth, count(*) AS urls, count(*) FILTER (WHERE u.state = 'fetched') AS",
+          "execution_ms": 3.7,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 8,
+          "sql": "SELECT j.indexing_completed_at, c.* FROM crawl_jobs AS j CROSS JOIN LATERAL ( SE",
+          "execution_ms": 0.1,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 9,
+          "sql": "SELECT count(*) AS total, count(*) FILTER (WHERE is_internal) AS internal, count",
+          "execution_ms": 25.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 10,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 24.3,
+          "nested_loops": 2
+        },
+        {
+          "variant": "nested loops allowed",
+          "statement": 11,
+          "sql": "SELECT l.target_normalized_url AS url, p.id AS page_id, count(*) AS in_links FRO",
+          "execution_ms": 19.3,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 3,
+          "sql": "SELECT id, status, current_level, max_depth, max_pages, admitted_count FROM craw",
+          "execution_ms": 0.0,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 5,
+          "sql": "SELECT state, count(*) AS n FROM crawl_urls WHERE job_id = $1 GROUP BY state",
+          "execution_ms": 2.8,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 6,
+          "sql": "SELECT count(*) FILTER (WHERE http_status BETWEEN 100 AND 199) AS s1, count(*) F",
+          "execution_ms": 2.8,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 7,
+          "sql": "SELECT u.depth, count(*) AS urls, count(*) FILTER (WHERE u.state = 'fetched') AS",
+          "execution_ms": 3.5,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 8,
+          "sql": "SELECT j.indexing_completed_at, c.* FROM crawl_jobs AS j CROSS JOIN LATERAL ( SE",
+          "execution_ms": 0.2,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 9,
+          "sql": "SELECT count(*) AS total, count(*) FILTER (WHERE is_internal) AS internal, count",
+          "execution_ms": 25.2,
+          "nested_loops": 0
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 10,
+          "sql": "WITH RECURSIVE chain AS ( SELECT u.normalized_url AS start_url, u.normalized_url",
+          "execution_ms": 27.2,
+          "nested_loops": 1
+        },
+        {
+          "variant": "nested loops off",
+          "statement": 11,
+          "sql": "SELECT l.target_normalized_url AS url, p.id AS page_id, count(*) AS in_links FRO",
+          "execution_ms": 19.8,
+          "nested_loops": 0
+        }
+      ]
+    }
+  },
+  "statistics_state": {
+    "stale_before": {
+      "crawl_urls": {
+        "reltuples": 2200,
+        "n_live_tup": 6702,
+        "n_mod_since_analyze": 4504,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      },
+      "page_links": {
+        "reltuples": 40000,
+        "n_live_tup": 102220,
+        "n_mod_since_analyze": 62220,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      },
+      "pages": {
+        "reltuples": 2000,
+        "n_live_tup": 5111,
+        "n_mod_since_analyze": 3111,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      }
+    },
+    "stale_after": {
+      "crawl_urls": {
+        "reltuples": 2200,
+        "n_live_tup": 6702,
+        "n_mod_since_analyze": 4504,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      },
+      "page_links": {
+        "reltuples": 40000,
+        "n_live_tup": 102220,
+        "n_mod_since_analyze": 62220,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      },
+      "pages": {
+        "reltuples": 2000,
+        "n_live_tup": 5111,
+        "n_mod_since_analyze": 3111,
+        "analyze_count": 1,
+        "autoanalyze_count": 0
+      }
+    },
+    "fresh_before": {
+      "crawl_urls": {
+        "reltuples": 4502,
+        "n_live_tup": 4502,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      },
+      "page_links": {
+        "reltuples": 62220,
+        "n_live_tup": 62220,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      },
+      "pages": {
+        "reltuples": 3111,
+        "n_live_tup": 3111,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      }
+    },
+    "fresh_after": {
+      "crawl_urls": {
+        "reltuples": 4502,
+        "n_live_tup": 4502,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      },
+      "page_links": {
+        "reltuples": 62220,
+        "n_live_tup": 62220,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      },
+      "pages": {
+        "reltuples": 3111,
+        "n_live_tup": 3111,
+        "n_mod_since_analyze": 0,
+        "analyze_count": 2,
+        "autoanalyze_count": 0
+      }
+    }
+  }
+}

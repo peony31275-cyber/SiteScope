@@ -1,0 +1,286 @@
+--- statistics stale, nested loops allowed ---
+Insert on crawl_urls  (cost=24.44..24.47 rows=1 width=337) (actual time=5183.969..5197.911 rows=977.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 977
+  Conflicting Tuples: 0
+  Buffers: shared hit=1694565 dirtied=19 written=19
+  ->  Subquery Scan on "*SELECT*"  (cost=24.44..24.47 rows=1 width=337) (actual time=5183.739..5185.799 rows=977.00 loops=1)
+        Buffers: shared hit=1676894
+        ->  Subquery Scan on chosen  (cost=24.44..24.45 rows=1 width=119) (actual time=5183.699..5184.090 rows=977.00 loops=1)
+              Buffers: shared hit=1676894
+              ->  Limit  (cost=24.44..24.45 rows=1 width=69) (actual time=5183.697..5183.904 rows=977.00 loops=1)
+                    Buffers: shared hit=1676894
+                    ->  Sort  (cost=24.44..24.45 rows=1 width=69) (actual time=5183.694..5183.836 rows=977.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 154kB
+                          Buffers: shared hit=1676894
+                          ->  Unique  (cost=24.38..24.43 rows=1 width=69) (actual time=307.657..5183.302 rows=977.00 loops=1)
+                                Buffers: shared hit=1676894
+                                ->  Incremental Sort  (cost=24.38..24.43 rows=2 width=69) (actual time=307.656..5183.132 rows=1063.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Presorted Key: l.target_normalized_url
+                                      Full-sort Groups: 34  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+                                      Buffers: shared hit=1676894
+                                      ->  Nested Loop Anti Join  (cost=1.26..24.37 rows=1 width=69) (actual time=3.697..5181.682 rows=1063.00 loops=1)
+                                            Join Filter: (e.normalized_url = l.target_normalized_url)
+                                            Rows Removed by Join Filter: 407419
+                                            Buffers: shared hit=1676894
+                                            ->  Nested Loop  (cost=0.97..18.31 rows=1 width=69) (actual time=3.593..5105.656 rows=1137.00 loops=1)
+                                                  Join Filter: (p.id = l.source_page_id)
+                                                  Rows Removed by Join Filter: 125163
+                                                  Buffers: shared hit=1622756
+                                                  ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=61) (actual time=0.008..1.783 rows=1263.00 loops=1)
+                                                        Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                        Filter: (is_internal AND (NOT nofollow))
+                                                        Rows Removed by Filter: 69
+                                                        Index Searches: 1
+                                                        Buffers: shared hit=1282
+                                                  ->  Nested Loop  (cost=0.56..12.11 rows=1 width=72) (actual time=2.605..4.035 rows=100.00 loops=1263)
+                                                        Join Filter: (p.crawl_url_id = s.id)
+                                                        Rows Removed by Join Filter: 17043
+                                                        Buffers: shared hit=1621474
+                                                        ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.28..6.05 rows=1 width=56) (actual time=0.003..0.074 rows=203.00 loops=1263)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Filter: ((depth = '2'::smallint) AND (state = 'fetched'::text))
+                                                              Rows Removed by Filter: 169
+                                                              Index Searches: 1263
+                                                              Buffers: shared hit=102085
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=48) (actual time=0.002..0.015 rows=84.45 loops=256389)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                                              Index Searches: 256389
+                                                              Buffers: shared hit=1519389
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.28..6.05 rows=1 width=24) (actual time=0.004..0.049 rows=358.39 loops=1137)
+                                                  Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                  Heap Fetches: 232826
+                                                  Index Searches: 1137
+                                                  Buffers: shared hit=54138
+Planning:
+  Buffers: shared hit=29
+Planning Time: 0.488 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=4.898 calls=977
+Trigger for constraint fk_crawl_urls_job_id: time=4.390 calls=977
+Execution Time: 5207.482 ms
+
+--- statistics stale, nested loops off ---
+Insert on crawl_urls  (cost=24.41..24.43 rows=1 width=337) (actual time=2.240..16.781 rows=977.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 977
+  Conflicting Tuples: 0
+  Buffers: shared hit=20316 dirtied=40 written=40
+  ->  Subquery Scan on "*SELECT*"  (cost=24.41..24.43 rows=1 width=337) (actual time=2.066..4.091 rows=977.00 loops=1)
+        Buffers: shared hit=2435
+        ->  Subquery Scan on chosen  (cost=24.41..24.41 rows=1 width=119) (actual time=2.049..2.401 rows=977.00 loops=1)
+              Buffers: shared hit=2435
+              ->  Limit  (cost=24.41..24.41 rows=1 width=69) (actual time=2.048..2.227 rows=977.00 loops=1)
+                    Buffers: shared hit=2435
+                    ->  Sort  (cost=24.41..24.41 rows=1 width=69) (actual time=2.047..2.145 rows=977.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 154kB
+                          Buffers: shared hit=2435
+                          ->  Unique  (cost=24.39..24.40 rows=1 width=69) (actual time=1.591..1.751 rows=977.00 loops=1)
+                                Buffers: shared hit=2435
+                                ->  Sort  (cost=24.39..24.39 rows=1 width=69) (actual time=1.591..1.644 rows=1063.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 140kB
+                                      Buffers: shared hit=2435
+                                      ->  Hash Join  (cost=12.82..24.38 rows=1 width=69) (actual time=0.394..1.341 rows=1063.00 loops=1)
+                                            Hash Cond: (p.crawl_url_id = s.id)
+                                            Buffers: shared hit=2435
+                                            ->  Hash Join  (cost=6.76..18.31 rows=1 width=61) (actual time=0.067..0.862 rows=1178.00 loops=1)
+                                                  Hash Cond: (l.source_page_id = p.id)
+                                                  Buffers: shared hit=1307
+                                                  ->  Merge Anti Join  (cost=0.69..12.25 rows=1 width=61) (actual time=0.013..0.647 rows=1178.00 loops=1)
+                                                        Merge Cond: (l.target_normalized_url = e.normalized_url)
+                                                        Buffers: shared hit=1300
+                                                        ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=61) (actual time=0.006..0.430 rows=1263.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Filter: (is_internal AND (NOT nofollow))
+                                                              Rows Removed by Filter: 69
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=1282
+                                                        ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.28..6.05 rows=1 width=24) (actual time=0.005..0.041 rows=368.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Heap Fetches: 59
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=18
+                                                  ->  Hash  (cost=6.05..6.05 rows=1 width=48) (actual time=0.042..0.043 rows=111.00 loops=1)
+                                                        Buckets: 1024  Batches: 1  Memory Usage: 17kB
+                                                        Buffers: shared hit=7
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=48) (actual time=0.007..0.031 rows=111.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=7
+                                            ->  Hash  (cost=6.05..6.05 rows=1 width=56) (actual time=0.325..0.325 rows=203.00 loops=1)
+                                                  Buckets: 1024  Batches: 1  Memory Usage: 26kB
+                                                  Buffers: shared hit=1128
+                                                  ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.28..6.05 rows=1 width=56) (actual time=0.011..0.301 rows=203.00 loops=1)
+                                                        Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                        Filter: ((depth = '2'::smallint) AND (state = 'fetched'::text))
+                                                        Rows Removed by Filter: 169
+                                                        Index Searches: 1
+                                                        Buffers: shared hit=1128
+Planning:
+  Buffers: shared hit=29
+Planning Time: 0.534 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=4.743 calls=977
+Trigger for constraint fk_crawl_urls_job_id: time=4.137 calls=977
+Execution Time: 25.936 ms
+
+--- statistics fresh, nested loops allowed ---
+Insert on crawl_urls  (cost=335.50..335.95 rows=20 width=337) (actual time=3.123..16.495 rows=977.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 977
+  Conflicting Tuples: 0
+  Buffers: shared hit=21623 dirtied=42 written=42
+  ->  Subquery Scan on "*SELECT*"  (cost=335.50..335.95 rows=20 width=337) (actual time=3.003..4.807 rows=977.00 loops=1)
+        Buffers: shared hit=3691
+        ->  Subquery Scan on chosen  (cost=335.50..335.55 rows=20 width=120) (actual time=2.994..3.281 rows=977.00 loops=1)
+              Buffers: shared hit=3691
+              ->  Limit  (cost=335.50..335.55 rows=20 width=70) (actual time=2.993..3.133 rows=977.00 loops=1)
+                    Buffers: shared hit=3691
+                    ->  Sort  (cost=335.50..335.55 rows=20 width=70) (actual time=2.993..3.068 rows=977.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 154kB
+                          Buffers: shared hit=3691
+                          ->  Unique  (cost=334.97..335.07 rows=20 width=70) (actual time=2.560..2.706 rows=977.00 loops=1)
+                                Buffers: shared hit=3691
+                                ->  Sort  (cost=334.97..335.02 rows=20 width=70) (actual time=2.559..2.601 rows=1063.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 140kB
+                                      Buffers: shared hit=3691
+                                      ->  Nested Loop Anti Join  (cost=116.07..334.54 rows=20 width=70) (actual time=0.101..2.227 rows=1063.00 loops=1)
+                                            Buffers: shared hit=3691
+                                            ->  Nested Loop  (cost=115.79..315.96 rows=23 width=70) (actual time=0.096..0.712 rows=1137.00 loops=1)
+                                                  Buffers: shared hit=427
+                                                  ->  Hash Join  (cost=115.50..293.07 rows=2 width=73) (actual time=0.091..0.175 rows=100.00 loops=1)
+                                                        Hash Cond: (s.id = p.crawl_url_id)
+                                                        Buffers: shared hit=51
+                                                        ->  Bitmap Heap Scan on crawl_urls s  (cost=31.90..209.30 rows=66 width=57) (actual time=0.046..0.102 rows=203.00 loops=1)
+                                                              Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Filter: ((depth = '2'::smallint) AND (state = 'fetched'::text))
+                                                              Rows Removed by Filter: 169
+                                                              Heap Blocks: exact=29
+                                                              Buffers: shared hit=44
+                                                              ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..31.88 rows=480 width=0) (actual time=0.037..0.037 rows=1349.00 loops=1)
+                                                                    Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                    Index Searches: 1
+                                                                    Buffers: shared hit=15
+                                                        ->  Hash  (cost=82.21..82.21 rows=111 width=48) (actual time=0.043..0.045 rows=111.00 loops=1)
+                                                              Buckets: 1024  Batches: 1  Memory Usage: 17kB
+                                                              Buffers: shared hit=7
+                                                              ->  Bitmap Heap Scan on pages p  (cost=9.14..82.21 rows=111 width=48) (actual time=0.012..0.032 rows=111.00 loops=1)
+                                                                    Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                    Filter: (NOT robots_nofollow)
+                                                                    Heap Blocks: exact=5
+                                                                    Buffers: shared hit=7
+                                                                    ->  Bitmap Index Scan on ix_pages_job_id_normalized_url  (cost=0.00..9.11 rows=111 width=0) (actual time=0.007..0.007 rows=111.00 loops=1)
+                                                                          Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                          Index Searches: 1
+                                                                          Buffers: shared hit=2
+                                                  ->  Index Scan using pk_page_links on page_links l  (cost=0.29..11.43 rows=1 width=61) (actual time=0.001..0.004 rows=11.37 loops=100)
+                                                        Index Cond: (source_page_id = p.id)
+                                                        Filter: (is_internal AND (NOT nofollow) AND (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid))
+                                                        Rows Removed by Filter: 1
+                                                        Index Searches: 100
+                                                        Buffers: shared hit=376
+                                            ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.28..0.81 rows=1 width=25) (actual time=0.001..0.001 rows=0.07 loops=1137)
+                                                  Index Cond: ((job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid) AND (normalized_url = l.target_normalized_url))
+                                                  Heap Fetches: 989
+                                                  Index Searches: 1137
+                                                  Buffers: shared hit=3264
+Planning:
+  Buffers: shared hit=26
+Planning Time: 0.714 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=4.712 calls=977
+Trigger for constraint fk_crawl_urls_job_id: time=4.128 calls=977
+Execution Time: 25.616 ms
+
+--- statistics fresh, nested loops off ---
+Insert on crawl_urls  (cost=1090.80..1091.23 rows=19 width=337) (actual time=1.675..15.347 rows=977.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 977
+  Conflicting Tuples: 0
+  Buffers: shared hit=18911 dirtied=44 written=44
+  ->  Subquery Scan on "*SELECT*"  (cost=1090.80..1091.23 rows=19 width=337) (actual time=1.564..3.342 rows=977.00 loops=1)
+        Buffers: shared hit=132
+        ->  Subquery Scan on chosen  (cost=1090.80..1090.85 rows=19 width=120) (actual time=1.554..1.846 rows=977.00 loops=1)
+              Buffers: shared hit=132
+              ->  Limit  (cost=1090.80..1090.85 rows=19 width=70) (actual time=1.554..1.693 rows=977.00 loops=1)
+                    Buffers: shared hit=132
+                    ->  Sort  (cost=1090.80..1090.85 rows=19 width=70) (actual time=1.553..1.626 rows=977.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 154kB
+                          Buffers: shared hit=132
+                          ->  Unique  (cost=1090.30..1090.40 rows=19 width=70) (actual time=1.117..1.263 rows=977.00 loops=1)
+                                Buffers: shared hit=132
+                                ->  Sort  (cost=1090.30..1090.35 rows=19 width=70) (actual time=1.116..1.154 rows=1063.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 140kB
+                                      Buffers: shared hit=132
+                                      ->  Hash Anti Join  (cost=700.24..1089.90 rows=19 width=70) (actual time=0.381..0.801 rows=1063.00 loops=1)
+                                            Hash Cond: (l.target_normalized_url = e.normalized_url)
+                                            Buffers: shared hit=132
+                                            ->  Hash Join  (cost=424.93..814.33 rows=23 width=70) (actual time=0.272..0.564 rows=1137.00 loops=1)
+                                                  Hash Cond: (l.source_page_id = p.id)
+                                                  Buffers: shared hit=88
+                                                  ->  Bitmap Heap Scan on page_links l  (cost=70.72..455.37 rows=1263 width=61) (actual time=0.072..0.222 rows=1263.00 loops=1)
+                                                        Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                        Filter: (is_internal AND (NOT nofollow))
+                                                        Rows Removed by Filter: 69
+                                                        Heap Blocks: exact=20
+                                                        Buffers: shared hit=37
+                                                        ->  Bitmap Index Scan on ix_page_links_job_id_target  (cost=0.00..70.40 rows=1332 width=0) (actual time=0.064..0.064 rows=1332.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=17
+                                                  ->  Hash  (cost=354.19..354.19 rows=2 width=73) (actual time=0.178..0.179 rows=100.00 loops=1)
+                                                        Buckets: 1024  Batches: 1  Memory Usage: 19kB
+                                                        Buffers: shared hit=51
+                                                        ->  Hash Join  (cost=116.72..354.19 rows=2 width=73) (actual time=0.083..0.168 rows=100.00 loops=1)
+                                                              Hash Cond: (s.id = p.crawl_url_id)
+                                                              Buffers: shared hit=51
+                                                              ->  Bitmap Heap Scan on crawl_urls s  (cost=33.12..270.35 rows=88 width=57) (actual time=0.040..0.106 rows=203.00 loops=1)
+                                                                    Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                    Filter: ((depth = '2'::smallint) AND (state = 'fetched'::text))
+                                                                    Rows Removed by Filter: 169
+                                                                    Heap Blocks: exact=29
+                                                                    Buffers: shared hit=44
+                                                                    ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..33.10 rows=642 width=0) (actual time=0.034..0.034 rows=1349.00 loops=1)
+                                                                          Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                          Index Searches: 1
+                                                                          Buffers: shared hit=15
+                                                              ->  Hash  (cost=82.21..82.21 rows=111 width=48) (actual time=0.041..0.042 rows=111.00 loops=1)
+                                                                    Buckets: 1024  Batches: 1  Memory Usage: 17kB
+                                                                    Buffers: shared hit=7
+                                                                    ->  Bitmap Heap Scan on pages p  (cost=9.14..82.21 rows=111 width=48) (actual time=0.011..0.029 rows=111.00 loops=1)
+                                                                          Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                          Filter: (NOT robots_nofollow)
+                                                                          Heap Blocks: exact=5
+                                                                          Buffers: shared hit=7
+                                                                          ->  Bitmap Index Scan on ix_pages_job_id_normalized_url  (cost=0.00..9.11 rows=111 width=0) (actual time=0.007..0.008 rows=111.00 loops=1)
+                                                                                Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                                                Index Searches: 1
+                                                                                Buffers: shared hit=2
+                                            ->  Hash  (cost=267.28..267.28 rows=642 width=25) (actual time=0.107..0.107 rows=372.00 loops=1)
+                                                  Buckets: 1024  Batches: 1  Memory Usage: 30kB
+                                                  Buffers: shared hit=44
+                                                  ->  Bitmap Heap Scan on crawl_urls e  (cost=33.26..267.28 rows=642 width=25) (actual time=0.034..0.072 rows=372.00 loops=1)
+                                                        Recheck Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                        Heap Blocks: exact=29
+                                                        Buffers: shared hit=44
+                                                        ->  Bitmap Index Scan on uq_crawl_urls_job_id_normalized_url  (cost=0.00..33.10 rows=642 width=0) (actual time=0.030..0.030 rows=1349.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bad5-9dfc-7b09-88b8-73491d163993'::uuid)
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=15
+Planning:
+  Buffers: shared hit=26
+Planning Time: 0.882 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=4.724 calls=977
+Trigger for constraint fk_crawl_urls_job_id: time=4.320 calls=977
+Execution Time: 24.657 ms

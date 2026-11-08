@@ -1,0 +1,900 @@
+{
+  "benchmark": "recovery",
+  "complete": true,
+  "environment": {
+    "date_utc": "2026-11-08T11:23:02Z",
+    "command": "..\\benchmarks\\recovery.py --output ..\\benchmarks\\results\\phase10-recovery.json --logs C:\\Users\\24419\\AppData\\Local\\Temp\\sitescope-bench-recovery10",
+    "python": "3.13.7",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "machine": {
+      "cpu": "AMD Ryzen 7 5800U with Radeon Graphics",
+      "logical_cpus": 16,
+      "ram_gb": 15.3,
+      "on_ac_power": true,
+      "power_scheme_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    },
+    "wsl_vm": {
+      "cpus": 16,
+      "memory_gb": 7.4,
+      "kernel": "6.18.54.1-microsoft-standard-WSL2"
+    },
+    "postgresql": {
+      "version": "PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+      "settings": {
+        "effective_cache_size": "524288 8kB",
+        "fsync": "on",
+        "jit": "on",
+        "max_connections": "100",
+        "max_parallel_workers_per_gather": "2",
+        "random_page_cost": "4",
+        "shared_buffers": "16384 8kB",
+        "synchronous_commit": "on",
+        "work_mem": "4096 kB"
+      }
+    },
+    "redis": {
+      "version": "8.10.3",
+      "aof_enabled": 1,
+      "maxmemory": 0
+    },
+    "code": {}
+  },
+  "configuration": {
+    "timings": "tests/process_support.FAST_TIMING (7 s leases and reclaim idle, 0.5 s reclaim interval, 5 s index reclaim idle, 10 s reconciliation)",
+    "crawl_site": "a tree of depth 3 and branching 5 (156 pages) per host",
+    "crawl_settings": {
+      "LOG_LEVEL": "INFO",
+      "CRAWL_CONCURRENCY": "4",
+      "POLITENESS_INTERVAL_SECONDS": "0",
+      "POLITENESS_MAX_CONCURRENT_PER_HOST": "4"
+    },
+    "outage_seconds": 5.0,
+    "repeat": 3,
+    "median_of": "trials",
+    "clock": "starts when the processes are running (the job's creation)"
+  },
+  "summary": {
+    "control": {
+      "trials": 3,
+      "failed_runs": 0,
+      "completed_seconds": {
+        "n": 3,
+        "values": [
+          14.98,
+          15.42,
+          15.05
+        ],
+        "median": 15.05,
+        "min": 14.98,
+        "max": 15.42,
+        "spread_pct": 2.9
+      },
+      "all_invariants_ok": true
+    },
+    "worker_crash": {
+      "trials": 3,
+      "failed_runs": 0,
+      "recovery_seconds": {
+        "n": 3,
+        "values": [
+          6.9,
+          7.44,
+          7.33
+        ],
+        "median": 7.33,
+        "min": 6.9,
+        "max": 7.44,
+        "spread_pct": 7.4
+      },
+      "completion_after_kill_seconds": {
+        "n": 3,
+        "values": [
+          12.59,
+          13.34,
+          13.89
+        ],
+        "median": 13.34,
+        "min": 12.59,
+        "max": 13.89,
+        "spread_pct": 9.7
+      },
+      "completed_seconds": {
+        "n": 3,
+        "values": [
+          17.98,
+          18.83,
+          19.36
+        ],
+        "median": 18.83,
+        "min": 17.98,
+        "max": 19.36,
+        "spread_pct": 7.4
+      },
+      "all_invariants_ok": true
+    },
+    "indexer_crash": {
+      "trials": 3,
+      "failed_runs": 0,
+      "recovery_seconds": {
+        "n": 2,
+        "values": [
+          5.56,
+          5.27
+        ],
+        "median": 5.41,
+        "min": 5.27,
+        "max": 5.56,
+        "spread_pct": 5.3
+      },
+      "completion_after_kill_seconds": {
+        "n": 3,
+        "values": [
+          18.54,
+          21.48,
+          19.62
+        ],
+        "median": 19.62,
+        "min": 18.54,
+        "max": 21.48,
+        "spread_pct": 15.0
+      },
+      "all_invariants_ok": true
+    },
+    "redis_restart": {
+      "trials": 3,
+      "failed_runs": 0,
+      "outage_seconds": {
+        "n": 3,
+        "values": [
+          6.49,
+          5.73,
+          6.0
+        ],
+        "median": 6.0,
+        "min": 5.73,
+        "max": 6.49,
+        "spread_pct": 12.7
+      },
+      "resume_after_return_seconds": {
+        "n": 3,
+        "values": [
+          0.99,
+          0.57,
+          2.96
+        ],
+        "median": 0.99,
+        "min": 0.57,
+        "max": 2.96,
+        "spread_pct": 242.0
+      },
+      "completion_after_return_seconds": {
+        "n": 3,
+        "values": [
+          9.95,
+          9.56,
+          11.83
+        ],
+        "median": 9.95,
+        "min": 9.56,
+        "max": 11.83,
+        "spread_pct": 22.8
+      },
+      "completed_seconds": {
+        "n": 3,
+        "values": [
+          22.42,
+          21.62,
+          23.77
+        ],
+        "median": 22.42,
+        "min": 21.62,
+        "max": 23.77,
+        "spread_pct": 9.6
+      },
+      "all_invariants_ok": true
+    },
+    "redis_data_loss": {
+      "trials": 3,
+      "failed_runs": 0,
+      "outage_seconds": {
+        "n": 3,
+        "values": [
+          6.54,
+          6.01,
+          6.49
+        ],
+        "median": 6.49,
+        "min": 6.01,
+        "max": 6.54,
+        "spread_pct": 8.1
+      },
+      "resume_after_return_seconds": {
+        "n": 3,
+        "values": [
+          0.23,
+          0.67,
+          0.24
+        ],
+        "median": 0.24,
+        "min": 0.23,
+        "max": 0.67,
+        "spread_pct": 185.6
+      },
+      "completion_after_return_seconds": {
+        "n": 3,
+        "values": [
+          8.99,
+          9.95,
+          9.21
+        ],
+        "median": 9.21,
+        "min": 8.99,
+        "max": 9.95,
+        "spread_pct": 10.4
+      },
+      "completed_seconds": {
+        "n": 3,
+        "values": [
+          21.44,
+          22.17,
+          21.52
+        ],
+        "median": 21.52,
+        "min": 21.44,
+        "max": 22.17,
+        "spread_pct": 3.4
+      },
+      "all_invariants_ok": true
+    },
+    "postgres_restart": {
+      "trials": 3,
+      "failed_runs": 0,
+      "outage_seconds": {
+        "n": 3,
+        "values": [
+          5.51,
+          6.05,
+          6.49
+        ],
+        "median": 6.05,
+        "min": 5.51,
+        "max": 6.49,
+        "spread_pct": 16.2
+      },
+      "resume_after_return_seconds": {
+        "n": 3,
+        "values": [
+          1.45,
+          0.9,
+          0.23
+        ],
+        "median": 0.9,
+        "min": 0.23,
+        "max": 1.45,
+        "spread_pct": 134.7
+      },
+      "completion_after_return_seconds": {
+        "n": 3,
+        "values": [
+          11.37,
+          10.08,
+          9.77
+        ],
+        "median": 10.08,
+        "min": 9.77,
+        "max": 11.37,
+        "spread_pct": 15.9
+      },
+      "completed_seconds": {
+        "n": 3,
+        "values": [
+          22.8,
+          21.93,
+          22.41
+        ],
+        "median": 22.41,
+        "min": 21.93,
+        "max": 22.8,
+        "spread_pct": 3.8
+      },
+      "all_invariants_ok": true
+    },
+    "cancellation": {
+      "trials": 3,
+      "failed_runs": 0,
+      "cancel_to_cancelled_seconds": {
+        "n": 3,
+        "values": [
+          0.34,
+          0.23,
+          0.34
+        ],
+        "median": 0.34,
+        "min": 0.23,
+        "max": 0.34,
+        "spread_pct": 33.8
+      },
+      "all_invariants_ok": true
+    }
+  },
+  "runs": [
+    {
+      "scenario": "control",
+      "trial": 1,
+      "seconds": {
+        "completed": 14.98
+      },
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 0,
+      "max_attempts": 1,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "worker_crash",
+      "trial": 1,
+      "seconds": {
+        "killed": 5.385,
+        "recovered": 12.285,
+        "completed": 17.976
+      },
+      "held_by_killed_worker": 2,
+      "recovery_seconds": 6.9,
+      "completion_after_kill_seconds": 12.591,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 2,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 2
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "indexer_crash",
+      "trial": 1,
+      "seconds": {
+        "stored": 11.081,
+        "killed": 14.995,
+        "recovered": 20.551,
+        "all_indexed": 33.533
+      },
+      "held_by_killed_indexer": 2,
+      "recovery_seconds": 5.556,
+      "completion_after_kill_seconds": 18.538,
+      "documents": 3000,
+      "indexed_at_current_version": 3000,
+      "changed_pages_indexed_at_version_2": 200,
+      "changed_pages": 200,
+      "failed_documents": 0,
+      "documents_retried": 2,
+      "max_attempts": 2,
+      "lease_takeovers": 2,
+      "no_stale_version": true
+    },
+    {
+      "scenario": "redis_restart",
+      "trial": 1,
+      "seconds": {
+        "stopped": 5.978,
+        "back": 12.471,
+        "first_progress": 13.46,
+        "completed": 22.42
+      },
+      "outage_seconds": 6.493,
+      "resume_after_return_seconds": 0.989,
+      "completion_after_return_seconds": 9.949,
+      "worker_errors": 8,
+      "pass_failures": 4,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 4,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 4
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "redis_data_loss",
+      "trial": 1,
+      "seconds": {
+        "stopped": 5.909,
+        "back": 12.45,
+        "first_progress": 12.684,
+        "completed": 21.436
+      },
+      "outage_seconds": 6.541,
+      "resume_after_return_seconds": 0.234,
+      "completion_after_return_seconds": 8.986,
+      "worker_errors": 8,
+      "pass_failures": 3,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 6,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 6
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "postgres_restart",
+      "trial": 1,
+      "seconds": {
+        "stopped": 5.911,
+        "back": 11.422,
+        "first_progress": 12.87,
+        "completed": 22.795
+      },
+      "outage_seconds": 5.511,
+      "resume_after_return_seconds": 1.448,
+      "completion_after_return_seconds": 11.373,
+      "worker_errors": 8,
+      "pass_failures": 4,
+      "dead_lettered": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 8,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 8
+      },
+      "page_requests": 164,
+      "duplicate_fetches": 8,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "cancellation",
+      "trial": 1,
+      "seconds": {
+        "cancel_committed": 4.103,
+        "cancelled": 4.44,
+        "others_completed": 13.002
+      },
+      "cancel_to_cancelled_seconds": 0.337,
+      "requests_started_after_cancel": 0,
+      "latest_start_after_cancel_seconds": null,
+      "requests_after_scheduler_restart": 0,
+      "status_after_restart": "cancelled",
+      "other_jobs": [
+        "completed",
+        "completed"
+      ],
+      "invariants_ok": true,
+      "failed_urls": 0
+    },
+    {
+      "scenario": "control",
+      "trial": 2,
+      "seconds": {
+        "completed": 15.424
+      },
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 0,
+      "max_attempts": 1,
+      "events": {
+        "job.level_advanced": 3,
+        "job.completed": 1,
+        "job.started": 1
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "worker_crash",
+      "trial": 2,
+      "seconds": {
+        "killed": 5.495,
+        "recovered": 12.934,
+        "completed": 18.834
+      },
+      "held_by_killed_worker": 4,
+      "recovery_seconds": 7.439,
+      "completion_after_kill_seconds": 13.339,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 4,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 4
+      },
+      "page_requests": 158,
+      "duplicate_fetches": 2,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "indexer_crash",
+      "trial": 2,
+      "seconds": {
+        "stored": 9.405,
+        "killed": 13.072,
+        "all_indexed": 34.547
+      },
+      "held_by_killed_indexer": 0,
+      "recovery_seconds": null,
+      "completion_after_kill_seconds": 21.475,
+      "documents": 3000,
+      "indexed_at_current_version": 3000,
+      "changed_pages_indexed_at_version_2": 200,
+      "changed_pages": 200,
+      "failed_documents": 0,
+      "documents_retried": 0,
+      "max_attempts": 1,
+      "lease_takeovers": 0,
+      "no_stale_version": true
+    },
+    {
+      "scenario": "redis_restart",
+      "trial": 2,
+      "seconds": {
+        "stopped": 6.333,
+        "back": 12.063,
+        "first_progress": 12.631,
+        "completed": 21.623
+      },
+      "outage_seconds": 5.73,
+      "resume_after_return_seconds": 0.568,
+      "completion_after_return_seconds": 9.56,
+      "worker_errors": 7,
+      "pass_failures": 4,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 7,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 7
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "redis_data_loss",
+      "trial": 2,
+      "seconds": {
+        "stopped": 6.215,
+        "back": 12.228,
+        "first_progress": 12.9,
+        "completed": 22.174
+      },
+      "outage_seconds": 6.013,
+      "resume_after_return_seconds": 0.672,
+      "completion_after_return_seconds": 9.946,
+      "worker_errors": 7,
+      "pass_failures": 3,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 4,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 4
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "postgres_restart",
+      "trial": 2,
+      "seconds": {
+        "stopped": 5.799,
+        "back": 11.854,
+        "first_progress": 12.755,
+        "completed": 21.933
+      },
+      "outage_seconds": 6.055,
+      "resume_after_return_seconds": 0.901,
+      "completion_after_return_seconds": 10.079,
+      "worker_errors": 8,
+      "pass_failures": 3,
+      "dead_lettered": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 8,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 8
+      },
+      "page_requests": 164,
+      "duplicate_fetches": 8,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "cancellation",
+      "trial": 2,
+      "seconds": {
+        "cancel_committed": 4.077,
+        "cancelled": 4.307,
+        "others_completed": 13.429
+      },
+      "cancel_to_cancelled_seconds": 0.23,
+      "requests_started_after_cancel": 0,
+      "latest_start_after_cancel_seconds": null,
+      "requests_after_scheduler_restart": 0,
+      "status_after_restart": "cancelled",
+      "other_jobs": [
+        "completed",
+        "completed"
+      ],
+      "invariants_ok": true,
+      "failed_urls": 0
+    },
+    {
+      "scenario": "control",
+      "trial": 3,
+      "seconds": {
+        "completed": 15.051
+      },
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 0,
+      "max_attempts": 1,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "worker_crash",
+      "trial": 3,
+      "seconds": {
+        "killed": 5.475,
+        "recovered": 12.801,
+        "completed": 19.365
+      },
+      "held_by_killed_worker": 3,
+      "recovery_seconds": 7.326,
+      "completion_after_kill_seconds": 13.89,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 3,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 3
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "indexer_crash",
+      "trial": 3,
+      "seconds": {
+        "stored": 9.282,
+        "killed": 12.823,
+        "recovered": 18.093,
+        "all_indexed": 32.442
+      },
+      "held_by_killed_indexer": 3,
+      "recovery_seconds": 5.27,
+      "completion_after_kill_seconds": 19.619,
+      "documents": 3000,
+      "indexed_at_current_version": 3000,
+      "changed_pages_indexed_at_version_2": 200,
+      "changed_pages": 200,
+      "failed_documents": 0,
+      "documents_retried": 3,
+      "max_attempts": 2,
+      "lease_takeovers": 3,
+      "no_stale_version": true
+    },
+    {
+      "scenario": "redis_restart",
+      "trial": 3,
+      "seconds": {
+        "stopped": 5.943,
+        "back": 11.944,
+        "first_progress": 14.905,
+        "completed": 23.773
+      },
+      "outage_seconds": 6.001,
+      "resume_after_return_seconds": 2.961,
+      "completion_after_return_seconds": 11.829,
+      "worker_errors": 7,
+      "pass_failures": 4,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 5,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 5
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "redis_data_loss",
+      "trial": 3,
+      "seconds": {
+        "stopped": 5.825,
+        "back": 12.31,
+        "first_progress": 12.546,
+        "completed": 21.52
+      },
+      "outage_seconds": 6.485,
+      "resume_after_return_seconds": 0.236,
+      "completion_after_return_seconds": 9.21,
+      "worker_errors": 7,
+      "pass_failures": 3,
+      "republished": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 7,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.retry_scheduled": 7
+      },
+      "page_requests": 156,
+      "duplicate_fetches": 0,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "postgres_restart",
+      "trial": 3,
+      "seconds": {
+        "stopped": 6.149,
+        "back": 12.641,
+        "first_progress": 12.875,
+        "completed": 22.412
+      },
+      "outage_seconds": 6.492,
+      "resume_after_return_seconds": 0.234,
+      "completion_after_return_seconds": 9.771,
+      "worker_errors": 8,
+      "pass_failures": 3,
+      "dead_lettered": 0,
+      "job_status": "completed",
+      "urls": 156,
+      "failed_urls": 0,
+      "quarantined_urls": 0,
+      "infrastructure_errors": 0,
+      "urls_retried": 8,
+      "max_attempts": 2,
+      "events": {
+        "job.completed": 1,
+        "job.level_advanced": 3,
+        "job.started": 1,
+        "url.recovered": 8
+      },
+      "page_requests": 164,
+      "duplicate_fetches": 8,
+      "invariants_ok": true,
+      "invariant_error": null
+    },
+    {
+      "scenario": "cancellation",
+      "trial": 3,
+      "seconds": {
+        "cancel_committed": 4.045,
+        "cancelled": 4.389,
+        "others_completed": 12.607
+      },
+      "cancel_to_cancelled_seconds": 0.344,
+      "requests_started_after_cancel": 1,
+      "latest_start_after_cancel_seconds": 0.029,
+      "requests_after_scheduler_restart": 0,
+      "status_after_restart": "cancelled",
+      "other_jobs": [
+        "completed",
+        "completed"
+      ],
+      "invariants_ok": true,
+      "failed_urls": 0
+    }
+  ]
+}

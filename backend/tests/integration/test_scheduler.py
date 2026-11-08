@@ -107,6 +107,33 @@ async def complete(database: Database, url_id: uuid.UUID, result: UrlResult) -> 
     assert recorded.status is RecordStatus.RECORDED
 
 
+async def test_jobs_get_a_window_of_their_hosts_slots_so_the_stream_mixes_hosts(
+    test_database: Settings, database: Database, redis_client: Redis, stream: CrawlStream
+) -> None:
+    """Phase 10 regression (ADR-0022): with the default limits, one pass published 100 tasks of
+    the first job before any of the second, and workers reading the stream in order crowded
+    onto the first job's host. Each job now gets a few tasks per politeness slot of its host."""
+    settings = test_database.model_copy(
+        update={
+            "politeness_max_concurrent_per_host": 4,
+            "scheduler_tasks_per_host_slot": 2,
+            "scheduler_max_in_flight_per_job": 100,
+        }
+    )
+    config = SchedulerConfig.from_settings(settings)
+    first, _ = await new_job(database, urls=49, host="first.test")
+    second, _ = await new_job(database, urls=49, host="second.test")
+    loop = Scheduler(database, stream, config)
+
+    await loop.run_pass()
+
+    assert config.max_in_flight_per_job == 8
+    assert (await states(database, first)).get("queued") == 8
+    assert (await states(database, second)).get("queued") == 8
+    jobs = [task.job_id for task in await published(redis_client, stream)]
+    assert jobs == [first] * 8 + [second] * 8
+
+
 async def ids_by_url(database: Database, job_id: uuid.UUID) -> dict[str, uuid.UUID]:
     async with database.session() as session:
         rows = await session.execute(

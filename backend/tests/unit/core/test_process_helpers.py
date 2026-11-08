@@ -140,9 +140,38 @@ def test_scheduler_config_from_settings() -> None:
     assert (short.reconcile_interval, short.maintenance_interval) == (2, 15)
 
 
+def test_a_jobs_tasks_in_flight_follow_its_hosts_politeness_slots() -> None:
+    """Phase 10 (ADR-0022): the smaller of the per-job limit and a few tasks per host slot."""
+
+    def limit(**changes: int) -> int:
+        settings = Settings(_env_file=None).model_copy(update=changes)
+        return SchedulerConfig.from_settings(settings).max_in_flight_per_job
+
+    # The defaults: one request at a time per host, two tasks per slot (one waiting).
+    assert limit() == 2
+    assert limit(politeness_max_concurrent_per_host=4) == 8
+    assert limit(politeness_max_concurrent_per_host=4, scheduler_tasks_per_host_slot=5) == 20
+    assert (
+        limit(
+            politeness_max_concurrent_per_host=16,
+            scheduler_tasks_per_host_slot=10,
+            scheduler_max_in_flight_per_job=100,
+        )
+        == 100
+    )
+
+
 def test_pass_report_busy() -> None:
     assert not PassReport(outstanding=5).busy
     assert PassReport(dispatched=1).busy
+    assert PassReport(dispatched=1).progressed
+
+
+def test_a_failed_job_is_logged_but_is_not_progress() -> None:
+    """Phase 10 review: a job failing in every pass must not look like the scheduler working."""
+    assert PassReport(failed_jobs=1).busy
+    assert not PassReport(failed_jobs=1).progressed
+    assert PassReport(failed_jobs=1, advanced=1).progressed
 
 
 def test_a_stalled_scheduler_session_ends_after_two_redis_timeouts_and_a_margin() -> None:

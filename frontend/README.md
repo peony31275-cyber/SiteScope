@@ -133,7 +133,12 @@ are laid out in one column per BFS depth, never-admitted targets last, with one 
 deterministic, linear in the size of the graph. Shapes carry the node kind (circle: stored page;
 square: admitted URL without a page, colored by its response; dashed ring: never admitted).
 Pan and zoom change a single transform without re-rendering the nodes; a selection draws its
-links on top (outgoing blue, incoming orange). The node list is the keyboard path to every node.
+links on top (outgoing blue, incoming orange). Labels have their own layer: zoomed in, only the
+nodes in and around the view are labelled (`viewport.ts`; the region is computed again only when
+the view leaves it), and a graph of up to 40 nodes labels every node. Phase 10 measured why:
+labelling all 2,000 nodes made 7 to 10 % of the frames while zooming in take two intervals or
+more (the slowest 67 ms); with the labels layer, 0 to 3 % (the slowest 18 to 33 ms;
+docs/performance.md). The node list is the keyboard path to every node.
 A node without inbound links is not called an orphan: only links on stored pages are known.
 
 **Errors and empty states.** Every query shows loading, empty, and error states; errors give a
@@ -155,7 +160,7 @@ with `prefers-reduced-motion`.
 
 ## Tests
 
-- `npm test`: 162 unit and component tests (Vitest, jsdom). Component tests render the whole app
+- `npm test`: 167 unit and component tests (Vitest, jsdom). Component tests render the whole app
   (router, providers, lazy pages) against `src/tests/fakeApi.ts`, a test double of `fetch` that
   answers like the API (JSON, problem documents) and records requests. It is not the backend.
 - The end-to-end run uses the real backend, on a disposable database:
@@ -171,6 +176,12 @@ with `prefers-reduced-motion`.
   drops the database. Without `--e2e` it serves the stack until Ctrl+C. `E2E_SCREENSHOTS=1` adds
   screenshots of every page at desktop and phone widths (`test-results/screens/`).
 
+- **Link graph performance** (Phase 10, opt-in): `e2e/graph-performance.spec.ts` loads the Link
+  Explorer at 300/1,500, 1,000/5,000 and 2,000/10,000 nodes/links and measures drawing, long
+  tasks, heap, DOM size and frame intervals while panning and zooming. It is skipped unless
+  `E2E_GRAPH_PERF=1`; `benchmarks/dashboard_graph.py` (in `backend\`) sets that up on a disposable
+  database with a large job, runs it and keeps the raw results.
+
 ## Known limitations
 
 - The dashboard has no authentication and job creation is not rate-limited: fine for local and
@@ -181,5 +192,7 @@ with `prefers-reduced-motion`.
   principle be split by a range boundary. The backend highlights whole words, so this does not
   occur with its snippets.
 - The graph is drawn in SVG: at the API's limits (2000 nodes, 10000 links) the first drawing
-  takes noticeably longer than at the defaults.
+  took 0.85 to 0.94 s in headless Edge, with one long task of 0.23 to 0.27 s, against 0.34 to
+  0.67 s at the defaults (300, 1500); panning kept the display's rate at the median
+  (docs/performance.md).
 - Only the dark theme exists.

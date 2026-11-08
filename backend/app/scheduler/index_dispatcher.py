@@ -58,6 +58,7 @@ from app.core.process import process_name
 from app.core.redis import create_redis_client
 from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.session import Database
+from app.observability.heartbeat import HeartbeatPublisher
 from app.queue.messages import IndexTask
 from app.queue.streams import IndexStream
 from app.scheduler.passes import PassLoop, run_until_stopped
@@ -120,8 +121,14 @@ class IndexPassReport:
     failed_jobs: int = 0  # jobs skipped in this pass after an error of their own
 
     @property
+    def progressed(self) -> bool:
+        """It did work (a job's failed step is not work)."""
+        return any((self.dispatched, self.republished, self.completed_jobs))
+
+    @property
     def busy(self) -> bool:
-        return any((self.dispatched, self.republished, self.completed_jobs, self.failed_jobs))
+        """Worth a log line: it did work, or a job's step failed."""
+        return self.progressed or bool(self.failed_jobs)
 
 
 class IndexDispatcher(PassLoop[IndexPassReport]):
@@ -130,6 +137,7 @@ class IndexDispatcher(PassLoop[IndexPassReport]):
     ROLE = "index_dispatcher"
     ID_FIELD = "dispatcher_id"
     DISPLAY_NAME = "Index dispatcher"
+    COUNTED_FIELDS = ("dispatched", "republished", "completed_jobs", "failed_jobs")
 
     def __init__(
         self,
@@ -286,7 +294,15 @@ async def run(settings: Settings, signals: StopSignals) -> None:
             IndexStream(redis, key_prefix=settings.redis_key_prefix),
             IndexDispatcherConfig.from_settings(settings),
         )
-        await run_until_stopped(dispatcher, signals)
+        heartbeat = HeartbeatPublisher(
+            redis,
+            key_prefix=settings.redis_key_prefix,
+            name=dispatcher.name,
+            role="index_dispatcher",
+            interval=settings.heartbeat_interval_seconds,
+            state=dispatcher.heartbeat_state,
+        )
+        await run_until_stopped(dispatcher, signals, heartbeat=heartbeat)
     finally:
         await redis.aclose()
         await database.dispose()

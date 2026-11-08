@@ -60,7 +60,7 @@ import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Final
@@ -122,6 +122,10 @@ class IndexAttempt:
     attempt: int  # attempt_count after this start
     content_version: int
     takeover: bool  # it took over the expired lease of another attempt
+    # Seconds from the document's last publish to this start, by the database clock (Phase 10):
+    # only for a first attempt. A republish by the reconciliation resets dispatched_at. A
+    # measurement, not part of the attempt: equality ignores it.
+    queued_seconds: float | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,7 +295,8 @@ _ATTEMPT = text(
       AND d.attempt_count < :max_attempts
       AND (d.lease_expires_at IS NULL OR d.lease_expires_at < clock_timestamp())
       AND p.content_version >= :content_version
-    RETURNING d.attempt_count, p.content_version, old.lease_owner AS previous_owner
+    RETURNING d.attempt_count, p.content_version, old.lease_owner AS previous_owner,
+              extract(epoch FROM clock_timestamp() - d.dispatched_at) AS queued_seconds
     """
 )
 
@@ -643,6 +648,11 @@ async def start_index_attempt(
         attempt=row.attempt_count,
         content_version=row.content_version,
         takeover=takeover,
+        queued_seconds=(
+            max(0.0, float(row.queued_seconds))
+            if row.attempt_count == 1 and row.queued_seconds is not None
+            else None
+        ),
     )
 
 

@@ -262,6 +262,8 @@ class ManagedProcess:
                 return str(line["worker_id"])
             if line.get("event") == "scheduler.started":
                 return str(line["scheduler_id"])
+            if line.get("event") == "index_dispatcher.started":
+                return str(line["dispatcher_id"])
         raise AssertionError(f"{self.name} has not started:\n{self.tail()}")
 
     @property

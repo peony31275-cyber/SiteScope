@@ -20,7 +20,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 7 | Asynchronous search indexing | **Done** (2026-11-08) |
 | 8 | Search and analysis APIs | **Done** (2026-11-08) |
 | 9 | React dashboard | **Done** (2026-11-08) |
-| 10 | Testing, benchmarking, and observability | Not started |
+| 10 | Performance engineering, reliability validation and observability | **Done** (2026-11-08) |
 | 11 | Final deployment and documentation | Not started |
 
 Phases 3–11 were renumbered in Phase 2C at the owner's request. Earlier reports and commits use
@@ -38,21 +38,21 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 9
+## Repository state after Phase 10
 
-Updated on 2026-11-08 (Phase 9). The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08 (Phase 10). The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
 | Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9). |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9); the metrics registry, exposition format and heartbeats in `app/observability/`, `GET /metrics` in `app/api/metrics.py`, its PostgreSQL and Redis reads in `app/services/system_metrics.py`, the health assessment in `app/services/diagnostics.py` (Phase 10). |
 | `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7) and `0005` (two indexes widened for the analysis queries; Phase 8). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 2000 tests: 1382 unit, 618 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
-| `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), and the analysis latency benchmark with its index A/B (Phase 8), with their raw results. |
+| `backend/tests/` | 2082 tests: 1448 unit, 634 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
+| `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), the analysis latency benchmark with its index A/B (Phase 8), and the Phase 10 harness (crawl scaling, indexing, search, database statements, stale statistics, recovery, the dashboard's graph, charts), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
-| `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 162 Vitest tests; Playwright end-to-end specs for the real stack. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0020, API conventions, development guide. |
+| `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 167 Vitest tests; Playwright end-to-end specs for the real stack. Renamed from the misspelled `fronted/` in Phase 1. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0023, API conventions, development guide, performance (Phase 10), observability (Phase 10). |
 | `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
 
 | Tool on the development machine | Status |
@@ -1347,26 +1347,94 @@ made its regression test fail, and every file was restored and checked by hash.
   drawing takes noticeably longer than at the defaults (300, 1500).
 - Dark theme only; English only.
 
-### Phase 10: Testing, benchmarking, and observability
+### Phase 10: Performance engineering, reliability validation and observability
 
-**Scope**
+**Status: done (2026-11-08).** Measurements, method and limits:
+[performance.md](performance.md); operations: [observability.md](observability.md); decisions:
+[ADR-0021](adr/0021-operational-metrics-and-process-heartbeats.md),
+[ADR-0022](adr/0022-dispatch-window-follows-host-politeness.md),
+[ADR-0023](adr/0023-whole-job-statements-use-hash-joins.md). The owner's Phase 10 brief replaced
+the earlier scope (1, 3 and 5 workers instead of 1, 2, 4 and 8; `docs/performance.md` instead
+of `docs/benchmarks.md`).
 
-- Benchmarks: a `benchmarks/` harness that runs against the demo site, with a documented,
-  development-only higher rate limit.
-- Measurements:
-  - crawl throughput vs. worker count (1, 2, 4, 8);
-  - job completion time;
-  - dispatch-to-claim latency;
-  - indexing throughput;
-  - search latency p50/p95/p99 over a fixed query set.
-- Environment capture (CPU, RAM, OS, versions, settings), raw results committed to the
-  repository, and `docs/benchmarks.md` describing the methodology and its limitations.
-- Observability: queue statistics (approximate, from Redis) next to progress (from PostgreSQL),
-  context fields in logs (`job_id`, `url_id`, `worker_id`, `lease_epoch`), and process heartbeats.
-- Test hardening: the end-to-end and fault suites run repeatedly.
+**Delivered**
 
-**Rule.** Every reported number comes from a run in this repository and is published with its
-command and raw output. Nothing is extrapolated.
+- **Benchmark harness** (`benchmarks/`, Phase 10 scripts and `benchlib.py`): deterministic
+  generated sites (nested, duplicate and cyclic links, redirects, 404s, 503s and 500s, delays,
+  page sizes) served on loopback addresses; disposable databases and Redis key prefixes; code
+  variants from a `git worktree` with interleaved runs; samplers of the machine's CPU load and
+  effective clock, the WSL VM, the PostgreSQL and Redis containers, every process's CPU and
+  memory, PostgreSQL's statistics and sessions; raw JSON, plans as text, CSV summaries and SVG
+  charts computed from them. Scripts: crawl scaling, indexing scaling, search latency, database
+  statements, level admission and analysis reads with stale statistics, recovery from failures,
+  the dashboard's link graph.
+- **Measurements** (all in performance.md, each with its command and raw output): crawling with
+  1, 3 and 5 workers on one host and on five, and job sizes of 100 to 2,000 pages; indexing with
+  1, 2 and 4 indexers and the GIN index's `fastupdate` on and off; search latency by query kind
+  and concurrency; the pipeline's and the dashboard's statements on a 1,000,000-link database;
+  worker and indexer crashes, Redis and PostgreSQL outages, cancellation under load; the link
+  graph at 300 to 2,000 nodes and 1,500 to 10,000 links.
+- **Optimizations, each measured before and after:** the dispatch window follows the host's
+  politeness slots (ADR-0022: five hosts with 5 workers, 32.6 to 90.8 pages per second); the
+  level admission and every analysis read are planned with hash joins (ADR-0023: a level
+  transition of 18 to 22 s, and analysis reads that ran into the 10 s time limit, when the
+  statistics had not seen a job); the link graph labels only the nodes in and around the view.
+- **Observability** (ADR-0021): a process-local metrics registry with bounded labels; process
+  heartbeats in Redis; `GET /metrics` in the Prometheus text format, state counted from
+  PostgreSQL in one snapshot and per-process series labelled `role` and `process`, so that
+  nothing is counted twice; stage times, queue delay (PostgreSQL clock) and failure categories in
+  every `task.handled` line; `python -m app.scheduler.status` lists live processes and assesses
+  health (PostgreSQL, Redis, the API, crawl progress, workers, indexing, repeated failures,
+  recovery), from PostgreSQL and heartbeats only.
+
+**Tests.** Backend: 2,082 tests (82 new): 1,448 unit, 634 integration and fault. Dashboard: 167
+Vitest tests (5 new); the 8 end-to-end tests unchanged. New:
+
+- **Unit:** the metrics registry (labels, bucket edges, the series cap, positional values) and
+  the text format (escaping, names, shapes, damaged snapshots); `GET /metrics` rendering, its
+  absence from the OpenAPI document and the request histogram by route template; every rule of
+  the health assessment, including the review's three defects; the pass loop's heartbeat state;
+  the dispatch window and the reports' `progressed`; the politeness gate's timings; failure
+  categories; the new settings.
+- **Integration** (real PostgreSQL and Redis): heartbeats (expiry, retirement, the index);
+  `/metrics` with real data and with Redis down; the queue delay by the PostgreSQL clock; the
+  scheduler's window (two jobs get 8 tasks each, interleaved in the stream); the level admission
+  and the analysis reads with statistics that have not seen the job (plans and statements, not
+  time); the crawler's stage times and failure categories.
+- **Fault** (real processes): heartbeats per role, per-process completed counts that add up to
+  PostgreSQL's, a killed worker's heartbeat expiring, a stopped one's removed at once.
+- **Dashboard:** the labelled region (`viewport.test.ts`), and a click on a label selecting its
+  node.
+
+The first full run after the changes found two failures caused by this phase, both fixed: an
+index attempt compared with `==` now carried its measured queue delay (excluded from equality
+since: it is a measurement), and the Redis data-loss fault test lost its precondition with the
+smaller dispatch window (no dispatched task left to lose; it now runs with the wider window it
+needs). **Mutation checks:** the fixes of the review's defects and of the analysis reads were
+removed one at a time; each made its regression test fail, and every file was restored and
+verified by hash.
+
+**Independent review** (read-only, with a second reader for the benchmarks). Three confirmed
+backend defects, all in the health assessment, fixed with regression tests and mutation-checked:
+with Redis down and PostgreSQL up, crawl progress and indexing could still read "ok"; a job
+whose step failed in every scheduler pass looked like progress and hid the failure; a scheduler
+pass that hangs was not seen (its heartbeat stays fresh), nor a worker with tasks in flight that
+never finished one. Benchmark defects, fixed before the final runs: the recovery containers came
+back on another port after a restart; autovacuum refreshed the "stale" statistics mid-run; the
+query benchmark timed the admission without the production setting; the indexing samplers
+included the bulk load; and several low-severity ones. Suggestions taken: the crash cost of the
+smaller dispatch window is documented in ADR-0022; the queue delay is documented as measured
+from the last publish.
+
+**Known limitations**
+
+- One laptop: every process, both databases and the test sites share its cores; scaling numbers
+  mix the code's scaling with the machine's. Synthetic sites on loopback, development
+  politeness. Recovery used the process tests' short timings.
+- The deployment-wide counts of `/metrics` and the overview read whole tables.
+- Analysis reads now cost time linear in the job also when the statistics are fresh (a page of
+  links: 19.5 ms instead of 0.5 ms for 22,220 links).
+- No Prometheus server, Grafana or alerting is part of the project.
 
 ### Phase 11: Final deployment and documentation
 

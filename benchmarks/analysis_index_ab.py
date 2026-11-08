@@ -87,7 +87,7 @@ async def main() -> None:
         await database.dispose()
         await helpers.drop_database(settings)
     if args.output:
-        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

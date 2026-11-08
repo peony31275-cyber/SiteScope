@@ -929,6 +929,51 @@ npm run api:types
 The backend unit test `tests/unit/api/test_openapi_snapshot.py` fails until the snapshot is
 current.
 
+## Observability and benchmarks (Phase 10)
+
+**Metrics.** The API serves `GET /metrics` (Prometheus text format) next to `/health`, outside
+`/api`: the dashboard's proxy never forwards it. With the API running:
+
+```powershell
+curl.exe -s http://127.0.0.1:8000/metrics | Select-String sitescope_crawl_urls
+```
+
+Every long-running process (API, scheduler, workers, index dispatcher, indexers) writes a heartbeat
+to Redis every `SITESCOPE_HEARTBEAT_INTERVAL_SECONDS` (default 10); `/metrics` renders each live
+process's own counters and histograms with its `role` and `process` labels. What each series
+means: [observability.md](observability.md).
+
+**Status and health assessment.** `python -m app.scheduler.status` now also lists the live
+processes (`processes`) and answers the operator's questions (`assessment`): PostgreSQL, Redis,
+the API, crawl progress, crawler workers, indexing, repeated failures, recovery. `--stall-seconds`
+(default 120) sets how long work may wait before it is reported.
+
+**Benchmarks.** Every script in `benchmarks/` creates its own disposable database
+(`<SITESCOPE_POSTGRES_DB>_test_bench`), uses Redis database 15 under fresh key prefixes, serves its
+sites on 127.0.0.x, and drops everything at the end; the outage scenarios of `recovery.py` start
+disposable Redis and PostgreSQL containers in WSL Docker. Run one at a time (they share the
+benchmark database), from `backend\`, with PostgreSQL and Redis up and nothing else heavy running.
+The commands, their options and what each measures: [`benchmarks/README.md`](../benchmarks/README.md);
+the results and their interpretation: [performance.md](performance.md).
+
+**A new statement that joins a job's rows** (an analysis read, an admission-like write) runs
+under `SET LOCAL enable_nestloop = off` (ADR-0023) and is measured with statistics that have not
+seen the job: `benchmarks/admission_plans.py` builds that state (autovacuum off, a new job not
+analyzed) and explains every analysis read with nested loops allowed and off.
+
+To compare two versions of the code in one session, check the older one out with
+`git worktree add --detach <dir> <commit>` and pass `--variant baseline=<dir>\backend
+--variant current=.` to `crawl_scaling.py` (or `--variant` to the other scripts): runs of both
+variants alternate, so a drift of the machine affects both. Remove the worktree afterwards with
+`git worktree remove <dir>`.
+
+Lint the scripts with the backend's configuration:
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check --config pyproject.toml ..\benchmarks
+.\.venv\Scripts\python.exe -m ruff format --config pyproject.toml --check ..\benchmarks
+```
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to

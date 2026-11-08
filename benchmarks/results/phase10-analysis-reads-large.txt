@@ -1,0 +1,764 @@
+--- statistics stale, nested loops allowed ---
+(stopped by statement_timeout after 60000 ms)
+
+--- statistics stale, nested loops off ---
+Insert on crawl_urls  (cost=24.67..24.69 rows=1 width=337) (actual time=32.704..223.051 rows=11866.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 11866
+  Conflicting Tuples: 0
+  Buffers: shared hit=274218 dirtied=518 written=518
+  ->  Subquery Scan on "*SELECT*"  (cost=24.67..24.69 rows=1 width=337) (actual time=32.495..56.315 rows=11866.00 loops=1)
+        Buffers: shared hit=36807
+        ->  Subquery Scan on chosen  (cost=24.67..24.67 rows=1 width=119) (actual time=32.446..37.442 rows=11866.00 loops=1)
+              Buffers: shared hit=36807
+              ->  Limit  (cost=24.67..24.67 rows=1 width=69) (actual time=32.444..35.370 rows=11866.00 loops=1)
+                    Buffers: shared hit=36807
+                    ->  Sort  (cost=24.67..24.67 rows=1 width=69) (actual time=32.443..34.630 rows=11866.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 1960kB
+                          Buffers: shared hit=36807
+                          ->  Unique  (cost=24.65..24.66 rows=1 width=69) (actual time=25.961..28.128 rows=11866.00 loops=1)
+                                Buffers: shared hit=36807
+                                ->  Sort  (cost=24.65..24.66 rows=1 width=69) (actual time=25.960..26.532 rows=17254.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 2265kB
+                                      Buffers: shared hit=36807
+                                      ->  Hash Join  (cost=13.08..24.64 rows=1 width=69) (actual time=4.961..20.904 rows=17254.00 loops=1)
+                                            Hash Cond: (p.crawl_url_id = s.id)
+                                            Buffers: shared hit=36807
+                                            ->  Hash Join  (cost=6.89..18.44 rows=1 width=61) (actual time=0.375..13.619 rows=19143.00 loops=1)
+                                                  Hash Cond: (l.source_page_id = p.id)
+                                                  Buffers: shared hit=23084
+                                                  ->  Merge Anti Join  (cost=0.83..12.38 rows=1 width=61) (actual time=0.026..10.540 rows=19143.00 loops=1)
+                                                        Merge Cond: (l.target_normalized_url = e.normalized_url)
+                                                        Buffers: shared hit=23037
+                                                        ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=61) (actual time=0.011..7.462 rows=21131.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                              Filter: (is_internal AND (NOT nofollow))
+                                                              Rows Removed by Filter: 1089
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=22419
+                                                        ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls e  (cost=0.41..6.18 rows=1 width=24) (actual time=0.009..0.684 rows=2302.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                              Heap Fetches: 2302
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=618
+                                                  ->  Hash  (cost=6.05..6.05 rows=1 width=48) (actual time=0.335..0.336 rows=1111.00 loops=1)
+                                                        Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 103kB
+                                                        Buffers: shared hit=47
+                                                        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=48) (actual time=0.008..0.220 rows=1111.00 loops=1)
+                                                              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                              Filter: (NOT robots_nofollow)
+                                                              Index Searches: 1
+                                                              Buffers: shared hit=47
+                                            ->  Hash  (cost=6.18..6.18 rows=1 width=56) (actual time=4.576..4.577 rows=1315.00 loops=1)
+                                                  Buckets: 2048 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 131kB
+                                                  Buffers: shared hit=13723
+                                                  ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls s  (cost=0.41..6.18 rows=1 width=56) (actual time=0.013..4.402 rows=1315.00 loops=1)
+                                                        Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                        Filter: ((depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                        Rows Removed by Filter: 987
+                                                        Index Searches: 1
+                                                        Buffers: shared hit=13723
+Planning:
+  Buffers: shared hit=31
+Planning Time: 0.508 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=63.260 calls=11866
+Trigger for constraint fk_crawl_urls_job_id: time=56.914 calls=11866
+Execution Time: 346.054 ms
+
+--- statistics stale, read: pages: first 50, statement 5 (nested loops allowed), 296.7 ms ---
+Limit  (cost=20.56..20.56 rows=1 width=150) (actual time=302.114..302.122 rows=51.00 loops=1)
+  Buffers: shared hit=456073
+  ->  Sort  (cost=20.56..20.56 rows=1 width=150) (actual time=302.112..302.115 rows=51.00 loops=1)
+        Sort Key: u.depth, p.normalized_url COLLATE "C"
+        Sort Method: top-N heapsort  Memory: 39kB
+        Buffers: shared hit=456073
+        ->  Nested Loop Left Join  (cost=0.97..20.55 rows=1 width=150) (actual time=0.018..301.398 rows=1111.00 loops=1)
+              Buffers: shared hit=456073
+              ->  Nested Loop  (cost=0.70..12.24 rows=1 width=110) (actual time=0.015..299.505 rows=1111.00 loops=1)
+                    Join Filter: (p.crawl_url_id = u.id)
+                    Rows Removed by Join Filter: 1667775
+                    Buffers: shared hit=453851
+                    ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=140) (actual time=0.009..0.563 rows=1111.00 loops=1)
+                          Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                          Index Searches: 1
+                          Buffers: shared hit=47
+                    ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=34) (actual time=0.002..0.191 rows=1502.15 loops=1111)
+                          Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                          Index Searches: 1111
+                          Buffers: shared hit=453804
+              ->  Index Scan using pk_search_documents on search_documents d  (cost=0.28..8.29 rows=1 width=32) (actual time=0.001..0.001 rows=0.00 loops=1111)
+                    Index Cond: (page_id = p.id)
+                    Index Searches: 1111
+                    Buffers: shared hit=2222
+Planning:
+  Buffers: shared hit=27
+Planning Time: 0.356 ms
+Execution Time: 302.152 ms
+
+--- statistics stale, read: links: first 50, statement 5 (nested loops allowed), 377.3 ms ---
+Sort  (cost=104.14..104.14 rows=2 width=221) (actual time=438.438..438.451 rows=51.00 loops=1)
+  Sort Key: c.source_url COLLATE "C", c."position", c.target_url COLLATE "C"
+  Sort Method: quicksort  Memory: 31kB
+  Buffers: shared hit=161625
+  CTE candidates
+    ->  Limit  (cost=18.45..18.49 rows=2 width=81) (actual time=18.489..28.832 rows=51.00 loops=1)
+          Buffers: shared hit=76879
+          ->  Incremental Sort  (cost=18.45..18.49 rows=2 width=81) (actual time=18.488..28.827 rows=51.00 loops=1)
+                Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+                Presorted Key: sp.normalized_url
+                Full-sort Groups: 2  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+                Buffers: shared hit=76879
+                ->  Nested Loop  (cost=1.11..18.44 rows=1 width=81) (actual time=0.379..28.758 rows=61.00 loops=1)
+                      Join Filter: (sp.crawl_url_id = su.id)
+                      Rows Removed by Join Filter: 38890
+                      Buffers: shared hit=76879
+                      ->  Nested Loop  (cost=0.70..12.24 rows=1 width=111) (actual time=0.375..22.029 rows=61.00 loops=1)
+                            Join Filter: (l.source_page_id = sp.id)
+                            Rows Removed by Join Filter: 67068
+                            Buffers: shared hit=67737
+                            ->  Index Scan using ix_pages_job_id_normalized_url on pages sp  (cost=0.28..6.05 rows=1 width=73) (actual time=0.012..0.016 rows=4.00 loops=1)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Index Searches: 1
+                                  Buffers: shared hit=3
+                            ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=70) (actual time=0.005..4.724 rows=16782.25 loops=4)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Index Searches: 4
+                                  Buffers: shared hit=67734
+                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls su  (cost=0.41..6.18 rows=1 width=34) (actual time=0.003..0.076 rows=638.54 loops=61)
+                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                            Index Searches: 61
+                            Buffers: shared hit=9142
+  CTE chain
+    ->  Recursive Union  (cost=0.41..71.23 rows=11 width=144) (actual time=29.462..43.131 rows=5.00 loops=1)
+          Storage: Memory  Maximum Storage: 33kB
+          Buffers: shared hit=77496
+          ->  Nested Loop Semi Join  (cost=0.41..6.25 rows=1 width=136) (actual time=29.460..43.116 rows=5.00 loops=1)
+                Join Filter: (candidates.target_url = u.normalized_url)
+                Rows Removed by Join Filter: 117275
+                Buffers: shared hit=77496
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=76) (actual time=0.010..0.572 rows=2302.00 loops=1)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 1
+                      Buffers: shared hit=617
+                ->  CTE Scan on candidates  (cost=0.00..0.04 rows=2 width=32) (actual time=0.008..0.015 rows=50.95 loops=2302)
+                      Storage: Memory  Maximum Storage: 22kB
+                      Buffers: shared hit=76879
+          ->  Nested Loop  (cost=0.41..6.49 rows=1 width=144) (actual time=0.004..0.006 rows=0.00 loops=1)
+                Join Filter: ((c_1.redirect_target = n.normalized_url) AND (n.normalized_url <> ALL (c_1.seen)))
+                ->  WorkTable Scan on chain c_1  (cost=0.00..0.28 rows=1 width=100) (actual time=0.004..0.004 rows=0.00 loops=1)
+                      Filter: ((hops < 20) AND (state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 5
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..6.18 rows=1 width=76) (never executed)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 0
+  CTE final
+    ->  Unique  (cost=0.60..0.66 rows=11 width=175) (actual time=43.149..43.163 rows=5.00 loops=1)
+          Buffers: shared hit=77496
+          ->  Sort  (cost=0.60..0.63 rows=11 width=175) (actual time=43.149..43.153 rows=5.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 25kB
+                Buffers: shared hit=77496
+                ->  CTE Scan on chain  (cost=0.00..0.41 rows=11 width=175) (actual time=29.466..43.139 rows=5.00 loops=1)
+                      Storage: Memory  Maximum Storage: 17kB
+                      Buffers: shared hit=77496
+  ->  Nested Loop  (cost=0.75..13.74 rows=2 width=221) (actual time=61.024..438.359 rows=51.00 loops=1)
+        Buffers: shared hit=161625
+        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=47) (actual time=0.007..0.010 rows=1.00 loops=1)
+              Filter: (id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+              Rows Removed by Filter: 1
+              Buffers: shared hit=1
+        ->  Merge Right Join  (cost=0.75..12.59 rows=2 width=321) (actual time=61.005..438.237 rows=51.00 loops=1)
+              Merge Cond: (f.start_url = c.target_url)
+              Buffers: shared hit=161624
+              ->  CTE Scan on final f  (cost=0.00..0.22 rows=11 width=175) (actual time=43.151..43.168 rows=5.00 loops=1)
+                    Storage: Memory  Maximum Storage: 17kB
+                    Buffers: shared hit=77496
+              ->  Materialize  (cost=0.75..12.32 rows=2 width=146) (actual time=17.851..395.013 rows=51.00 loops=1)
+                    Storage: Memory  Maximum Storage: 23kB
+                    Buffers: shared hit=84128
+                    ->  Merge Left Join  (cost=0.75..12.32 rows=2 width=146) (actual time=17.847..394.959 rows=51.00 loops=1)
+                          Merge Cond: (c.target_url = t.normalized_url)
+                          Buffers: shared hit=84128
+                          ->  Sort  (cost=0.05..0.06 rows=2 width=121) (actual time=0.027..0.045 rows=51.00 loops=1)
+                                Sort Key: c.target_url COLLATE "C"
+                                Sort Method: quicksort  Memory: 30kB
+                                ->  CTE Scan on candidates c  (cost=0.00..0.04 rows=2 width=121) (actual time=0.001..0.005 rows=51.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 22kB
+                          ->  Materialize  (cost=0.70..12.24 rows=1 width=49) (actual time=0.019..394.065 rows=2302.00 loops=1)
+                                Storage: Memory  Maximum Storage: 17kB
+                                Buffers: shared hit=84128
+                                ->  Nested Loop Left Join  (cost=0.70..12.24 rows=1 width=49) (actual time=0.017..392.831 rows=2302.00 loops=1)
+                                      Join Filter: (tp.crawl_url_id = t.id)
+                                      Rows Removed by Join Filter: 1939806
+                                      Buffers: shared hit=84128
+                                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls t  (cost=0.41..6.18 rows=1 width=65) (actual time=0.007..1.049 rows=2302.00 loops=1)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 1
+                                            Buffers: shared hit=617
+                                      ->  Index Scan using ix_pages_job_id_normalized_url on pages tp  (cost=0.28..6.05 rows=1 width=48) (actual time=0.003..0.122 rows=843.14 loops=2302)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 2302
+                                            Buffers: shared hit=83511
+Planning:
+  Buffers: shared hit=53
+Planning Time: 0.999 ms
+Execution Time: 438.567 ms
+
+--- statistics stale, read: links: 50 after a deep cursor, statement 5 (nested loops allowed), 373.9 ms ---
+Sort  (cost=104.15..104.15 rows=2 width=221) (actual time=412.012..412.025 rows=51.00 loops=1)
+  Sort Key: c.source_url COLLATE "C", c."position", c.target_url COLLATE "C"
+  Sort Method: quicksort  Memory: 31kB
+  Buffers: shared hit=185073
+  CTE candidates
+    ->  Limit  (cost=18.46..18.50 rows=2 width=81) (actual time=52.450..71.732 rows=51.00 loops=1)
+          Buffers: shared hit=100327
+          ->  Incremental Sort  (cost=18.46..18.50 rows=2 width=81) (actual time=52.449..71.726 rows=51.00 loops=1)
+                Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+                Presorted Key: sp.normalized_url
+                Full-sort Groups: 2  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+                Buffers: shared hit=100327
+                ->  Nested Loop  (cost=1.11..18.45 rows=1 width=81) (actual time=1.743..71.600 rows=61.00 loops=1)
+                      Join Filter: (sp.crawl_url_id = su.id)
+                      Rows Removed by Join Filter: 118769
+                      Buffers: shared hit=100327
+                      ->  Nested Loop  (cost=0.70..12.25 rows=1 width=111) (actual time=1.217..37.557 rows=61.00 loops=1)
+                            Join Filter: ((l.source_page_id = sp.id) AND (ROW(sp.normalized_url, l."position", l.target_normalized_url) > ROW('https://bench.test/p899'::text, 0, ''::text)))
+                            Rows Removed by Join Filter: 67082
+                            Buffers: shared hit=67751
+                            ->  Index Scan using ix_pages_job_id_normalized_url on pages sp  (cost=0.28..6.05 rows=1 width=73) (actual time=0.006..0.013 rows=4.00 loops=1)
+                                  Index Cond: ((job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid) AND (normalized_url >= 'https://bench.test/p899'::text))
+                                  Index Searches: 1
+                                  Buffers: shared hit=3
+                            ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=70) (actual time=0.014..8.338 rows=16785.75 loops=4)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Index Searches: 4
+                                  Buffers: shared hit=67748
+                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls su  (cost=0.41..6.18 rows=1 width=34) (actual time=0.005..0.415 rows=1948.03 loops=61)
+                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                            Index Searches: 61
+                            Buffers: shared hit=32576
+  CTE chain
+    ->  Recursive Union  (cost=0.41..71.23 rows=11 width=144) (actual time=75.219..87.778 rows=6.00 loops=1)
+          Storage: Memory  Maximum Storage: 34kB
+          Buffers: shared hit=100944
+          ->  Nested Loop Semi Join  (cost=0.41..6.25 rows=1 width=136) (actual time=75.217..87.764 rows=6.00 loops=1)
+                Join Filter: (candidates.target_url = u.normalized_url)
+                Rows Removed by Join Filter: 117252
+                Buffers: shared hit=100944
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=76) (actual time=0.009..0.470 rows=2302.00 loops=1)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 1
+                      Buffers: shared hit=617
+                ->  CTE Scan on candidates  (cost=0.00..0.04 rows=2 width=32) (actual time=0.023..0.034 rows=50.94 loops=2302)
+                      Storage: Memory  Maximum Storage: 22kB
+                      Buffers: shared hit=100327
+          ->  Nested Loop  (cost=0.41..6.49 rows=1 width=144) (actual time=0.005..0.006 rows=0.00 loops=1)
+                Join Filter: ((c_1.redirect_target = n.normalized_url) AND (n.normalized_url <> ALL (c_1.seen)))
+                ->  WorkTable Scan on chain c_1  (cost=0.00..0.28 rows=1 width=100) (actual time=0.004..0.004 rows=0.00 loops=1)
+                      Filter: ((hops < 20) AND (state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 6
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..6.18 rows=1 width=76) (never executed)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 0
+  CTE final
+    ->  Unique  (cost=0.60..0.66 rows=11 width=175) (actual time=87.793..87.804 rows=6.00 loops=1)
+          Buffers: shared hit=100944
+          ->  Sort  (cost=0.60..0.63 rows=11 width=175) (actual time=87.792..87.797 rows=6.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 25kB
+                Buffers: shared hit=100944
+                ->  CTE Scan on chain  (cost=0.00..0.41 rows=11 width=175) (actual time=75.223..87.784 rows=6.00 loops=1)
+                      Storage: Memory  Maximum Storage: 18kB
+                      Buffers: shared hit=100944
+  ->  Nested Loop  (cost=0.75..13.74 rows=2 width=221) (actual time=178.422..411.958 rows=51.00 loops=1)
+        Buffers: shared hit=185073
+        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=47) (actual time=0.007..0.010 rows=1.00 loops=1)
+              Filter: (id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+              Rows Removed by Filter: 1
+              Buffers: shared hit=1
+        ->  Merge Right Join  (cost=0.75..12.59 rows=2 width=321) (actual time=178.401..411.869 rows=51.00 loops=1)
+              Merge Cond: (f.start_url = c.target_url)
+              Buffers: shared hit=185072
+              ->  CTE Scan on final f  (cost=0.00..0.22 rows=11 width=175) (actual time=87.795..87.810 rows=6.00 loops=1)
+                    Storage: Memory  Maximum Storage: 17kB
+                    Buffers: shared hit=100944
+              ->  Materialize  (cost=0.75..12.32 rows=2 width=146) (actual time=90.602..324.022 rows=51.00 loops=1)
+                    Storage: Memory  Maximum Storage: 23kB
+                    Buffers: shared hit=84128
+                    ->  Merge Left Join  (cost=0.75..12.32 rows=2 width=146) (actual time=90.597..323.986 rows=51.00 loops=1)
+                          Merge Cond: (c.target_url = t.normalized_url)
+                          Buffers: shared hit=84128
+                          ->  Sort  (cost=0.05..0.06 rows=2 width=121) (actual time=0.029..0.043 rows=51.00 loops=1)
+                                Sort Key: c.target_url COLLATE "C"
+                                Sort Method: quicksort  Memory: 30kB
+                                ->  CTE Scan on candidates c  (cost=0.00..0.04 rows=2 width=121) (actual time=0.001..0.003 rows=51.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 22kB
+                          ->  Materialize  (cost=0.70..12.24 rows=1 width=49) (actual time=0.019..323.405 rows=2302.00 loops=1)
+                                Storage: Memory  Maximum Storage: 17kB
+                                Buffers: shared hit=84128
+                                ->  Nested Loop Left Join  (cost=0.70..12.24 rows=1 width=49) (actual time=0.018..322.549 rows=2302.00 loops=1)
+                                      Join Filter: (tp.crawl_url_id = t.id)
+                                      Rows Removed by Join Filter: 1939806
+                                      Buffers: shared hit=84128
+                                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls t  (cost=0.41..6.18 rows=1 width=65) (actual time=0.007..0.775 rows=2302.00 loops=1)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 1
+                                            Buffers: shared hit=617
+                                      ->  Index Scan using ix_pages_job_id_normalized_url on pages tp  (cost=0.28..6.05 rows=1 width=48) (actual time=0.002..0.099 rows=843.14 loops=2302)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 2302
+                                            Buffers: shared hit=83511
+Planning:
+  Buffers: shared hit=53
+Planning Time: 1.142 ms
+Execution Time: 412.115 ms
+
+--- statistics stale, read: links: one source page, statement 5 (nested loops allowed), 381.8 ms ---
+Sort  (cost=104.14..104.15 rows=2 width=221) (actual time=339.554..339.565 rows=20.00 loops=1)
+  Sort Key: c.source_url COLLATE "C", c."position", c.target_url COLLATE "C"
+  Sort Method: quicksort  Memory: 27kB
+  Buffers: shared hit=107292
+  CTE candidates
+    ->  Limit  (cost=18.45..18.50 rows=2 width=81) (actual time=7.576..7.582 rows=20.00 loops=1)
+          Buffers: shared hit=22546
+          ->  Incremental Sort  (cost=18.45..18.50 rows=2 width=81) (actual time=7.575..7.579 rows=20.00 loops=1)
+                Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+                Presorted Key: sp.normalized_url
+                Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+                Buffers: shared hit=22546
+                ->  Nested Loop  (cost=1.11..18.44 rows=1 width=81) (actual time=0.360..7.556 rows=20.00 loops=1)
+                      Join Filter: (sp.crawl_url_id = su.id)
+                      Buffers: shared hit=22546
+                      ->  Nested Loop  (cost=0.70..12.25 rows=1 width=111) (actual time=0.353..7.484 rows=20.00 loops=1)
+                            Buffers: shared hit=22466
+                            ->  Index Scan using ix_pages_job_id_normalized_url on pages sp  (cost=0.28..6.05 rows=1 width=73) (actual time=0.008..0.127 rows=1.00 loops=1)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Filter: (id = '01a1bd10-9a08-7fe2-9a33-aef80f0aa7ea'::uuid)
+                                  Rows Removed by Filter: 1110
+                                  Index Searches: 1
+                                  Buffers: shared hit=47
+                            ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.19 rows=1 width=70) (actual time=0.344..7.351 rows=20.00 loops=1)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Filter: (source_page_id = '01a1bd10-9a08-7fe2-9a33-aef80f0aa7ea'::uuid)
+                                  Rows Removed by Filter: 22200
+                                  Index Searches: 1
+                                  Buffers: shared hit=22419
+                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls su  (cost=0.41..6.18 rows=1 width=34) (actual time=0.003..0.003 rows=1.00 loops=20)
+                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                            Index Searches: 20
+                            Buffers: shared hit=80
+  CTE chain
+    ->  Recursive Union  (cost=0.41..71.23 rows=11 width=144) (actual time=11.017..13.862 rows=1.00 loops=1)
+          Storage: Memory  Maximum Storage: 33kB
+          Buffers: shared hit=23163
+          ->  Nested Loop Semi Join  (cost=0.41..6.25 rows=1 width=136) (actual time=11.016..13.855 rows=1.00 loops=1)
+                Join Filter: (candidates.target_url = u.normalized_url)
+                Rows Removed by Join Filter: 46020
+                Buffers: shared hit=23163
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=76) (actual time=0.012..0.645 rows=2302.00 loops=1)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 1
+                      Buffers: shared hit=617
+                ->  CTE Scan on candidates  (cost=0.00..0.04 rows=2 width=32) (actual time=0.003..0.004 rows=19.99 loops=2302)
+                      Storage: Memory  Maximum Storage: 19kB
+                      Buffers: shared hit=22546
+          ->  Nested Loop  (cost=0.41..6.49 rows=1 width=144) (actual time=0.004..0.005 rows=0.00 loops=1)
+                Join Filter: ((c_1.redirect_target = n.normalized_url) AND (n.normalized_url <> ALL (c_1.seen)))
+                ->  WorkTable Scan on chain c_1  (cost=0.00..0.28 rows=1 width=100) (actual time=0.003..0.003 rows=0.00 loops=1)
+                      Filter: ((hops < 20) AND (state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 1
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..6.18 rows=1 width=76) (never executed)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 0
+  CTE final
+    ->  Unique  (cost=0.60..0.66 rows=11 width=175) (actual time=13.867..13.869 rows=1.00 loops=1)
+          Buffers: shared hit=23163
+          ->  Sort  (cost=0.60..0.63 rows=11 width=175) (actual time=13.866..13.867 rows=1.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 25kB
+                Buffers: shared hit=23163
+                ->  CTE Scan on chain  (cost=0.00..0.41 rows=11 width=175) (actual time=11.021..13.863 rows=1.00 loops=1)
+                      Storage: Memory  Maximum Storage: 17kB
+                      Buffers: shared hit=23163
+  ->  Nested Loop  (cost=0.75..13.74 rows=2 width=221) (actual time=80.813..339.524 rows=20.00 loops=1)
+        Buffers: shared hit=107292
+        ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=47) (actual time=0.009..0.011 rows=1.00 loops=1)
+              Filter: (id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+              Rows Removed by Filter: 1
+              Buffers: shared hit=1
+        ->  Merge Right Join  (cost=0.75..12.59 rows=2 width=321) (actual time=80.795..339.468 rows=20.00 loops=1)
+              Merge Cond: (f.start_url = c.target_url)
+              Buffers: shared hit=107291
+              ->  CTE Scan on final f  (cost=0.00..0.22 rows=11 width=175) (actual time=13.868..13.870 rows=1.00 loops=1)
+                    Storage: Memory  Maximum Storage: 17kB
+                    Buffers: shared hit=23163
+              ->  Materialize  (cost=0.75..12.32 rows=2 width=146) (actual time=66.924..325.580 rows=20.00 loops=1)
+                    Storage: Memory  Maximum Storage: 19kB
+                    Buffers: shared hit=84128
+                    ->  Merge Left Join  (cost=0.75..12.32 rows=2 width=146) (actual time=66.920..325.564 rows=20.00 loops=1)
+                          Merge Cond: (c.target_url = t.normalized_url)
+                          Buffers: shared hit=84128
+                          ->  Sort  (cost=0.05..0.06 rows=2 width=121) (actual time=0.014..0.021 rows=20.00 loops=1)
+                                Sort Key: c.target_url COLLATE "C"
+                                Sort Method: quicksort  Memory: 26kB
+                                ->  CTE Scan on candidates c  (cost=0.00..0.04 rows=2 width=121) (actual time=0.000..0.002 rows=20.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 19kB
+                          ->  Materialize  (cost=0.70..12.24 rows=1 width=49) (actual time=0.016..325.000 rows=2302.00 loops=1)
+                                Storage: Memory  Maximum Storage: 17kB
+                                Buffers: shared hit=84128
+                                ->  Nested Loop Left Join  (cost=0.70..12.24 rows=1 width=49) (actual time=0.014..324.149 rows=2302.00 loops=1)
+                                      Join Filter: (tp.crawl_url_id = t.id)
+                                      Rows Removed by Join Filter: 1939806
+                                      Buffers: shared hit=84128
+                                      ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls t  (cost=0.41..6.18 rows=1 width=65) (actual time=0.005..0.808 rows=2302.00 loops=1)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 1
+                                            Buffers: shared hit=617
+                                      ->  Index Scan using ix_pages_job_id_normalized_url on pages tp  (cost=0.28..6.05 rows=1 width=48) (actual time=0.002..0.100 rows=843.14 loops=2302)
+                                            Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                            Index Searches: 2302
+                                            Buffers: shared hit=83511
+Planning:
+  Buffers: shared hit=37
+Planning Time: 1.074 ms
+Execution Time: 339.664 ms
+
+--- statistics stale, read: link graph: 2000 nodes, 10000 edges, statement 5 (nested loops allowed), 176.9 ms ---
+Nested Loop Left Join  (cost=18.92..160.25 rows=2 width=137) (actual time=22.114..174.692 rows=2000.00 loops=1)
+  Join Filter: (p.crawl_url_id = r.url_id)
+  Rows Removed by Join Filter: 1632030
+  Buffers: shared hit=36901
+  CTE returned
+    ->  Limit  (cost=18.64..18.64 rows=2 width=67) (actual time=22.075..22.514 rows=2000.00 loops=1)
+          Buffers: shared hit=23655
+          ->  Sort  (cost=18.64..18.64 rows=2 width=67) (actual time=22.074..22.377 rows=2000.00 loops=1)
+                Sort Key: u.depth, crawl_urls.normalized_url COLLATE "C"
+                Sort Method: top-N heapsort  Memory: 388kB
+                Buffers: shared hit=23655
+                ->  WindowAgg  (cost=9.94..18.62 rows=2 width=67) (actual time=17.827..19.262 rows=14994.00 loops=1)
+                      Window: w1 AS ()
+                      Storage: Memory  Maximum Storage: 1007kB
+                      Buffers: shared hit=23655
+                      ->  Merge Left Join  (cost=1.25..18.60 rows=2 width=59) (actual time=0.025..15.521 rows=14994.00 loops=1)
+                            Merge Cond: (crawl_urls.normalized_url = u.normalized_url)
+                            Buffers: shared hit=23655
+                            ->  Unique  (cost=0.84..12.40 rows=2 width=32) (actual time=0.020..13.026 rows=14994.00 loops=1)
+                                  Buffers: shared hit=23038
+                                  ->  Merge Append  (cost=0.84..12.39 rows=2 width=32) (actual time=0.019..10.611 rows=23433.00 loops=1)
+                                        Sort Key: crawl_urls.normalized_url COLLATE "C"
+                                        Buffers: shared hit=23038
+                                        ->  Index Only Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls  (cost=0.41..6.18 rows=1 width=24) (actual time=0.010..0.795 rows=2302.00 loops=1)
+                                              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                              Heap Fetches: 2302
+                                              Index Searches: 1
+                                              Buffers: shared hit=618
+                                        ->  Index Only Scan using ix_page_links_job_id_target on page_links  (cost=0.41..6.18 rows=1 width=25) (actual time=0.008..7.980 rows=21131.00 loops=1)
+                                              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                              Filter: is_internal
+                                              Rows Removed by Filter: 1089
+                                              Heap Fetches: 22220
+                                              Index Searches: 1
+                                              Buffers: shared hit=22420
+                            ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=51) (actual time=0.003..0.324 rows=2302.00 loops=1)
+                                  Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                  Index Searches: 1
+                                  Buffers: shared hit=617
+  ->  CTE Scan on returned r  (cost=0.00..0.04 rows=2 width=92) (actual time=22.076..22.918 rows=2000.00 loops=1)
+        Storage: Memory  Maximum Storage: 193kB
+        Buffers: shared hit=23655
+  ->  Materialize  (cost=0.28..6.05 rows=1 width=61) (actual time=0.000..0.027 rows=816.46 loops=2000)
+        Storage: Memory  Maximum Storage: 112kB
+        Buffers: shared hit=47
+        ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=61) (actual time=0.009..0.180 rows=1111.00 loops=1)
+              Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+              Index Searches: 1
+              Buffers: shared hit=47
+  SubPlan 2
+    ->  Aggregate  (cost=6.19..6.20 rows=1 width=8) (actual time=0.003..0.003 rows=1.00 loops=2000)
+          Buffers: shared hit=7724
+          ->  Index Only Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=0) (actual time=0.002..0.002 rows=0.86 loops=2000)
+                Index Cond: ((job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid) AND (target_normalized_url = r.url))
+                Filter: is_internal
+                Heap Fetches: 1723
+                Index Searches: 2000
+                Buffers: shared hit=7724
+  SubPlan 3
+    ->  Aggregate  (cost=61.53..61.54 rows=1 width=8) (actual time=0.007..0.007 rows=1.00 loops=887)
+          Buffers: shared hit=5475
+          ->  Index Scan using pk_page_links on page_links l_1  (cost=0.41..61.46 rows=30 width=0) (actual time=0.002..0.006 rows=19.04 loops=887)
+                Index Cond: (source_page_id = p.id)
+                Filter: is_internal
+                Rows Removed by Filter: 1
+                Index Searches: 887
+                Buffers: shared hit=5475
+Planning:
+  Buffers: shared hit=11
+Planning Time: 0.349 ms
+Execution Time: 174.839 ms
+
+--- statistics stale, read: link graph: 2000 nodes, 10000 edges, statement 6 (nested loops allowed), 667.8 ms ---
+Limit  (cost=82.00..82.05 rows=2 width=54) (actual time=29.432..751.272 rows=1366.00 loops=1)
+  Buffers: shared hit=22466
+  CTE targets
+    ->  Function Scan on unnest t  (cost=0.00..20.00 rows=2000 width=32) (actual time=0.108..0.175 rows=2000.00 loops=1)
+  ->  Incremental Sort  (cost=62.00..62.04 rows=2 width=54) (actual time=29.430..751.160 rows=1366.00 loops=1)
+        Sort Key: sp.normalized_url COLLATE "C", l."position", l.target_normalized_url COLLATE "C"
+        Presorted Key: sp.normalized_url
+        Full-sort Groups: 42  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=22466
+        ->  Nested Loop  (cost=8.69..61.99 rows=1 width=54) (actual time=10.899..749.970 rows=1366.00 loops=1)
+              Join Filter: (sp.id = l.source_page_id)
+              Rows Removed by Join Filter: 1526935
+              Buffers: shared hit=22466
+              ->  Index Scan using ix_pages_job_id_normalized_url on pages sp  (cost=2.50..8.27 rows=1 width=56) (actual time=0.037..1.753 rows=887.00 loops=1)
+                    Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                    Filter: (id = ANY ('{01a1bd10-9a08-7fe2-9a33-aef80f0aa7ea,01a1bd10-9a09-74e8-9156-1c5ea3918b5d,01a1bd10-9a09-7522-8f01-fcf4937cf021,01a1bd10-9a0b-73fe-8d2b-fbaa46224746,01a1bd10-9a0c-7237-ad31-04c1b86a3263,01a1bd10-9a0d-70e0-b9c7-16936417e07c,01a1bd10-9a0e-703c-9b0f-1f07f33665d7,01a1bd10-9a0e-7fdc-b001-b09dcb8107dc,01a1bd10-9a0f-7d90-9ba2-f22cffe26ec7,01a1bd10-9a10-7c62-ad3e-05e1a095d4cf,01a1bd10-9a11-7af1-bb9f-099548e1a3db,01a1bd10-9a09-7545-a64d-9925dc28ae4e,01a1bd10-9a09-7780-baf3-49e4a350623e,01a1bd10-9a09-7906-b0f8-fa9a6fa3c5e6,01a1bd10-9a09-7a25-b197-b3146856539f,01a1bd10-9a09-7c92-af46-fe095beff2f8,01a1bd10-9a09-7dbb-bf09-0f0fef559003,01a1bd10-9a09-7ee4-a2e1-a4d5d2000526,01a1bd10-9a0a-703c-aa39-e679668def40,01a1bd10-9a0a-715a-8cd5-319b86a87cd7,01a1bd10-9a0a-7273-ad7a-d422f8d8e76f,01a1bd10-9a0a-74a3-9161-2a239ac32bb0,01a1bd10-9a0a-74be-8ead-5a0200ba93f5,01a1bd10-9a0a-784e-ae93-6ab3ca705cb2,01a1bd10-9a0a-79a9-8d74-9e0708b92b9b,01a1bd10-9a0a-7b6f-979a-5729b9ec81fb,01a1bd10-9a0a-7d1a-8f41-cc08c58e9952,01a1bd10-9a0a-7f22-be6d-3f172b558c11,01a1bd10-9a0b-704e-a31c-a0dd00b5c989,01a1bd10-9a0b-716c-9485-562d335f8956,01a1bd10-9a0b-72e3-918e-874867ed6485,01a1bd10-9a0b-7419-a67e-5a36fe713a08,01a1bd10-9a0b-756c-b9a8-c7a0de718658,01a1bd10-9a0b-771a-af66-004913a36410,01a1bd10-9a0b-7837-b80b-8985c91e5a8e,01a1bd10-9a0b-7998-a946-09e2088d78a4,01a1bd10-9a0b-7ab5-9e2c-bc536d054bdc,01a1bd10-9a0b-7c56-89c6-5e9b87660e1e,01a1bd10-9a0b-7e7d-871d-5d1af607af3c,01a1bd10-9a0b-7fa9-b905-c0d21c235127,01a1bd10-9a0c-70c6-9643-cb4ebda16fef,01a1bd10-9a0c-7251-8766-ca0455bf2034,01a1bd10-9a0c-73f7-b913-cfb47e24af9f,01a1bd10-9a0c-754d-b077-67595e7bb063,01a1bd10-9a0c-7671-97fc-abe03dbb4d27,01a1bd10-9a0c-778d-a4f8-67d3a0ce38e9,01a1bd10-9a0c-7a08-b400-df823d0c1092,01a1bd10-9a0c-7b29-a840-d1ff6dec17e6,01a1bd10-9a0c-7ccf-95ff-2081d9a294d9,01a1bd10-9a0c-7ea4-a6e3-fb778466c86e,01a1bd10-9a0c-7fc4-93f8-e59e5e355b05,01a1bd10-9a0d-70fb-8e35-fc4b1684ebc5,01a1bd10-9a0d-7258-80ed-a6cc07b76e9a,01a1bd10-9a0d-742e-910d-0973ae7f04d0,01a1bd10-9a0d-754e-a03c-e4f2ce8c1d81,01a1bd10-9a0d-76b2-8d53-dd185b71548e,01a1bd10-9a0d-77db-aa9f-28fb13c88e23,01a1bd10-9a0d-79c0-856c-bbca929d6cff,01a1bd10-9a0d-7b7b-b791-0b624d87a828,01a1bd10-9a0d-7da6-abd2-157cc0028f97,01a1bd10-9a0d-7f21-b74b-96db070912e6,01a1bd10-9a0e-7056-89f8-c8438f6407f6,01a1bd10-9a0e-7172-bb1e-2957b3bd9bb9,01a1bd10-9a0e-7378-ae43-15c6f4be6b53,01a1bd10-9a0e-749c-95cc-bd38f4f4556c,01a1bd10-9a0e-75b8-87b8-44c28ff6f07f,01a1bd10-9a0e-7713-b65d-deab80c46013,01a1bd10-9a0e-78d5-8464-a1c63fe55096,01a1bd10-9a0e-79fc-86a8-cd5c3dd5c9a1,01a1bd10-9a0e-7c84-88b9-9b2e327fcb77,01a1bd10-9a0e-7daf-9521-8e735cd6f224,01a1bd10-9a0e-7ffb-a02b-9d188f2b8826,01a1bd10-9a0f-719c-a899-1d85104ae5db,01a1bd10-9a0f-732a-b715-bb9ec3c10099,01a1bd10-9a0f-74ac-8c63-1402968a5d47,01a1bd10-9a0f-75c8-8926-5e55bb0da716,01a1bd10-9a0f-76e4-a8fd-f4b22864ada5,01a1bd10-9a0f-7842-aeef-a5d66d3f98ce,01a1bd10-9a0f-796d-8572-6382afccb996,01a1bd10-9a0f-7a8d-8e23-9b6455899ca7,01a1bd10-9a0f-7c69-aa29-72f9d99244ac,01a1bd10-9a0f-7dac-91a1-f76c64f079f5,01a1bd10-9a0f-7fa5-9c93-ee0413f8e6c6,01a1bd10-9a10-7107-aa44-30216f0dc694,01a1bd10-9a10-72b7-bc37-aa1a4e2c2df6,01a1bd10-9a10-742a-aa13-fb71973f6960,01a1bd10-9a10-754f-a179-caa47f233468,01a1bd10-9a10-76ea-b8d1-cc1d66feff1e,01a1bd10-9a10-7843-8453-3e190aff4f94,01a1bd10-9a10-7963-8947-c0a92f1f71d3,01a1bd10-9a10-7a82-8948-79beb1668318,01a1bd10-9a10-7c81-9a0e-94e8d8c07c44,01a1bd10-9a10-7de3-9742-1236bb8a5238,01a1bd10-9a10-7fd4-b299-968bb6dc8873,01a1bd10-9a11-713e-be45-f8c1869239f2,01a1bd10-9a11-726b-b285-fd7da1c9b51d,01a1bd10-9a11-74ca-9efa-37659cdfa48c,01a1bd10-9a11-762f-8710-42ba23031b7b,01a1bd10-9a11-7750-a56d-e6411b38c7eb,01a1bd10-9a11-78ac-ad50-a44d8652bd6c,01a1bd10-9a11-79ce-9bcf-65739d702347,01a1bd10-9a11-7b0c-999a-98575152c725,01a1bd10-9a11-7d90-b954-f9f001eed0a8,01a1bd10-9a11-7eb2-b92e-37f097d7183d,01a1bd10-9a11-7fd2-baed-8761be62c43c,01a1bd10-9a12-7124-85b8-bb622abdd054,01a1bd10-9a12-7246-a51e-de8c3d38a276,01a1bd10-9a12-7365-ba93-58cba2cd293b,01a1bd10-9a12-74b8-b3a3-814bed356aeb,01a1bd10-9a12-765d-89bf-6aa86951caa2,01a1bd10-9a12-777c-811f-66135689e184,01a1bd10-9a09-7566-87b0-5a821080f6f1,01a1bd10-9a09-7582-96f8-177d16421810,01a1bd10-9a09-759d-8608-c3a49e744064,01a1bd10-9a09-75b8-9e86-5c50cf7a0599,01a1bd10-9a09-75d3-9812-b81e65442077,01a1bd10-9a09-75ed-9d19-895c5d30bf8f,01a1bd10-9a09-7607-92b8-0b7f908f311e,01a1bd10-9a09-7621-a2ca-a3a846e79df6,01a1bd10-9a09-773b-b293-e4cffcc78fe2,01a1bd10-9a09-7762-801b-65b429b18ef0,01a1bd10-9a09-779d-8861-115822570174,01a1bd10-9a09-7817-8be6-fc4c1fdcd8c6,01a1bd10-9a09-7836-9d8b-77a48436a345,01a1bd10-9a09-7853-a10d-f6a5798090e8,01a1bd10-9a09-786c-af6f-b6ee85f5367f,01a1bd10-9a09-7886-aad6-c24c68dad759,01a1bd10-9a09-789f-84db-d155a2e134ab,01a1bd10-9a09-78b9-bea8-fb53a2d70729,01a1bd10-9a09-78d2-9e15-0270695fa8bd,01a1bd10-9a09-78eb-99bc-4a5f8f4d006e,01a1bd10-9a09-7921-91a4-71a770e9624f,01a1bd10-9a09-793a-951d-8bf7b0f92ef3,01a1bd10-9a09-7954-9ab1-905dd84eb831,01a1bd10-9a09-796d-895d-9e383a36d7d6,01a1bd10-9a09-7986-b650-1b5ede3a2b44,01a1bd10-9a09-79a1-8c9c-52fcf8b04e4b,01a1bd10-9a09-79bb-8125-d600ee818eca,01a1bd10-9a09-79d7-92e6-053dcd0687b0,01a1bd10-9a09-79f1-bfea-781cef900a64,01a1bd10-9a09-7a0b-8100-18286f28e32d,01a1bd10-9a09-7a41-b19a-290239747863,01a1bd10-9a09-7a5b-8925-d56070e17b4b,01a1bd10-9a09-7a75-8730-1dfd61a36188,01a1bd10-9a09-7a8e-8779-33920af54b09,01a1bd10-9a09-7aa7-811e-27571e0ae4db,01a1bd10-9a09-7b13-aaa3-173f1a430339,01a1bd10-9a09-7b4a-af44-756b4bc536d4,01a1bd10-9a09-7b6b-a157-454c1f6a3c22,01a1bd10-9a09-7bf4-9dae-c8b23aa9d079,01a1bd10-9a09-7c19-ae36-15b04dd393bc,01a1bd10-9a09-7cb5-9715-bcb720303c6d,01a1bd10-9a09-7cd1-b991-c60bdbabd2de,01a1bd10-9a09-7cec-8bf1-6a2db6f0cfa3,01a1bd10-9a09-7d06-b05a-fe27398ee794,01a1bd10-9a09-7d20-b507-9e3d9a0d89b0,01a1bd10-9a09-7d3a-8c12-5e4886965e8e,01a1bd10-9a09-7d53-9c39-039c2ae35a38,01a1bd10-9a09-7d6d-aec0-2219605a63bf,01a1bd10-9a09-7d87-bfb5-d6ba59129a6f,01a1bd10-9a09-7da0-83f7-0fda85509606,01a1bd10-9a09-7dd7-a530-6233bd8b098a,01a1bd10-9a09-7df1-910f-c3fc1c273aa2,01a1bd10-9a09-7e0a-bb27-925ff68c1a99,01a1bd10-9a09-7e24-ae8f-2c5ebc5267dc,01a1bd10-9a09-7e3e-82c5-216ed61b11ed,01a1bd10-9a09-7e59-a796-a212118a0bb8,01a1bd10-9a09-7e73-afce-f4dd6a485450,01a1bd10-9a09-7e8c-99d5-a5ad8b678fae,01a1bd10-9a09-7ea5-8402-29c1b9c9bff8,01a1bd10-9a09-7ec9-a344-bc00e597d733,01a1bd10-9a09-7eff-90b3-129a8bc1b2a7,01a1bd10-9a09-7f19-a4c2-8b818f6a707a,01a1bd10-9a09-7f32-8a6e-c23c5cf3c395,01a1bd10-9a09-7f4b-a2fe-57b2cc08c71a,01a1bd10-9a09-7f64-9ecf-ce0cacca2a74,01a1bd10-9a09-7f7d-8377-73d22c6b8a7d,01a1bd10-9a09-7f97-9265-e3af73a22887,01a1bd10-9a09-7fb1-bf2f-44e63feced26,01a1bd10-9a0a-7005-bdda-d51f761381e8,01a1bd10-9a0a-7021-96a5-333312f6d63e,01a1bd10-9a0a-7057-9e73-e027e554915f,01a1bd10-9a0a-7071-ad49-2ab8351c3864,01a1bd10-9a0a-708a-963e-475dd60d8d7d,01a1bd10-9a0a-70a5-8a86-4bddb3927257,01a1bd10-9a0a-70bf-a4df-b0fdb3c9cfe4,01a1bd10-9a0a-70d8-9ee8-534e9e948f08,01a1bd10-9a0a-70f3-a818-ac0b08c99d0a,01a1bd10-9a0a-710c-85f6-ef87dc8cfcdd,01a1bd10-9a0a-7125-9d2f-97ebda092f39,01a1bd10-9a0a-7140-9748-2d3ac0152c93,01a1bd10-9a0a-7174-9d39-ecc54e852057,01a1bd10-9a0a-718e-a1a7-d62a82a8ad15,01a1bd10-9a0a-71a7-8c57-01f421acf988,01a1bd10-9a0a-71c0-9c72-b93b617e3cc7,01a1bd10-9a0a-71da-8d70-ed99459f8661,01a1bd10-9a0a-71f4-85db-742f02459c46,01a1bd10-9a0a-720e-b73e-56da9fa25739,01a1bd10-9a0a-7227-bf79-1a7d994a7efe,01a1bd10-9a0a-7240-87be-92c5697eecdd,01a1bd10-9a0a-7259-81b2-90b7abae4402,01a1bd10-9a0a-728f-892c-ccede7c16157,01a1bd10-9a0a-72a8-9489-2446674be4c1,01a1bd10-9a0a-72c1-b895-05b7a827a77d,01a1bd10-9a0a-739f-b42d-0f6dcd5b5fd0,01a1bd10-9a0a-73c6-b3c7-574a91b24048,01a1bd10-9a0a-73e2-a623-d32a1d00b857,01a1bd10-9a0a-7436-ba9b-6f3af83ceee9,01a1bd10-9a0a-7453-a8ea-9fef6c2536d7,01a1bd10-9a0a-746d-b34f-49747e5c0909,01a1bd10-9a0a-7487-a658-182a8027606b,01a1bd10-9a0a-74da-8e0d-dc0b301268ff,01a1bd10-9a0a-74f4-bd3d-a202e9685881,01a1bd10-9a0a-750e-9687-126a1bdffc8c,01a1bd10-9a0a-7527-bd4f-aa6e3fefb493,01a1bd10-9a0a-769e-aed1-93c0eec86ca2,01a1bd10-9a0a-76c4-ab39-517a3940d41a,01a1bd10-9a0a-76df-a9f9-93896ac1ba38,01a1bd10-9a0a-76f9-9d58-020f0a0a3dc3,01a1bd10-9a0a-7713-8bad-82d2169633d7,01a1bd10-9a0a-772c-a6cb-679d3e37b903,01a1bd10-9a0a-7747-a2f5-a4d9976c4e96,01a1bd10-9a0a-7763-872e-f9c447a277d9,01a1bd10-9a0a-777e-861d-26a20012cd4b,01a1bd10-9a0a-7798-a215-e3e68cc015b7,01a1bd10-9a0a-77b2-8af6-55bb809eed06,01a1bd10-9a0a-77cb-8c2c-3b8ef78de8b0,01a1bd10-9a0a-77e6-b4af-3cccde72bf99,01a1bd10-9a0a-7801-ba1a-d7b6603a80f8,01a1bd10-9a0a-781b-924f-5d13dbf5386d,01a1bd10-9a0a-7834-8b28-412e7f1fc628,01a1bd10-9a0a-7869-a25b-eef64f38c789,01a1bd10-9a0a-7882-b0d9-a91695cb9517,01a1bd10-9a0a-789c-8bf5-658ff71b886b,01a1bd10-9a0a-78b6-b876-e6e23e8f4ff7,01a1bd10-9a0a-790a-a414-bda679fe192e,01a1bd10-9a0a-7929-8c18-84a912f4a8b0,01a1bd10-9a0a-7942-a541-150b48c073b2,01a1bd10-9a0a-795c-9be2-03e6d071a554,01a1bd10-9a0a-7975-b548-783e60ee0706,01a1bd10-9a0a-798f-a6ea-b5fd1d10458f,01a1bd10-9a0a-79c4-9384-8c3d96d30f0f,01a1bd10-9a0a-79dd-8739-b0ae322a213d,01a1bd10-9a0a-79f7-90f2-49c616754188,01a1bd10-9a0a-7a10-9635-19b44bf8c097,01a1bd10-9a0a-7a2b-9891-5c4ecab753ad,01a1bd10-9a0a-7a44-98b7-c7136593e485,01a1bd10-9a0a-7a61-973b-c065ab601b22,01a1bd10-9a0a-7a7b-a0a0-6b9d243683df,01a1bd10-9a0a-7a95-a6f8-9839dddb2c1d,01a1bd10-9a0a-7b4e-a668-76efe6ae80a0,01a1bd10-9a0a-7bfc-a9e8-512fc7c8bc29,01a1bd10-9a0a-7c28-b283-668b8b2da029,01a1bd10-9a0a-7c45-804f-409b9071fc96,01a1bd10-9a0a-7c60-ac3a-633626753704,01a1bd10-9a0a-7c7b-a4ee-c0df99324314,01a1bd10-9a0a-7c96-848d-2a17f1629b93,01a1bd10-9a0a-7cb0-b74d-b1d13e29fa6f,01a1bd10-9a0a-7ccb-8176-4abaf5c55b13,01a1bd10-9a0a-7ce5-909e-9cca6056056d,01a1bd10-9a0a-7d00-af05-45e3d2a36453,01a1bd10-9a0a-7d36-af77-90e3573c9352,01a1bd10-9a0a-7d50-9712-54d7b7860b56,01a1bd10-9a0a-7dc1-870c-2c04636f2832,01a1bd10-9a0a-7de1-b917-1f17f56c82a3,01a1bd10-9a0a-7dfd-ac24-f8c5b514edc5,01a1bd10-9a0a-7e17-bf64-e47bdcee791f,01a1bd10-9a0a-7e31-94a1-3f85728828a1,01a1bd10-9a0a-7e4b-bc85-77633c9966af,01a1bd10-9a0a-7e64-8b2a-02c2981b3008,01a1bd10-9a0a-7f00-91d7-6eeaba252309,01a1bd10-9a0a-7f3e-8357-89d65da11bf1,01a1bd10-9a0a-7f59-80dc-3640d7fb73c0,01a1bd10-9a0a-7f74-aba5-0ea6ffdd8dfe,01a1bd10-9a0a-7f8e-957a-22374de0216e,01a1bd10-9a0a-7fa9-aab3-ad817ac74d1f,01a1bd10-9a0a-7fc4-8f03-71aa21706412,01a1bd10-9a0a-7fdd-8cc4-edd88175b0b6,01a1bd10-9a0a-7ff6-a642-317b5a28f4f5,01a1bd10-9a0b-7019-b09e-2faf4625d4a6,01a1bd10-9a0b-7034-8dca-5a6779770ff4,01a1bd10-9a0b-706a-a242-4479ab28250c,01a1bd10-9a0b-7084-a57b-9370957b602f,01a1bd10-9a0b-709e-bdd3-7544313a04c3,01a1bd10-9a0b-70b8-9f62-8805d0194a9c,01a1bd10-9a0b-70d1-ab36-b9837cd4fb5b,01a1bd10-9a0b-70eb-b272-1b25b16410c4,01a1bd10-9a0b-7105-aa16-a6dbc98570c6,01a1bd10-9a0b-711e-8324-22d3e53eaff7,01a1bd10-9a0b-7138-b9e8-f75be433756c,01a1bd10-9a0b-7152-b9e4-ef8d0b813a7e,01a1bd10-9a0b-71da-9260-c830250e61fa,01a1bd10-9a0b-71f6-8a9a-1285ae845260,01a1bd10-9a0b-7211-b855-3bbeb851ce0b,01a1bd10-9a0b-722c-9dd6-93d1b17dae1d,01a1bd10-9a0b-7246-91b9-1114ed4c804c,01a1bd10-9a0b-7260-8cda-42a959d02704,01a1bd10-9a0b-727a-9917-1de64a5b6662,01a1bd10-9a0b-7293-8977-a10295aabdc9,01a1bd10-9a0b-72ae-a934-f5ca33c3036e,01a1bd10-9a0b-72c8-8a16-cf5ddf932774,01a1bd10-9a0b-72fe-9cb9-6e1a2163b974,01a1bd10-9a0b-7317-8b48-e1c74fa85cba,01a1bd10-9a0b-7331-825e-74db3522447b,01a1bd10-9a0b-734a-b465-67bde2111e74,01a1bd10-9a0b-7364-b124-467b8a979645,01a1bd10-9a0b-737e-9ff0-14ef4d441d6c,01a1bd10-9a0b-7397-a40a-789790e9912e,01a1bd10-9a0b-73b0-9daa-9ce7093e7ba2,01a1bd10-9a0b-73ca-be21-789e52e5c520,01a1bd10-9a0b-73e4-be85-b2aae81b5e68,01a1bd10-9a0b-7433-acd6-3ce79657f2d1,01a1bd10-9a0b-744c-be63-6a8b4655bfa3,01a1bd10-9a0b-7465-ba3e-98cfde4644cc,01a1bd10-9a0b-747f-9e43-99f3b7596da1,01a1bd10-9a0b-7499-b305-3d74d6b4679e,01a1bd10-9a0b-74b3-8706-266803ffd6e9,01a1bd10-9a0b-74cd-9305-4fff3a602c06,01a1bd10-9a0b-74e6-8c22-25f5cca614a6,01a1bd10-9a0b-7535-9b02-b42ce3b41887,01a1bd10-9a0b-7551-b895-2854a1e902ad,01a1bd10-9a0b-7586-bcdd-7f346ecfe22c,01a1bd10-9a0b-75a1-a097-dfc5e0178f4e,01a1bd10-9a0b-75bb-9f80-40e0dac671ae,01a1bd10-9a0b-75d5-8d66-d76d8719c712,01a1bd10-9a0b-75ef-81a4-a921c90338b8,01a1bd10-9a0b-7608-a611-45bc7fb4dcb0,01a1bd10-9a0b-7622-8e64-14e5a82851e6,01a1bd10-9a0b-763b-8f5b-b1f39d7c8806,01a1bd10-9a0b-76dc-bfd9-906b036929d6,01a1bd10-9a0b-76fd-9e9f-fdf5b51e9d41,01a1bd10-9a0b-7735-9e7b-b711ce235d34,01a1bd10-9a0b-774f-acc1-a0b5cbd05659,01a1bd10-9a0b-776a-984c-3e225153f284,01a1bd10-9a0b-7783-b387-22fb65655193,01a1bd10-9a0b-779c-be35-5d4ab96cb068,01a1bd10-9a0b-77b6-8be2-913780f1e937,01a1bd10-9a0b-77cf-89fa-766b899e0daf,01a1bd10-9a0b-77e7-844b-db4093dcde47,01a1bd10-9a0b-7801-a58f-aa91b176e68b,01a1bd10-9a0b-781c-a0c5-ce114a24bbb4,01a1bd10-9a0b-7853-abc7-a1fcaa88857c,01a1bd10-9a0b-786d-9659-4ea01af276a7,01a1bd10-9a0b-7886-9138-deffd62a91e5,01a1bd10-9a0b-789f-8a99-0a0f99c091f7,01a1bd10-9a0b-78bb-af6c-2d6c1676033a,01a1bd10-9a0b-78d4-9609-20b15db5c32a,01a1bd10-9a0b-7924-881e-fc2caee20b0c,01a1bd10-9a0b-7940-bca7-66f4c989aa01,01a1bd10-9a0b-7963-9481-c0640e4b3922,01a1bd10-9a0b-797d-9930-613d5a0a0c75,01a1bd10-9a0b-79b4-94fd-1a227f05a7b9,01a1bd10-9a0b-79ce-aa88-2216c39f4050,01a1bd10-9a0b-79e8-bfa1-d832be212266,01a1bd10-9a0b-7a01-b646-fc495b25130f,01a1bd10-9a0b-7a1a-8cae-883db49d2fd7,01a1bd10-9a0b-7a34-ba7a-6fd1fd5df568,01a1bd10-9a0b-7a4e-b239-6be01590065e,01a1bd10-9a0b-7a68-9601-ec5ec3360b3d,01a1bd10-9a0b-7a81-bc35-dc79dfbae25a,01a1bd10-9a0b-7a9b-9b78-e59b3aecbc65,01a1bd10-9a0b-7acf-ae3b-a56a8036d521,01a1bd10-9a0b-7ae8-b46f-1026bdb180bf,01a1bd10-9a0b-7b01-bd2f-dbd1fe51d460,01a1bd10-9a0b-7b1d-8af9-74fffc67ee9d,01a1bd10-9a0b-7b36-8feb-663c41fdf3e5,01a1bd10-9a0b-7b4f-875e-4cc36e1ba0db,01a1bd10-9a0b-7b69-80ae-defe2193a06b,01a1bd10-9a0b-7be1-9a3e-9ed8e87c486f,01a1bd10-9a0b-7c1a-9521-5637a90eb17a,01a1bd10-9a0b-7c38-8666-534610403b8f,01a1bd10-9a0b-7c72-acd9-306db6ea3b0c,01a1bd10-9a0b-7c8d-afc3-dc7f516eda0b,01a1bd10-9a0b-7ca8-bfc1-eda528d53c13,01a1bd10-9a0b-7cc1-908b-d8371453026b,01a1bd10-9a0b-7d33-b748-27bbe7b9db78,01a1bd10-9a0b-7d52-b636-8e17f59cf653,01a1bd10-9a0b-7d6e-87ec-be2f01273c5a,01a1bd10-9a0b-7d88-8364-adc490941eac,01a1bd10-9a0b-7da2-ac01-fdd778d6fb6b,01a1bd10-9a0b-7dbb-943f-821e524c2734,01a1bd10-9a0b-7e9f-9455-c68c76397c94,01a1bd10-9a0b-7ebb-92fe-87571cd5de67,01a1bd10-9a0b-7ed6-be35-595a6d3a298f,01a1bd10-9a0b-7ef0-9c9a-9096b79aab91,01a1bd10-9a0b-7f0a-8121-039ff465433a,01a1bd10-9a0b-7f24-a74d-e8bef5282089,01a1bd10-9a0b-7f3d-892a-44fca33707c1,01a1bd10-9a0b-7f59-b902-f0a3a8d7cc11,01a1bd10-9a0b-7f74-914b-1b6646757608,01a1bd10-9a0b-7f8e-bab1-bb7cac84f98b,01a1bd10-9a0b-7fc3-b473-61a51a095bb1,01a1bd10-9a0b-7fdd-8919-f34aafdad985,01a1bd10-9a0b-7ff7-9226-cd8c7666a40a,01a1bd10-9a0c-7011-947e-3da772d1d161,01a1bd10-9a0c-702b-8818-ec12e31574f6,01a1bd10-9a0c-7044-92b1-f27cf61bdbf6,01a1bd10-9a0c-705e-bd48-e68b027044bc,01a1bd10-9a0c-7078-af52-e6e48978829f,01a1bd10-9a0c-7091-b37d-74efe6a99454,01a1bd10-9a0c-70ac-a768-03427b28d8dd,01a1bd10-9a0c-70e0-8c79-2e51bbaa48e8,01a1bd10-9a0c-70fa-b852-bc20206ad90e,01a1bd10-9a0c-7150-b961-c984206a8098,01a1bd10-9a0c-716c-ace6-8acfddda49fa,01a1bd10-9a0c-7187-a684-6a614949c8a9,01a1bd10-9a0c-71a1-848c-4f22db1cf07f,01a1bd10-9a0c-71bc-a085-feb9ba8edfd7,01a1bd10-9a0c-71db-bc1f-92363898a693,01a1bd10-9a0c-71fd-ab38-8a60ccc7c3e2,01a1bd10-9a0c-721c-9a07-fc6a87da1a8b,01a1bd10-9a0c-726e-8bee-8f95ca5e0b56,01a1bd10-9a0c-7288-ad43-eca6b6d9be77,01a1bd10-9a0c-72a1-b717-be35bcb852ea,01a1bd10-9a0c-72bb-bb2f-a352775ec593,01a1bd10-9a0c-72d4-a6d8-07f4ccacc591,01a1bd10-9a0c-72ee-a2dd-b4583c699346,01a1bd10-9a0c-7309-bdfb-04c9592e51f4,01a1bd10-9a0c-7323-b8af-94aad4337eb5,01a1bd10-9a0c-73bb-a8a7-845d9316e404,01a1bd10-9a0c-73dc-aa69-2e55de968845,01a1bd10-9a0c-7413-9980-2b2f79de4d7f,01a1bd10-9a0c-742e-b049-2453e8122a1e,01a1bd10-9a0c-7449-914a-f5b418eda946,01a1bd10-9a0c-7463-b46c-706c0e00dfc5,01a1bd10-9a0c-747d-9f9b-102d8ebf302e,01a1bd10-9a0c-7496-ad37-cd3b2b783daa,01a1bd10-9a0c-74b0-9391-9772cb495683,01a1bd10-9a0c-74c9-8c4c-fc3bf1f4f66f,01a1bd10-9a0c-74e3-b29d-f923b716318f,01a1bd10-9a0c-74fd-b109-c099283efd87,01a1bd10-9a0c-756b-813e-490b7fc4beaa,01a1bd10-9a0c-7586-8d18-18c2bed36809,01a1bd10-9a0c-75a0-9f24-052e34379d96,01a1bd10-9a0c-75bb-ab29-c14045438fa5,01a1bd10-9a0c-75d7-9d87-b640f3198e3e,01a1bd10-9a0c-75f0-99c0-741e41982170,01a1bd10-9a0c-760b-a85d-e0ca3feb714b,01a1bd10-9a0c-7624-8522-db9ec07bac63,01a1bd10-9a0c-763e-a8a6-486b3a7e208f,01a1bd10-9a0c-7657-9268-8b247b601e3b,01a1bd10-9a0c-768c-bfc8-bc3674deae34,01a1bd10-9a0c-76a5-ad3c-5b69be9cb8b0,01a1bd10-9a0c-76bf-8255-61fb8ad3d054,01a1bd10-9a0c-76d8-9d6e-adf1871d933e,01a1bd10-9a0c-76f2-a41a-76c2a6abd08b,01a1bd10-9a0c-770c-b7e4-4f523a7bd385,01a1bd10-9a0c-7726-9961-60ce1e5ca7db,01a1bd10-9a0c-7740-99c9-44bf38436ee6,01a1bd10-9a0c-775a-802b-21e012046067,01a1bd10-9a0c-7773-be4b-a846adee3f21,01a1bd10-9a0c-7837-a117-af6d2392c50f,01a1bd10-9a0c-7856-aa14-6645bc6dbad6,01a1bd10-9a0c-7871-9d59-6a9c4999f210,01a1bd10-9a0c-790e-ba31-62116599f7ff,01a1bd10-9a0c-7931-8e9d-3116e3c8cbe6,01a1bd10-9a0c-794c-9918-5d9d523b6b33,01a1bd10-9a0c-7967-9c32-9536c1c3164b,01a1bd10-9a0c-7981-ad97-5078b46bbf2e,01a1bd10-9a0c-79d0-bc23-1a8f30a1e70a,01a1bd10-9a0c-79ec-8293-c75d75fea27b,01a1bd10-9a0c-7a24-808e-352bcfd395b2,01a1bd10-9a0c-7a3e-80ea-11b61dc0b3fc,01a1bd10-9a0c-7a58-a143-b50e8b7819ac,01a1bd10-9a0c-7a72-bafb-e3dc6282a548,01a1bd10-9a0c-7a8c-b42b-944cf919177d,01a1bd10-9a0c-7aa6-9f95-390196daf4ea,01a1bd10-9a0c-7ac0-b080-493bec1c67c4,01a1bd10-9a0c-7ada-8a25-bb4c36c1d5d2,01a1bd10-9a0c-7af4-969a-4d37760baec0,01a1bd10-9a0c-7b0f-909e-63152479c16d,01a1bd10-9a0c-7b43-bb31-3960375cf6cf,01a1bd10-9a0c-7b5d-bb01-de815d537b5c,01a1bd10-9a0c-7b76-a103-78c46a3a5372,01a1bd10-9a0c-7bf5-8333-13f201ac2731,01a1bd10-9a0c-7c2b-87bb-19bab713e019,01a1bd10-9a0c-7c4a-aa1d-1ee46dd0f6be,01a1bd10-9a0c-7c65-92a7-665de2bf3303,01a1bd10-9a0c-7c80-b996-8d9682dceaed,01a1bd10-9a0c-7c9a-9356-9531c29cc473,01a1bd10-9a0c-7cb4-821e-73b47d05fcd6,01a1bd10-9a0c-7d20-ab10-729d6254a84e,01a1bd10-9a0c-7d40-9b65-2711bfb28607,01a1bd10-9a0c-7d5a-b116-02c3877c0728,01a1bd10-9a0c-7d76-a2bf-c9e2e099cdec,01a1bd10-9a0c-7d90-b9df-481b9407d5eb,01a1bd10-9a0c-7daa-8a6a-90fb18102333,01a1bd10-9a0c-7e2a-9b47-8d2a75f1c8ca,01a1bd10-9a0c-7e49-a2f0-7550953ea2e5,01a1bd10-9a0c-7e65-a4ac-ca36cb1c2cb2,01a1bd10-9a0c-7e8a-bd39-09904b31392e,01a1bd10-9a0c-7ec1-ae6d-a9a89aa665ce,01a1bd10-9a0c-7edb-b66e-663525d01a94,01a1bd10-9a0c-7ef6-b505-b1332a78ea93,01a1bd10-9a0c-7f0f-9b74-218eaff5d315,01a1bd10-9a0c-7f29-812f-7b2aacb4f18c,01a1bd10-9a0c-7f42-bd1f-e6b8cb3045ca,01a1bd10-9a0c-7f5b-bb3b-128e5550cf7b,01a1bd10-9a0c-7f76-a91d-541e6f0aa5dc,01a1bd10-9a0c-7f90-9eeb-ab3bdf192288,01a1bd10-9a0c-7faa-9b3a-804361c8bf94,01a1bd10-9a0c-7fde-a4a2-e7c435ae9c9f,01a1bd10-9a0c-7ff8-bc37-b30fc01a8564,01a1bd10-9a0d-7012-bbb7-1b1d001f5967,01a1bd10-9a0d-702d-a464-ee86010dfb8d,01a1bd10-9a0d-7046-9933-a67667cd3aae,01a1bd10-9a0d-7060-9e17-ea28522d0aef,01a1bd10-9a0d-7079-9b21-f7d723bce309,01a1bd10-9a0d-7093-9457-6741ad334d40,01a1bd10-9a0d-70ac-b2c0-354529632fd9,01a1bd10-9a0d-70c6-8dce-f25f93ee6cc9,01a1bd10-9a0d-7116-a13f-3fdce699e962,01a1bd10-9a0d-7130-8c07-099d2fa764bb,01a1bd10-9a0d-714a-86cf-6a4bfbc48389,01a1bd10-9a0d-719d-9141-47f7186415a4,01a1bd10-9a0d-71ba-9836-49af8c5d79c8,01a1bd10-9a0d-71d4-a22e-14d3aa309471,01a1bd10-9a0d-71ee-a452-ee5734144667,01a1bd10-9a0d-7208-be32-49bb31de1035,01a1bd10-9a0d-7222-ae4e-88ce129dc0ba,01a1bd10-9a0d-723d-908e-62ffcc7c9f45,01a1bd10-9a0d-7273-8fc6-2c6445884f51,01a1bd10-9a0d-728c-baf1-35d09d25ada5,01a1bd10-9a0d-72a6-a65e-4b3c146a01d4,01a1bd10-9a0d-72c0-aa17-82e68f8195a8,01a1bd10-9a0d-72da-ab97-f8b4e4e50b3e,01a1bd10-9a0d-739a-92b8-e99ab481a547,01a1bd10-9a0d-73bb-a113-ba21e6e12c94,01a1bd10-9a0d-73d8-829e-b1bf19943e40,01a1bd10-9a0d-73f5-9c08-7ff3fe4353d1,01a1bd10-9a0d-7410-ae94-53d5e4dac71c,01a1bd10-9a0d-7449-995c-e9cf610ed69f,01a1bd10-9a0d-7464-a3b6-c5fb5fe71ec7,01a1bd10-9a0d-747e-85fe-0c36b93c118b,01a1bd10-9a0d-7499-b578-f7b03ba1469c,01a1bd10-9a0d-74b3-a2cd-2449534e6bcc,01a1bd10-9a0d-74cd-ab9b-1fb23808f759,01a1bd10-9a0d-74e6-b42b-f509eb5bfa5f,01a1bd10-9a0d-7500-83b6-030c6092d458,01a1bd10-9a0d-7519-beed-2296bbb2d169,01a1bd10-9a0d-7534-9cc4-5a96b052242f,01a1bd10-9a0d-7569-9260-ac4239b0a283,01a1bd10-9a0d-75c6-a793-4b3d894b9996,01a1bd10-9a0d-75e2-9d57-f09ec242acce,01a1bd10-9a0d-75fc-8aa6-e209a60a53bc,01a1bd10-9a0d-7617-8b27-4aa003ac6535,01a1bd10-9a0d-7631-b399-08025aed19d3,01a1bd10-9a0d-764b-8708-25b86caee4ff,01a1bd10-9a0d-7665-8007-55927f387f29,01a1bd10-9a0d-767e-9827-9c70fc526b98,01a1bd10-9a0d-7698-b45b-573005c4f503,01a1bd10-9a0d-76ce-8d64-c0967b8f42aa,01a1bd10-9a0d-76e8-9fb8-3fedb77386a1,01a1bd10-9a0d-7701-87c8-d2201b7c5f3b,01a1bd10-9a0d-771b-9a26-3a4a50419a97,01a1bd10-9a0d-7735-bf9f-55df60a64283,01a1bd10-9a0d-774f-9d4a-5c5862927aef,01a1bd10-9a0d-7769-8e0d-664fc7b51c73,01a1bd10-9a0d-7783-aeaa-526a66b863af,01a1bd10-9a0d-779d-bb36-453e5b1f8a57,01a1bd10-9a0d-77bf-96b8-e38363d5f466,01a1bd10-9a0d-77f6-8373-7e348f72c4f1,01a1bd10-9a0d-7810-a2ab-797d0f9d78cd,01a1bd10-9a0d-782b-90e7-6e58a3e68d07,01a1bd10-9a0d-7845-bd34-42fdb8edf743,01a1bd10-9a0d-7860-b33a-7058259e128d,01a1bd10-9a0d-7879-a0d5-f84cf6cded46,01a1bd10-9a0d-7893-bbb3-44621723a9cc,01a1bd10-9a0d-78ad-8370-7586ae0769a9,01a1bd10-9a0d-7949-8db4-65d7c325beb2,01a1bd10-9a0d-796c-b677-ae7db5bffb92,01a1bd10-9a0d-79e0-a393-e01d0e25a74c,01a1bd10-9a0d-79fc-9a85-ebd9e3215c2c,01a1bd10-9a0d-7a17-ade6-8f1494c27b94,01a1bd10-9a0d-7a30-b3ca-6750e8e6fee1,01a1bd10-9a0d-7a4c-9b0a-f8ed697f17bc,01a1bd10-9a0d-7a67-a75c-87c45b97e7a0,01a1bd10-9a0d-7a81-b63e-21b536fa0235,01a1bd10-9a0d-7a9b-a65f-1a1ca85ddec1,01a1bd10-9a0d-7ab5-b662-8da8da8ad0bc,01a1bd10-9a0d-7acf-b37b-0e559faac16a,01a1bd10-9a0d-7c7b-9ce0-c5c6fae5d8c2,01a1bd10-9a0d-7cb3-b698-ed9637332fcf,01a1bd10-9a0d-7cd2-9852-f77b5f00869f,01a1bd10-9a0d-7ced-a467-4a1cca55aa68,01a1bd10-9a0d-7d0a-8549-87b18b55c184,01a1bd10-9a0d-7d24-8a51-8dfe5c9b3ef2,01a1bd10-9a0d-7d3e-a791-464987c8b608,01a1bd10-9a0d-7d59-8e91-a7c3c64799fa,01a1bd10-9a0d-7d72-975f-ebdbf7488bd1,01a1bd10-9a0d-7d8c-8613-b56bf94693fd,01a1bd10-9a0d-7dc3-974d-b9514ca8e05a,01a1bd10-9a0d-7ddc-b42e-d3a349827bde,01a1bd10-9a0d-7df6-aa80-4754efa6afda,01a1bd10-9a0d-7e0f-9a79-dd3cd2e4d6f2,01a1bd10-9a0d-7e28-bc7d-0f7be746e7d1,01a1bd10-9a0d-7e42-a3f3-10e8e879ca5d,01a1bd10-9a0d-7e5b-964f-3017aab20170,01a1bd10-9a0d-7e75-9667-ebd30b50ce18,01a1bd10-9a0d-7ee7-90dd-d145af9d5eea,01a1bd10-9a0d-7f05-b2c3-4122775a074d,01a1bd10-9a0d-7f3c-87e1-96cb21f75da5,01a1bd10-9a0d-7f56-9a24-1af46d34aa2d,01a1bd10-9a0d-7f70-9031-63894e820217,01a1bd10-9a0d-7f89-bc0e-0240eab29982,01a1bd10-9a0d-7fa2-9f09-43583b8310f9,01a1bd10-9a0d-7fbb-95fd-1f73707987bf,01a1bd10-9a0d-7fd4-a52f-724750e9e49f,01a1bd10-9a0d-7fee-8458-b4a9276fc1ea,01a1bd10-9a0e-7008-a1b7-7c7d921ecb27,01a1bd10-9a0e-7022-9774-484f895e63ed,01a1bd10-9a0e-7071-a8cf-fb4ffe065e19,01a1bd10-9a0e-708b-b8ac-b934cfc6cfee,01a1bd10-9a0e-70a5-b91d-53e5236620fa,01a1bd10-9a0e-70be-bf45-7fe78329cb09,01a1bd10-9a0e-70d8-b80a-5222be89ec99,01a1bd10-9a0e-70f2-88b6-6c256f4d9e88,01a1bd10-9a0e-710b-9755-862f9b23668d,01a1bd10-9a0e-7125-b32e-0baa2daddd90,01a1bd10-9a0e-713e-907b-9bd9768f1c72,01a1bd10-9a0e-7157-b957-dc33cd8d6771,01a1bd10-9a0e-718c-9806-129be7504b6d,01a1bd10-9a0e-71a8-a3a0-8558064a11cf,01a1bd10-9a0e-71c3-8523-f72b6d0d91e3,01a1bd10-9a0e-71dd-bfee-f344d6d965c0,01a1bd10-9a0e-71f8-8af3-526f484f6d37,01a1bd10-9a0e-72ad-92e3-2352c7955324,01a1bd10-9a0e-72e6-825f-b9991aa70b42,01a1bd10-9a0e-7301-ba74-0c0996108714,01a1bd10-9a0e-731c-82ac-3d8862e1d820,01a1bd10-9a0e-7346-b9d7-4734fe609f3c,01a1bd10-9a0e-739b-bc20-00f7756be6ea,01a1bd10-9a0e-73b6-a6e4-ec648574cd72,01a1bd10-9a0e-73cf-8dd5-ab0c27efb53f,01a1bd10-9a0e-73e8-ae85-8fbb995c4753,01a1bd10-9a0e-7401-8e99-8ce50dd249d4,01a1bd10-9a0e-741b-995f-3218863f5bdc,01a1bd10-9a0e-7434-8896-c75e169829c3,01a1bd10-9a0e-744e-9150-fb4646babaf0,01a1bd10-9a0e-7468-aa0f-06578328c099,01a1bd10-9a0e-7482-98bd-e6e4324bf6f8,01a1bd10-9a0e-74b6-916a-bc03f0e1cf1d,01a1bd10-9a0e-74d0-9733-50ffb2f8c85d,01a1bd10-9a0e-74e9-ae6a-d3cf84099f99,01a1bd10-9a0e-7504-9edd-cf375e2f3f02,01a1bd10-9a0e-751d-bc96-ffa393234e43,01a1bd10-9a0e-7538-a821-7a8caae081ce,01a1bd10-9a0e-7551-bb70-a6aafcb524fa,01a1bd10-9a0e-756b-8256-b5ce9217f1f0,01a1bd10-9a0e-7584-90b7-e898392c4a09,01a1bd10-9a0e-759d-b309-969e7d86961e,01a1bd10-9a0e-75d3-ab18-f7b0a1323914,01a1bd10-9a0e-75ed-bec4-8ed4bde1ad2c,01a1bd10-9a0e-7606-862b-dcb4ea28e52b,01a1bd10-9a0e-7659-9368-713ab38d5117,01a1bd10-9a0e-7676-ab6e-c3da3efc63de,01a1bd10-9a0e-7690-9c48-2b5d0d4e851e,01a1bd10-9a0e-76ab-8328-2eb529e7a9a7,01a1bd10-9a0e-76c6-875f-2915c1853314,01a1bd10-9a0e-76df-a298-9c52218cb47e,01a1bd10-9a0e-76f9-9d85-5f30a4f928e4,01a1bd10-9a0e-772e-af59-571af35173cb,01a1bd10-9a0e-7749-97fb-524f258d2076,01a1bd10-9a0e-7764-ac4d-3ca91018f5b8,01a1bd10-9a0e-777d-b590-5e3a86de4347,01a1bd10-9a0e-7797-ad8c-ad970a994ac8,01a1bd10-9a0e-77b1-aba5-3b57a9224eb8,01a1bd10-9a0e-77ca-bc6f-506c3eced592,01a1bd10-9a0e-77e5-869b-6e2388616972,01a1bd10-9a0e-7800-a642-cb240224e13b,01a1bd10-9a0e-781c-9345-69d6fa6f09c5,01a1bd10-9a0e-78f7-8791-52e2ad16240a,01a1bd10-9a0e-7912-809b-962ecce288ce,01a1bd10-9a0e-792c-a19b-c603da542717,01a1bd10-9a0e-7947-9d98-77df12937259,01a1bd10-9a0e-7960-9d6e-424c6b35dc2c,01a1bd10-9a0e-797a-91be-c8d26d2be00b,01a1bd10-9a0e-7994-bfbf-9375ddcba72e,01a1bd10-9a0e-79ae-aad1-fb251cb48e85,01a1bd10-9a0e-79c7-961e-eff62f9fac89,01a1bd10-9a0e-79e1-a65d-f903cb7873be,01a1bd10-9a0e-7a18-817c-784915042519,01a1bd10-9a0e-7a6c-8280-3525045d5577,01a1bd10-9a0e-7a88-9cc6-1bb2baee78cd,01a1bd10-9a0e-7aa3-ac45-c19325d0579b,01a1bd10-9a0e-7abe-9d4f-f1cb8c28f820,01a1bd10-9a0e-7ad8-ad47-9a4183113b53,01a1bd10-9a0e-7b8e-bd5c-9294c7786183,01a1bd10-9a0e-7c24-ac4b-89440c6ad88a,01a1bd10-9a0e-7c49-9726-30cb75b1802b,01a1bd10-9a0e-7c66-87a8-9c505207b98e,01a1bd10-9a0e-7ca1-b237-687c554f1b99,01a1bd10-9a0e-7cbe-9896-fe23687c8704,01a1bd10-9a0e-7cd9-81ef-02653bb662db,01a1bd10-9a0e-7cf4-a557-e7a8e464df77,01a1bd10-9a0e-7d0e-8fdd-f39699ca48d0,01a1bd10-9a0e-7d28-85d5-13829e16a704,01a1bd10-9a0e-7d43-bcbc-d15912efd59a,01a1bd10-9a0e-7d5d-b384-626911cac7d4,01a1bd10-9a0e-7d79-aac5-4851aba82d15,01a1bd10-9a0e-7d93-b163-be378f5c5cdf,01a1bd10-9a0e-7dcc-9780-25d4587e28df,01a1bd10-9a0e-7de7-b38b-a112d8dfd88f,01a1bd10-9a0e-7e01-84ad-f2fe09df5a42,01a1bd10-9a0e-7e1c-b70b-27168d4f0c05,01a1bd10-9a0e-7e36-8ed3-bdf0add45dd8,01a1bd10-9a0e-7e51-9845-ba8bbb061009,01a1bd10-9a0e-7f21-b92d-07bbae1b2195,01a1bd10-9a0e-7f47-8578-6d99b67bfed0,01a1bd10-9a0e-7f62-8c80-a8e71b1ed50e,01a1bd10-9a0e-7f7c-ac91-b5e0a62d400d,01a1bd10-9a0f-7017-97b2-6b25093e7265,01a1bd10-9a0f-7033-9255-69ea672becc9,01a1bd10-9a0f-704d-a960-6f223646a28b,01a1bd10-9a0f-7068-be0f-41b6201e5496,01a1bd10-9a0f-7082-889a-a831343e87b2,01a1bd10-9a0f-709c-ab17-ffe5c4a2a70e,01a1bd10-9a0f-70b7-8e64-5b6fea9ccc31,01a1bd10-9a0f-7143-a745-e7f8821ecb4d,01a1bd10-9a0f-7165-9776-458bb9716b19,01a1bd10-9a0f-7181-95df-37756d262cc7,01a1bd10-9a0f-71b7-aa44-6ac107296e39,01a1bd10-9a0f-71d1-947e-646f51315594,01a1bd10-9a0f-71ec-bda1-8332efeb6087,01a1bd10-9a0f-7240-9b1f-aa19dbd9ee54,01a1bd10-9a0f-7284-972e-d40b7383f4fb,01a1bd10-9a0f-72a4-abc0-6d9af5a85b71,01a1bd10-9a0f-72bf-9538-2e57386d5706,01a1bd10-9a0f-72d9-abf9-de6874750874,01a1bd10-9a0f-72f3-85c3-db0731325af1,01a1bd10-9a0f-730d-8efa-fd36cab8f0d9,01a1bd10-9a0f-7346-843e-092ec134b709,01a1bd10-9a0f-7361-9d01-3cd8507c6438,01a1bd10-9a0f-737b-80eb-50027ef66248,01a1bd10-9a0f-7394-84aa-3088c6ab322c,01a1bd10-9a0f-73ae-a479-206f23ee7862,01a1bd10-9a0f-73c8-bf4c-cbc49dd5755f,01a1bd10-9a0f-73e2-bc47-8a2482c83c6d,01a1bd10-9a0f-7456-9e69-270f65dc017e,01a1bd10-9a0f-7474-a908-1cd3e15c71d1,01a1bd10-9a0f-7490-80d1-8f4d01107956,01a1bd10-9a0f-74c8-b365-f14be4e6ed79,01a1bd10-9a0f-74e2-adfd-2c6614f7f500,01a1bd10-9a0f-74fc-b262-b53f43bb3ea8,01a1bd10-9a0f-7516-9183-7f01ae240970,01a1bd10-9a0f-752e-a656-a2924ab87712,01a1bd10-9a0f-7548-843d-0dafd20bb757,01a1bd10-9a0f-7561-b86f-2131e03b166a,01a1bd10-9a0f-757a-a63f-9ed71b22da4b,01a1bd10-9a0f-7594-ba6e-b574e5b82a9c,01a1bd10-9a0f-75ad-a7d5-5306495e4e57,01a1bd10-9a0f-75e2-9018-81ef9973355e,01a1bd10-9a0f-75fb-8b1f-3325a7e0265a,01a1bd10-9a0f-7615-a635-c49487eaf018,01a1bd10-9a0f-762f-83bc-1509fcc97562,01a1bd10-9a0f-7648-b6fe-9bc0c0ee2514,01a1bd10-9a0f-7662-9e7d-dac89969f366,01a1bd10-9a0f-767c-a236-40f9cfd92384,01a1bd10-9a0f-7696-b479-7075edaa0f2b,01a1bd10-9a0f-76af-95cb-b3f4098e6cc8,01a1bd10-9a0f-76ca-9a9b-8e10739d969c,01a1bd10-9a0f-7701-834e-cca7d89415c6,01a1bd10-9a0f-771a-89f3-ea2f213094b2,01a1bd10-9a0f-7734-883c-69a5be8f3a25,01a1bd10-9a0f-7751-bc6e-2319c181f7ef,01a1bd10-9a0f-776a-94b4-75ace1de3e8f,01a1bd10-9a0f-77bc-a3d9-e6cb5c39a968,01a1bd10-9a0f-77d9-8681-b8295646310f,01a1bd10-9a0f-77f4-8afb-9c2c11eb82b0,01a1bd10-9a0f-780e-a124-f085dbcb431d,01a1bd10-9a0f-7828-b59c-9a718feda2a0,01a1bd10-9a0f-785d-bb26-fd2f5b2a1680,01a1bd10-9a0f-7877-8656-0501cad7466b,01a1bd10-9a0f-7892-9100-c46b21067f13,01a1bd10-9a0f-78ac-92cb-173e3afb7bc1,01a1bd10-9a0f-78c6-9409-9915ed5abc0b,01a1bd10-9a0f-78df-a4aa-a8e80bf6d3e9,01a1bd10-9a0f-78fa-9b13-711b4a89a65c,01a1bd10-9a0f-7914-9cab-51630ee728c1,01a1bd10-9a0f-792f-b2e6-c0379f68490f,01a1bd10-9a0f-7949-88b3-01e6027cb3e7,01a1bd10-9a0f-7988-9261-42d3ae9f7fbd,01a1bd10-9a0f-79a2-99d0-5b5e6dbb5aa9,01a1bd10-9a0f-79bd-8a3a-929fe6e08066,01a1bd10-9a0f-79d6-be6a-15ecc2896795,01a1bd10-9a0f-79f1-808b-2b9341ea167e,01a1bd10-9a0f-7a0b-a0df-ed719fa4d92e,01a1bd10-9a0f-7a25-8bc1-68202522f6f3,01a1bd10-9a0f-7a3e-97fb-3baa292f3139,01a1bd10-9a0f-7a58-a40d-97aab7f3de93,01a1bd10-9a0f-7a72-bc5b-ec16c4488be7,01a1bd10-9a0f-7aa8-9e52-57c7226365e2,01a1bd10-9a0f-7ac2-a16a-b6ddd0896ef3,01a1bd10-9a0f-7adb-9d84-a6a3be236566,01a1bd10-9a0f-7b2e-b7b4-8986f5921667,01a1bd10-9a0f-7b4b-91e4-3e34d4b04d25,01a1bd10-9a0f-7b64-8912-0128e2ff1278,01a1bd10-9a0f-7b7f-9e07-37fea253e602,01a1bd10-9a0f-7be2-9194-d9cb3b578951,01a1bd10-9a0f-7c2a-be14-ef3009b3c755,01a1bd10-9a0f-7c4b-b86c-5affb08fdd1f,01a1bd10-9a0f-7c86-bf74-2be351c45737,01a1bd10-9a0f-7ca1-b1dc-a81ab4e401b6,01a1bd10-9a0f-7cbd-bdac-047f739065fd,01a1bd10-9a0f-7cd7-9902-bafbea167e5d,01a1bd10-9a0f-7cf2-b31d-0b50840dbab1,01a1bd10-9a0f-7d0c-be76-d3bc05c25521,01a1bd10-9a0f-7d25-bbe4-04562d57ebc5,01a1bd10-9a0f-7d3f-8518-ec226d3a86a6,01a1bd10-9a0f-7d5a-8264-d67e223fcfeb,01a1bd10-9a0f-7d74-a392-939b2246f305,01a1bd10-9a0f-7dc8-b2a2-1a3858fbb2c7,01a1bd10-9a0f-7de3-b992-46fc0971aa7f,01a1bd10-9a0f-7dfe-8192-39571dd485da,01a1bd10-9a0f-7e17-a726-9cc291b85509,01a1bd10-9a0f-7e33-abcd-5d98fb1ff0b8,01a1bd10-9a0f-7f16-a08c-46c1abf30026,01a1bd10-9a0f-7f3a-b26c-b0bf343198a6,01a1bd10-9a0f-7f55-93aa-26327c79dd30,01a1bd10-9a0f-7f70-82b6-0bb396373900,01a1bd10-9a0f-7f8a-baaf-c4e23c677e49,01a1bd10-9a0f-7ffe-a1b3-7f1748886df4,01a1bd10-9a10-701b-99bd-cd9a672529d3,01a1bd10-9a10-7035-abc5-d27d40f35d8d,01a1bd10-9a10-7050-a925-9a426d56ed18,01a1bd10-9a10-706a-bf77-3272d4caaf1c,01a1bd10-9a10-7084-8ac6-7daa2f66afef,01a1bd10-9a10-709e-904d-38fd4aef264f,01a1bd10-9a10-70b9-b953-06b2a785e9ec,01a1bd10-9a10-70d3-b9c2-77acdf205304,01a1bd10-9a10-70ed-9b94-c45a2b664fdc,01a1bd10-9a10-7122-ba3f-03d87f2a263f,01a1bd10-9a10-71c2-9629-8027e93f0178,01a1bd10-9a10-71e4-8e99-73d3aaba7d11,01a1bd10-9a10-7200-8d16-6fcb5f61d58a,01a1bd10-9a10-721b-8c58-a7aba62a6d0f,01a1bd10-9a10-7235-8842-c7195e376d10,01a1bd10-9a10-724f-b4b3-08c4fb60de18,01a1bd10-9a10-7269-8a66-0f231c31e5e9,01a1bd10-9a10-7283-86dd-4404aea4f4d4,01a1bd10-9a10-729c-b8c3-2a1add38957e,01a1bd10-9a10-72d3-8e56-ae6af3e64e70,01a1bd10-9a10-72ed-b656-1c345299e2a8,01a1bd10-9a10-7306-8c11-0cf44357107f,01a1bd10-9a10-7321-b5f0-20d85f6dbcfa,01a1bd10-9a10-733b-9059-abe5058e7b8d,01a1bd10-9a10-7355-b753-ae00b82bb1ab,01a1bd10-9a10-736e-88f3-47d2bc3a2cab,01a1bd10-9a10-7388-8403-24f9788bcd77,01a1bd10-9a10-73a1-ab18-1068ce663000,01a1bd10-9a10-7401-b9d3-ec55969932c6,01a1bd10-9a10-7447-8383-a0ba97b61310,01a1bd10-9a10-7462-9d5d-28d95fda112a,01a1bd10-9a10-747d-924c-3079baeb060a,01a1bd10-9a10-7496-9032-2fc480d0c28c,01a1bd10-9a10-74b0-bc66-7fbdd7fb9976,01a1bd10-9a10-74ca-9616-497ca8d7e7d3,01a1bd10-9a10-74e3-8b3a-1ea261767657,01a1bd10-9a10-74ff-bc93-fc6a738dfdb2,01a1bd10-9a10-751a-9e2d-e352360872a8,01a1bd10-9a10-7534-9164-fdfc74b4fe12,01a1bd10-9a10-756a-9e83-29260dd97c9c,01a1bd10-9a10-7586-aa4f-a517a170baa8,01a1bd10-9a10-759f-9a4d-59cb7b22107e,01a1bd10-9a10-75ba-b605-2c0b7790852a,01a1bd10-9a10-75d4-8683-15153199408b,01a1bd10-9a10-75ee-846b-3e8fd6a84f77,01a1bd10-9a10-7608-934b-89f3aa9278c6,01a1bd10-9a10-7694-9471-ce38d148ca11,01a1bd10-9a10-76b4-8acd-524b71ff1c78,01a1bd10-9a10-76cf-8c6a-ddcb968a6a8e,01a1bd10-9a10-7705-8805-6d7050705306,01a1bd10-9a10-7720-acf0-c5d11183f874,01a1bd10-9a10-773a-9828-b0ae03908535,01a1bd10-9a10-7753-b569-49bcf95f1079,01a1bd10-9a10-776e-855f-372ba1e26513,01a1bd10-9a10-7788-bd5c-75ea13a656ce,01a1bd10-9a10-77a1-b77c-190b06bc93c0,01a1bd10-9a10-77f1-877c-a63f9496239e,01a1bd10-9a10-780d-bab6-839112eff3bc,01a1bd10-9a10-7828-b77f-cc3eb7600857,01a1bd10-9a10-785e-9fbc-47023c209f11,01a1bd10-9a10-7878-9e25-1e6b9951e1c2,01a1bd10-9a10-7891-89ff-8ea19f75e007,01a1bd10-9a10-78ab-b258-422f7b6bada6,01a1bd10-9a10-78c6-835e-8801a1847119,01a1bd10-9a10-78df-bbb4-1bac3ab2030b}'::uuid[]))
+                    Rows Removed by Filter: 224
+                    Index Searches: 1
+                    Buffers: shared hit=47
+              ->  Hash Right Semi Join  (cost=6.20..53.70 rows=1 width=62) (actual time=0.013..0.502 rows=1723.00 loops=887)
+                    Hash Cond: ((targets.url)::text = l.target_normalized_url)
+                    Buffers: shared hit=22419
+                    ->  CTE Scan on targets  (cost=0.00..40.00 rows=2000 width=32) (actual time=0.000..0.102 rows=2000.00 loops=887)
+                          Storage: Memory  Maximum Storage: 120kB
+                    ->  Hash  (cost=6.18..6.18 rows=1 width=62) (actual time=10.253..10.254 rows=21131.00 loops=1)
+                          Buckets: 32768 (originally 1024)  Batches: 1 (originally 1)  Memory Usage: 2248kB
+                          Buffers: shared hit=22419
+                          ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=62) (actual time=0.009..7.214 rows=21131.00 loops=1)
+                                Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                Filter: is_internal
+                                Rows Removed by Filter: 1089
+                                Index Searches: 1
+                                Buffers: shared hit=22419
+Planning:
+  Buffers: shared hit=16
+Planning Time: 0.527 ms
+Execution Time: 751.419 ms
+
+--- statistics stale, read: statistics, statement 7 (nested loops allowed), 325.3 ms ---
+GroupAggregate  (cost=12.25..12.28 rows=1 width=26) (actual time=316.348..316.687 rows=4.00 loops=1)
+  Group Key: u.depth
+  Buffers: shared hit=84128
+  ->  Sort  (cost=12.25..12.26 rows=1 width=25) (actual time=316.328..316.426 rows=2302.00 loops=1)
+        Sort Key: u.depth
+        Sort Method: quicksort  Memory: 186kB
+        Buffers: shared hit=84128
+        ->  Nested Loop Left Join  (cost=0.70..12.24 rows=1 width=25) (actual time=0.021..315.684 rows=2302.00 loops=1)
+              Join Filter: (p.crawl_url_id = u.id)
+              Rows Removed by Join Filter: 1939806
+              Buffers: shared hit=84128
+              ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=41) (actual time=0.011..0.866 rows=2302.00 loops=1)
+                    Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                    Index Searches: 1
+                    Buffers: shared hit=617
+              ->  Index Scan using ix_pages_job_id_normalized_url on pages p  (cost=0.28..6.05 rows=1 width=48) (actual time=0.002..0.097 rows=843.14 loops=2302)
+                    Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                    Index Searches: 2302
+                    Buffers: shared hit=83511
+Planning:
+  Buffers: shared hit=13
+Planning Time: 0.218 ms
+Execution Time: 316.720 ms
+
+--- statistics stale, read: statistics, statement 10 (nested loops allowed), 9396.1 ms ---
+GroupAggregate  (cost=91.59..91.65 rows=1 width=40) (actual time=9144.134..9146.375 rows=7.00 loops=1)
+  Group Key: (CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.unusable THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END)
+  Buffers: shared hit=9812356
+  CTE chain
+    ->  Recursive Union  (cost=0.41..71.17 rows=11 width=144) (actual time=0.009..103.151 rows=2317.00 loops=1)
+          Storage: Memory  Maximum Storage: 457kB
+          Buffers: shared hit=140957
+          ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls u  (cost=0.41..6.18 rows=1 width=136) (actual time=0.008..0.846 rows=2302.00 loops=1)
+                Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                Index Searches: 1
+                Buffers: shared hit=617
+          ->  Nested Loop  (cost=0.41..6.49 rows=1 width=144) (actual time=1.558..50.921 rows=7.50 loops=2)
+                Join Filter: ((c.redirect_target = n.normalized_url) AND (n.normalized_url <> ALL (c.seen)))
+                Rows Removed by Join Filter: 261858
+                Buffers: shared hit=140340
+                ->  WorkTable Scan on chain c  (cost=0.00..0.28 rows=1 width=100) (actual time=0.025..0.127 rows=116.50 loops=2)
+                      Filter: ((hops < 20) AND (state = 'fetched'::text) AND (outcome = 'redirect'::text))
+                      Rows Removed by Filter: 1042
+                ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls n  (cost=0.41..6.18 rows=1 width=76) (actual time=0.003..0.298 rows=2247.78 loops=233)
+                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                      Index Searches: 233
+                      Buffers: shared hit=140340
+  CTE final
+    ->  Unique  (cost=0.60..0.66 rows=11 width=175) (actual time=104.863..107.025 rows=2302.00 loops=1)
+          Buffers: shared hit=140957
+          ->  Sort  (cost=0.60..0.63 rows=11 width=175) (actual time=104.861..105.460 rows=2317.00 loops=1)
+                Sort Key: chain.start_url COLLATE "C", chain.hops DESC
+                Sort Method: quicksort  Memory: 368kB
+                Buffers: shared hit=140957
+                ->  CTE Scan on chain  (cost=0.00..0.41 rows=11 width=175) (actual time=0.011..104.034 rows=2317.00 loops=1)
+                      Storage: Memory  Maximum Storage: 441kB
+                      Buffers: shared hit=140957
+  ->  Sort  (cost=19.77..19.77 rows=1 width=32) (actual time=9144.072..9144.907 rows=22220.00 loops=1)
+        Sort Key: (CASE WHEN (NOT l.is_internal) THEN 'out_of_scope'::text WHEN (f.start_url IS NULL) THEN CASE WHEN (l.nofollow OR sp.robots_nofollow) THEN 'not_followed'::text WHEN ((su.depth >= j.max_depth) OR (j.admitted_count >= j.max_pages)) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.state <> ALL ('{fetched,failed,skipped}'::text[])) THEN 'not_crawled'::text WHEN (f.state = 'skipped'::text) THEN CASE WHEN (f.outcome = ANY ('{robots_disallowed,robots_unreachable}'::text[])) THEN 'robots_blocked'::text ELSE 'out_of_scope'::text END WHEN (f.outcome = 'redirect'::text) THEN CASE WHEN f.unusable THEN 'redirect_error'::text WHEN (NOT COALESCE(("substring"(f.redirect_target, '^[a-z][a-z0-9+.-]*://(\[[^]]*\]|[^/:?#]+)'::text) = ANY (j.allowed_hosts)), false)) THEN 'out_of_scope'::text WHEN (j.admitted_count >= j.max_pages) THEN 'beyond_limits'::text ELSE 'not_crawled'::text END WHEN (f.outcome = 'invalid_redirect'::text) THEN 'redirect_error'::text WHEN ((f.http_status >= 200) AND (f.http_status <= 299)) THEN 'ok'::text WHEN (f.http_status = ANY ('{404,410}'::integer[])) THEN 'broken'::text WHEN ((f.http_status >= 500) OR (f.http_status = ANY ('{408,429}'::integer[]))) THEN 'server_error'::text WHEN (f.http_status IS NOT NULL) THEN 'http_error'::text ELSE 'unreachable'::text END)
+        Sort Method: quicksort  Memory: 769kB
+        Buffers: shared hit=9812356
+        ->  Nested Loop  (cost=1.11..19.76 rows=1 width=32) (actual time=105.159..9138.768 rows=22220.00 loops=1)
+              Buffers: shared hit=9812356
+              ->  Nested Loop  (cost=1.11..18.70 rows=1 width=136) (actual time=105.136..9065.284 rows=22220.00 loops=1)
+                    Join Filter: (sp.crawl_url_id = su.id)
+                    Rows Removed by Join Filter: 33355500
+                    Buffers: shared hit=9790136
+                    ->  Nested Loop  (cost=0.70..12.50 rows=1 width=150) (actual time=104.927..2782.939 rows=22220.00 loops=1)
+                          Join Filter: (l.source_page_id = sp.id)
+                          Rows Removed by Join Filter: 12332100
+                          Buffers: shared hit=714056
+                          ->  Merge Right Join  (cost=0.41..6.44 rows=1 width=149) (actual time=104.883..147.331 rows=22220.00 loops=1)
+                                Merge Cond: (f.start_url = l.target_normalized_url)
+                                Buffers: shared hit=163376
+                                ->  CTE Scan on final f  (cost=0.00..0.22 rows=11 width=131) (actual time=104.864..108.168 rows=2302.00 loops=1)
+                                      Storage: Memory  Maximum Storage: 320kB
+                                      Buffers: shared hit=140957
+                                ->  Index Scan using ix_page_links_job_id_target on page_links l  (cost=0.41..6.18 rows=1 width=59) (actual time=0.014..29.050 rows=22220.00 loops=1)
+                                      Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                      Index Searches: 1
+                                      Buffers: shared hit=22419
+                          ->  Index Scan using ix_pages_job_id_normalized_url on pages sp  (cost=0.28..6.05 rows=1 width=49) (actual time=0.003..0.092 rows=556.00 loops=22220)
+                                Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                Index Searches: 22220
+                                Buffers: shared hit=550680
+                    ->  Index Scan using uq_crawl_urls_job_id_normalized_url on crawl_urls su  (cost=0.41..6.18 rows=1 width=34) (actual time=0.003..0.202 rows=1502.15 loops=22220)
+                          Index Cond: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                          Index Searches: 22220
+                          Buffers: shared hit=9076080
+              ->  Seq Scan on crawl_jobs j  (cost=0.00..1.01 rows=1 width=47) (actual time=0.001..0.001 rows=1.00 loops=22220)
+                    Filter: (id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                    Rows Removed by Filter: 1
+                    Buffers: shared hit=22220
+Planning:
+  Buffers: shared hit=35
+Planning Time: 0.926 ms
+Execution Time: 9146.447 ms
+
+--- statistics fresh, nested loops allowed ---
+Insert on crawl_urls  (cost=5138.09..5225.73 rows=3895 width=337) (actual time=32.844..252.311 rows=11866.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 11866
+  Conflicting Tuples: 0
+  Buffers: shared hit=245418 dirtied=501 written=501
+  ->  Subquery Scan on "*SELECT*"  (cost=5138.09..5225.73 rows=3895 width=337) (actual time=32.587..60.822 rows=11866.00 loops=1)
+        Buffers: shared hit=8755
+        ->  Subquery Scan on chosen  (cost=5138.09..5147.83 rows=3895 width=120) (actual time=32.557..38.618 rows=11866.00 loops=1)
+              Buffers: shared hit=8755
+              ->  Limit  (cost=5138.09..5147.83 rows=3895 width=70) (actual time=32.553..36.099 rows=11866.00 loops=1)
+                    Buffers: shared hit=8755
+                    ->  Sort  (cost=5138.09..5147.83 rows=3895 width=70) (actual time=32.551..35.205 rows=11866.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 1960kB
+                          Buffers: shared hit=8755
+                          ->  Unique  (cost=4886.33..4905.80 rows=3895 width=70) (actual time=24.077..27.049 rows=11866.00 loops=1)
+                                Buffers: shared hit=8755
+                                ->  Sort  (cost=4886.33..4896.07 rows=3895 width=70) (actual time=24.074..24.985 rows=17254.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 2265kB
+                                      Buffers: shared hit=8755
+                                      ->  Hash Anti Join  (cost=1534.85..4654.04 rows=3895 width=70) (actual time=3.126..16.559 rows=17254.00 loops=1)
+                                            Hash Cond: (l.target_normalized_url = e.normalized_url)
+                                            Buffers: shared hit=8755
+                                            ->  Nested Loop  (cost=154.19..3214.39 rows=5465 width=70) (actual time=0.707..11.389 rows=19023.00 loops=1)
+                                                  Buffers: shared hit=7509
+                                                  ->  Hash Join  (cost=153.77..1529.35 rows=287 width=73) (actual time=0.693..2.954 rows=1000.00 loops=1)
+                                                        Hash Cond: (s.id = p.crawl_url_id)
+                                                        Buffers: shared hit=1347
+                                                        ->  Seq Scan on crawl_urls s  (cost=0.00..1370.74 rows=1842 width=57) (actual time=0.166..2.164 rows=1315.00 loops=1)
+                                                              Filter: ((job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid) AND (depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                              Rows Removed by Filter: 3187
+                                                              Buffers: shared hit=1246
+                                                        ->  Hash  (cost=139.89..139.89 rows=1111 width=48) (actual time=0.522..0.523 rows=1111.00 loops=1)
+                                                              Buckets: 2048  Batches: 1  Memory Usage: 103kB
+                                                              Buffers: shared hit=101
+                                                              ->  Seq Scan on pages p  (cost=0.00..139.89 rows=1111 width=48) (actual time=0.210..0.399 rows=1111.00 loops=1)
+                                                                    Filter: ((NOT robots_nofollow) AND (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid))
+                                                                    Rows Removed by Filter: 2000
+                                                                    Buffers: shared hit=101
+                                                  ->  Index Scan using pk_page_links on page_links l  (cost=0.41..5.80 rows=7 width=61) (actual time=0.002..0.007 rows=19.02 loops=1000)
+                                                        Index Cond: (source_page_id = p.id)
+                                                        Filter: (is_internal AND (NOT nofollow) AND (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid))
+                                                        Rows Removed by Filter: 1
+                                                        Index Searches: 1000
+                                                        Buffers: shared hit=6162
+                                            ->  Hash  (cost=1335.10..1335.10 rows=3645 width=25) (actual time=2.411..2.411 rows=2302.00 loops=1)
+                                                  Buckets: 4096  Batches: 1  Memory Usage: 165kB
+                                                  Buffers: shared hit=1246
+                                                  ->  Seq Scan on crawl_urls e  (cost=0.00..1335.10 rows=3645 width=25) (actual time=0.132..2.148 rows=2302.00 loops=1)
+                                                        Filter: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                        Rows Removed by Filter: 2200
+                                                        Buffers: shared hit=1246
+Planning:
+  Buffers: shared hit=32
+Planning Time: 0.897 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=57.310 calls=11866
+Trigger for constraint fk_crawl_urls_job_id: time=51.629 calls=11866
+Execution Time: 364.230 ms
+
+--- statistics fresh, nested loops off ---
+Insert on crawl_urls  (cost=6715.61..6783.94 rows=3037 width=337) (actual time=31.769..225.405 rows=11866.00 loops=1)
+  Conflict Resolution: NOTHING
+  Conflict Arbiter Indexes: uq_crawl_urls_job_id_normalized_url
+  Tuples Inserted: 11866
+  Conflicting Tuples: 0
+  Buffers: shared hit=230228 dirtied=494 written=494
+  ->  Subquery Scan on "*SELECT*"  (cost=6715.61..6783.94 rows=3037 width=337) (actual time=31.536..56.503 rows=11866.00 loops=1)
+        Buffers: shared hit=4892
+        ->  Subquery Scan on chosen  (cost=6715.61..6723.20 rows=3037 width=120) (actual time=31.496..36.919 rows=11866.00 loops=1)
+              Buffers: shared hit=4892
+              ->  Limit  (cost=6715.61..6723.20 rows=3037 width=70) (actual time=31.494..34.670 rows=11866.00 loops=1)
+                    Buffers: shared hit=4892
+                    ->  Sort  (cost=6715.61..6723.20 rows=3037 width=70) (actual time=31.492..33.855 rows=11866.00 loops=1)
+                          Sort Key: s.normalized_url COLLATE "C", l."position"
+                          Sort Method: quicksort  Memory: 1960kB
+                          Buffers: shared hit=4892
+                          ->  Unique  (cost=6524.76..6539.95 rows=3037 width=70) (actual time=23.981..26.305 rows=11866.00 loops=1)
+                                Buffers: shared hit=4892
+                                ->  Sort  (cost=6524.76..6532.35 rows=3037 width=70) (actual time=23.980..24.728 rows=17254.00 loops=1)
+                                      Sort Key: l.target_normalized_url COLLATE "C", s.normalized_url COLLATE "C", l."position"
+                                      Sort Method: quicksort  Memory: 2265kB
+                                      Buffers: shared hit=4892
+                                      ->  Hash Right Anti Join  (cost=4160.39..6349.09 rows=3037 width=70) (actual time=16.491..17.986 rows=17254.00 loops=1)
+                                            Hash Cond: (e.normalized_url = l.target_normalized_url)
+                                            Buffers: shared hit=4892
+                                            ->  Seq Scan on crawl_urls e  (cost=0.00..2072.29 rows=5657 width=25) (actual time=0.117..2.274 rows=2302.00 loops=1)
+                                                  Filter: (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid)
+                                                  Rows Removed by Filter: 2200
+                                                  Buffers: shared hit=1934
+                                            ->  Hash  (cost=4092.08..4092.08 rows=5465 width=70) (actual time=13.904..13.908 rows=19023.00 loops=1)
+                                                  Buckets: 32768 (originally 8192)  Batches: 1 (originally 1)  Memory Usage: 2195kB
+                                                  Buffers: shared hit=2958
+                                                  ->  Hash Join  (cost=2292.47..4092.08 rows=5465 width=70) (actual time=6.127..11.146 rows=19023.00 loops=1)
+                                                        Hash Cond: (l.source_page_id = p.id)
+                                                        Buffers: shared hit=2958
+                                                        ->  Seq Scan on page_links l  (cost=0.00..1700.75 rows=21156 width=61) (actual time=2.305..4.821 rows=21131.00 loops=1)
+                                                              Filter: (is_internal AND (NOT nofollow) AND (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid))
+                                                              Rows Removed by Filter: 41089
+                                                              Buffers: shared hit=923
+                                                        ->  Hash  (cost=2288.89..2288.89 rows=287 width=73) (actual time=3.443..3.445 rows=1000.00 loops=1)
+                                                              Buckets: 1024  Batches: 1  Memory Usage: 110kB
+                                                              Buffers: shared hit=2035
+                                                              ->  Hash Join  (cost=153.77..2288.89 rows=287 width=73) (actual time=0.655..3.324 rows=1000.00 loops=1)
+                                                                    Hash Cond: (s.id = p.crawl_url_id)
+                                                                    Buffers: shared hit=2035
+                                                                    ->  Seq Scan on crawl_urls s  (cost=0.00..2127.60 rows=2860 width=57) (actual time=0.187..2.693 rows=1315.00 loops=1)
+                                                                          Filter: ((job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid) AND (depth = '3'::smallint) AND (state = 'fetched'::text))
+                                                                          Rows Removed by Filter: 3187
+                                                                          Buffers: shared hit=1934
+                                                                    ->  Hash  (cost=139.89..139.89 rows=1111 width=48) (actual time=0.464..0.465 rows=1111.00 loops=1)
+                                                                          Buckets: 2048  Batches: 1  Memory Usage: 103kB
+                                                                          Buffers: shared hit=101
+                                                                          ->  Seq Scan on pages p  (cost=0.00..139.89 rows=1111 width=48) (actual time=0.189..0.354 rows=1111.00 loops=1)
+                                                                                Filter: ((NOT robots_nofollow) AND (job_id = '01a1bd10-97e2-7cb0-b84a-86d0c353a895'::uuid))
+                                                                                Rows Removed by Filter: 2000
+                                                                                Buffers: shared hit=101
+Planning:
+  Buffers: shared hit=32
+Planning Time: 0.844 ms
+Trigger for constraint fk_crawl_urls_discovered_from_url_id_job_id: time=57.387 calls=11866
+Trigger for constraint fk_crawl_urls_job_id: time=50.510 calls=11866
+Execution Time: 336.091 ms

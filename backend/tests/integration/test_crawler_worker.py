@@ -32,6 +32,8 @@ from app.crawler.scope import CrawlTargetPolicy
 from app.crawler.urls import NormalizedUrl, normalize_url
 from app.db.models import CrawlUrl, JobStatus, Page, UrlState
 from app.db.session import Database
+from app.observability.heartbeat import Heartbeat, HeartbeatPublisher, read_heartbeats
+from app.observability.metrics import Registry
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream
 from app.services.crawl_cancellation import cancel_crawl_job, settle_cancellation
@@ -481,6 +483,89 @@ async def test_an_infrastructure_error_leaves_the_message_pending(
     # A transient error: a warning without a traceback (no log flood during an outage).
     assert errors[0]["level"] == "WARNING"
     assert "exception" not in errors[0]
+    # Phase 10: the message's line names the stage that failed and the error's type.
+    handled = [line for line in logs.events("task.handled") if line["reason"] == "error"]
+    assert handled
+    assert handled[0]["stage"] == "claim"
+    assert handled[0]["error_type"]
+
+
+# --- Observability (Phase 10) --------------------------------------------------------------------
+
+
+async def test_a_crawled_tasks_line_and_metrics_carry_its_stage_times_and_queue_delay(
+    database: Database, stream: CrawlStream, fetcher: PageFetcher, logs: JsonLines
+) -> None:
+    job_id, [seed] = await new_job(database)
+    await dispatch(database, stream, job_id)
+    await asyncio.sleep(0.3)  # the task waits in the stream before any worker runs
+    registry = Registry()
+    worker = CrawlWorker(database, stream, crawl_context(fetcher), config(), registry=registry)
+    stop = asyncio.Event()
+    running = Running(worker, stop, asyncio.create_task(worker.run(stop)))
+
+    async def done() -> bool:
+        return await url_state(database, seed) == "fetched" and await pending(stream) == 0
+
+    await running.until(done)
+    await running.stopped()
+
+    [line] = logs.events("task.handled")
+    # Dispatch to claim, by the PostgreSQL clock: at least the time it waited in the stream.
+    assert line["queue_delay_ms"] >= 250
+    assert min(line["claim_ms"], line["crawl_ms"], line["record_ms"]) >= 0
+    assert line["politeness_wait_ms"] == 0  # this test's fetcher has no politeness gate
+    assert "failure_category" not in line  # a stored page
+    families = {family["name"]: family for family in registry.snapshot()}
+    assert families["sitescope_tasks_handled_total"]["series"] == [[["completed", "ack"], 1.0]]
+    assert families["sitescope_crawl_results_total"]["series"] == [
+        [["fetched", "html_stored"], 1.0]
+    ]
+    [[_labels, _buckets, delay_sum, delay_count]] = families["sitescope_queue_delay_seconds"][
+        "series"
+    ]
+    assert delay_count == 1
+    assert delay_sum >= 0.25
+    operations = {labels[0] for labels, *_ in families["sitescope_db_operation_seconds"]["series"]}
+    assert {"claim", "record"} <= operations
+    assert families["sitescope_crawl_phase_seconds"]["series"][0][3] == 1
+
+
+async def test_a_worker_writes_a_heartbeat_with_its_state_and_removes_it_when_it_stops(
+    database: Database,
+    stream: CrawlStream,
+    fetcher: PageFetcher,
+    redis_client: Redis,
+    redis_prefix: str,
+) -> None:
+    worker = CrawlWorker(database, stream, crawl_context(fetcher), config(), registry=Registry())
+    heartbeat = HeartbeatPublisher(
+        redis_client,
+        key_prefix=redis_prefix,
+        name=worker.name,
+        role="crawler",
+        interval=0.2,
+        state=worker.heartbeat_state,
+    )
+    stop = asyncio.Event()
+    running = Running(worker, stop, asyncio.create_task(worker.run(stop, heartbeat=heartbeat)))
+    beats: list[Heartbeat] = []
+
+    async def beating() -> bool:
+        beats[:] = await read_heartbeats(redis_client, key_prefix=redis_prefix)
+        return bool(beats)
+
+    await running.until(beating)
+    await running.stopped()
+
+    [beat] = beats
+    assert (beat.role, beat.name) == ("crawler", worker.name)
+    assert beat.state["concurrency"] == 2
+    assert beat.state["in_flight"] == 0
+    assert beat.state["stream_failures"] == 0
+    assert isinstance(beat.payload["metrics"], list)
+    # A graceful stop removes the heartbeat at once (a crashed process's expires).
+    assert await read_heartbeats(redis_client, key_prefix=redis_prefix) == []
 
 
 # --- Takeover and recovery ------------------------------------------------------------------------

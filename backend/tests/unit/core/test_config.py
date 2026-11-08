@@ -483,10 +483,12 @@ def test_stream_and_scheduler_defaults() -> None:
     assert settings.scheduler_interval_seconds == 0.5
     assert settings.scheduler_dispatch_batch_size == 100
     assert settings.scheduler_max_in_flight_per_job == 100
+    assert settings.scheduler_tasks_per_host_slot == 2  # Phase 10
     assert settings.scheduler_max_outstanding == 1000
     assert settings.scheduler_max_running_jobs == 10
     assert settings.scheduler_reconcile_after_seconds == 300  # 600 until Phase 6
     assert settings.shutdown_grace_seconds == 30
+    assert settings.heartbeat_interval_seconds == 10  # Phase 10
 
 
 @pytest.mark.parametrize(
@@ -504,7 +506,10 @@ def test_stream_and_scheduler_defaults() -> None:
         ("SITESCOPE_SCHEDULER_MAX_IN_FLIGHT_PER_JOB", "0"),
         ("SITESCOPE_SCHEDULER_MAX_OUTSTANDING", "0"),
         ("SITESCOPE_SCHEDULER_MAX_RUNNING_JOBS", "0"),
+        ("SITESCOPE_SCHEDULER_TASKS_PER_HOST_SLOT", "0"),
         ("SITESCOPE_SHUTDOWN_GRACE_SECONDS", "-1"),
+        ("SITESCOPE_HEARTBEAT_INTERVAL_SECONDS", "0.5"),
+        ("SITESCOPE_HEARTBEAT_INTERVAL_SECONDS", "301"),
     ],
 )
 def test_rejects_invalid_stream_and_scheduler_settings(

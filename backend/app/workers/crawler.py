@@ -59,6 +59,12 @@ a task whose job has completed holds a stale lease, and is fenced out when it re
 and waits up to ``SITESCOPE_SHUTDOWN_GRACE_SECONDS`` for running tasks, then cancels the rest; a
 second signal cancels them at once. A cancelled task keeps its lease and its pending message and
 is recovered like a crashed one; killing the process is safe for the same reason.
+
+**Observability** (Phase 10, ADR-0021). A crawled message's ``task.handled`` line has its stage
+times (``claim_ms``, ``crawl_ms``, ``politeness_wait_ms``, ``record_ms``), its queue delay
+(``queue_delay_ms``: dispatch to claim, by the database clock, for a claim of a queued URL) and,
+for an unsuccessful result, a ``failure_category``. The same go to the process's metrics, with
+results by state and outcome and recoveries by kind; the process writes a heartbeat.
 """
 
 import argparse
@@ -78,6 +84,9 @@ from app.core.redis import create_redis_client
 from app.core.shutdown import StopSignals, install_stop_handlers
 from app.db.models import TERMINAL_URL_STATES, JobStatus, UrlState
 from app.db.session import Database
+from app.observability.heartbeat import HeartbeatPublisher
+from app.observability.metrics import QUEUE_DELAY_BUCKETS, REGISTRY, Registry
+from app.observability.timing import TaskTimings, task_timings_var
 from app.queue.messages import CrawlTask
 from app.queue.streams import CrawlStream, Delivery
 from app.services.crawl_cancellation import cancel_claimed_url, jobs_being_cancelled
@@ -225,13 +234,79 @@ class _Watched:
     stopped_for_cancellation: bool = False
 
 
+_TIMEOUT_OUTCOMES: Final = frozenset({"connect_timeout", "read_timeout", "deadline_exceeded"})
+_TRANSPORT_OUTCOMES: Final = frozenset(
+    {
+        "dns_not_found",
+        "dns_error",
+        "connection_error",
+        "tls_error",
+        "truncated",
+        "malformed_response",
+    }
+)
+
+
+def failure_category(result: UrlResult) -> str | None:
+    """A small, fixed classification of an unsuccessful result, for logs (Phase 10); None for
+    a stored page or a redirect. The outcome itself stays the precise reason."""
+    if result.state is UrlState.FETCHED:
+        if result.outcome in ("html_stored", "redirect"):
+            return None
+        if result.outcome == "http_error":
+            return "http_5xx" if (result.http_status or 0) >= 500 else "http_4xx"
+        return "content"  # not HTML, too large, an unknown coding, an unusable redirect
+    if result.state is UrlState.SKIPPED:
+        return "policy"  # robots.txt, or not an approved target
+    if result.outcome in _TIMEOUT_OUTCOMES:
+        return "timeout"
+    if result.outcome in _TRANSPORT_OUTCOMES:
+        return "network"
+    if result.outcome == "rate_limited":
+        return "politeness"
+    if result.outcome == INFRASTRUCTURE_ERROR:
+        return "infrastructure"
+    if result.outcome == "parse_error":
+        return "parse"
+    return "other"
+
+
 def _result_details(result: UrlResult) -> dict[str, object]:
     """The fields of a result that the ``task.handled`` line shows."""
-    return {
+    details: dict[str, object] = {
         "state": result.state.value,
         "outcome": result.outcome,
         "http_status": result.http_status,
     }
+    category = failure_category(result)
+    if category is not None:
+        details["failure_category"] = category
+    return details
+
+
+class CrawlMetrics:
+    """The metric families of a crawler worker, beyond the consumer's."""
+
+    def __init__(self, registry: Registry) -> None:
+        self.crawl_seconds = registry.histogram(
+            "sitescope_crawl_phase_seconds",
+            "A claimed URL's crawl phase: robots.txt check, politeness wait, request, parsing.",
+        )
+        self.politeness_wait = registry.histogram(
+            "sitescope_politeness_wait_seconds",
+            "Time a crawl task waited for politeness slots (all its request hops).",
+        )
+        self.queue_delay = registry.histogram(
+            "sitescope_queue_delay_seconds",
+            "Time from a task's last publish (its dispatch, or a republish by the reconciliation) "
+            "to its claim or first attempt, by the database clock.",
+            buckets=QUEUE_DELAY_BUCKETS,
+        )
+        self.results = registry.counter(
+            "sitescope_crawl_results_total",
+            "Results of crawl attempts, by URL state and outcome (retried attempts included).",
+            ("state", "outcome"),
+        )
 
 
 class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
@@ -247,10 +322,12 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
         config: WorkerConfig,
         *,
         clock: Callable[[], float] = time.monotonic,
+        registry: Registry = REGISTRY,
     ) -> None:
-        super().__init__(database, stream, config, clock=clock)
+        super().__init__(database, stream, config, clock=clock, registry=registry)
         self._context = context
         self._crawling: dict[str, _Watched] = {}  # crawl phases in progress, by entry ID
+        self._crawl_metrics = CrawlMetrics(registry)
 
     def _started_fields(self) -> dict[str, object]:
         config = self._config
@@ -300,36 +377,52 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
             return Handled(Disposition.DEAD_LETTER, "malformed")
         config = self._config
         if deliveries > config.max_deliveries:
-            poisoned = await self._quarantine(task, deliveries)
+            poisoned = await self._quarantine(task, deliveries, progress)
             if poisoned is not None:
                 return poisoned
         for _ in range(_CLAIM_ROUNDS):
-            async with self._database.session() as session:
-                lease = await claim_url(
-                    session,
-                    task.url_id,
-                    owner=self.name,
-                    lease_seconds=config.lease_seconds,
-                    max_attempts=config.max_attempts,
-                    job_id=task.job_id,
-                )
+            progress.stage = "claim"
+            claim_started = self._clock()
+            with self._timed("claim"):
+                async with self._database.session() as session:
+                    lease = await claim_url(
+                        session,
+                        task.url_id,
+                        owner=self.name,
+                        lease_seconds=config.lease_seconds,
+                        max_attempts=config.max_attempts,
+                        job_id=task.job_id,
+                    )
             if lease is not None:
                 progress.claimed = True
-                return await self._crawl(lease, delivery.entry_id)
-            async with self._database.session() as session:
-                status = await inspect_url(session, task.url_id)
+                return await self._crawl(
+                    lease,
+                    delivery.entry_id,
+                    progress,
+                    claim_seconds=self._clock() - claim_started,
+                )
+            progress.stage = "inspect"
+            with self._timed("inspect"):
+                async with self._database.session() as session:
+                    status = await inspect_url(session, task.url_id)
             verdict = judge_unclaimed(status, task, max_attempts=config.max_attempts)
             if isinstance(verdict, Handled):
                 return verdict
             if verdict is Retry.RECOVER:
-                async with self._database.session() as session:
-                    if await recover_exhausted_url(
-                        session, task.url_id, owner=self.name, max_attempts=config.max_attempts
-                    ):
-                        return Handled(Disposition.ACK, EXHAUSTED_OUTCOME)
+                progress.stage = "recover"
+                with self._timed("recover"):
+                    async with self._database.session() as session:
+                        recovered = await recover_exhausted_url(
+                            session, task.url_id, owner=self.name, max_attempts=config.max_attempts
+                        )
+                if recovered:
+                    self._metrics.recoveries.inc(kind="exhausted_url_failed")
+                    return Handled(Disposition.ACK, EXHAUSTED_OUTCOME)
         return Handled(Disposition.KEEP, "claim_contended")
 
-    async def _quarantine(self, task: CrawlTask, deliveries: int) -> Handled | None:
+    async def _quarantine(
+        self, task: CrawlTask, deliveries: int, progress: Progress
+    ) -> Handled | None:
         """A message delivered too often. Only a URL that can never be claimed again (queued,
         its attempts used up) is failed as ``max_deliveries_exceeded``, and the message
         dead-lettered. A claimable URL, or an expired lease, returns None: it is claimed or
@@ -337,28 +430,35 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
         the work. Deliveries also grow while PostgreSQL is down (every ``XAUTOCLAIM`` counts
         one), and an outage must not fail URLs that were never tried (Phase 6 independent
         review). A URL that needs nothing, or has a live lease, is settled by the usual rules."""
-        async with self._database.session() as session:
-            status = await inspect_url(session, task.url_id)
+        progress.stage = "inspect"
+        with self._timed("inspect"):
+            async with self._database.session() as session:
+                status = await inspect_url(session, task.url_id)
         config = self._config
         verdict = judge_unclaimed(status, task, max_attempts=config.max_attempts)
         if not isinstance(verdict, Handled):
             return None  # claimable, or an expired last attempt to recover
         if verdict.reason != "attempts_exhausted":
             return verdict  # finished, not running, pending, unknown, mismatched, or leased
-        async with self._database.session() as session:
-            failed = await quarantine_url(
-                session,
-                task.url_id,
-                job_id=task.job_id,
-                owner=self.name,
-                deliveries=deliveries,
-                max_attempts=config.max_attempts,
-            )
+        progress.stage = "quarantine"
+        with self._timed("quarantine"):
+            async with self._database.session() as session:
+                failed = await quarantine_url(
+                    session,
+                    task.url_id,
+                    job_id=task.job_id,
+                    owner=self.name,
+                    deliveries=deliveries,
+                    max_attempts=config.max_attempts,
+                )
         if failed:
+            self._metrics.recoveries.inc(kind="poison_message_quarantined")
             return Handled(Disposition.DEAD_LETTER, MAX_DELIVERIES_OUTCOME)
         return Handled(Disposition.KEEP, "quarantine_refused")  # it changed meanwhile
 
-    async def _crawl(self, lease: Lease, entry_id: str) -> Handled:
+    async def _crawl(
+        self, lease: Lease, entry_id: str, progress: Progress, *, claim_seconds: float
+    ) -> Handled:
         """The claimed URL: crawl it under the task deadline, then record the fenced result."""
         config = self._config
         task_context_var.set(
@@ -369,6 +469,17 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
                 "attempt": lease.attempt,
             }
         )
+        timing: dict[str, object] = {"claim_ms": round(claim_seconds * 1000, 1)}
+        if lease.takeover:
+            self._metrics.recoveries.inc(kind="lease_takeover")
+        if lease.queued_seconds is not None:
+            self._crawl_metrics.queue_delay.observe(lease.queued_seconds)
+            timing["queue_delay_ms"] = round(lease.queued_seconds * 1000, 1)
+        progress.stage = "crawl"
+        # The crawl phase runs in a task of its own, which copies this context, timings included.
+        timings = TaskTimings()
+        task_timings_var.set(timings)
+        crawl_started = self._clock()
         watched = _Watched(lease.job_id, asyncio.create_task(self._crawl_phase(lease)))
         self._crawling[entry_id] = watched
         try:
@@ -377,24 +488,36 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
             current = asyncio.current_task()
             if not watched.stopped_for_cancellation or (current and current.cancelling()):
                 raise  # this whole handler is being cancelled (shutdown)
+            progress.stage = "cancel"
             return await self._record_cancelled(lease)
         finally:
             self._crawling.pop(entry_id, None)
+        crawl_seconds = self._clock() - crawl_started
+        self._crawl_metrics.crawl_seconds.observe(crawl_seconds)
+        self._crawl_metrics.politeness_wait.observe(timings.politeness_wait)
+        self._crawl_metrics.results.inc(state=result.state.value, outcome=result.outcome)
+        timing["crawl_ms"] = round(crawl_seconds * 1000, 1)
+        timing["politeness_wait_ms"] = round(timings.politeness_wait * 1000, 1)
         decision = config.retry_policy.decide(result, attempt=lease.attempt)
-        async with self._database.session() as session:
-            recorded = await record_result(
-                session,
-                lease,
-                result,
-                max_redirect_hops=config.max_redirect_hops,
-                retry_delay=decision.delay,
-            )
+        progress.stage = "record"
+        record_started = self._clock()
+        with self._timed("record"):
+            async with self._database.session() as session:
+                recorded = await record_result(
+                    session,
+                    lease,
+                    result,
+                    max_redirect_hops=config.max_redirect_hops,
+                    retry_delay=decision.delay,
+                )
+        timing["record_ms"] = round((self._clock() - record_started) * 1000, 1)
+        details = {**_result_details(result), **timing}
         if recorded.status is RecordStatus.RECORDED:
-            return Handled(Disposition.ACK, "completed", _result_details(result))
+            return Handled(Disposition.ACK, "completed", details)
         if recorded.status is RecordStatus.RETRY_SCHEDULED:
-            return Handled(Disposition.ACK, "retry_scheduled", _result_details(result))
+            return Handled(Disposition.ACK, "retry_scheduled", details)
         # Fenced: another claim took the URL over. Its message is not ours to acknowledge.
-        return Handled(Disposition.KEEP, "fenced", _result_details(result))
+        return Handled(Disposition.KEEP, "fenced", details)
 
     async def _crawl_phase(self, lease: Lease) -> UrlResult:
         """``crawl_url`` under the task deadline; a transient infrastructure error (Redis, in
@@ -416,8 +539,9 @@ class CrawlWorker(StreamConsumer[CrawlTask, WorkerConfig]):
 
     async def _record_cancelled(self, lease: Lease) -> Handled:
         """The task was stopped because its job is being cancelled: record that, fenced."""
-        async with self._database.session() as session:
-            cancelled = await cancel_claimed_url(session, lease)
+        with self._timed("cancel"):
+            async with self._database.session() as session:
+                cancelled = await cancel_claimed_url(session, lease)
         if cancelled:
             return Handled(Disposition.ACK, "cancelled")
         return Handled(Disposition.KEEP, "fenced")  # the lease was taken over
@@ -435,7 +559,15 @@ async def run(settings: Settings, signals: StopSignals, *, concurrency: int | No
             build_crawl_context(settings, redis),
             config,
         )
-        await worker.run(signals.stop, signals.force)
+        heartbeat = HeartbeatPublisher(
+            redis,
+            key_prefix=settings.redis_key_prefix,
+            name=config.name,
+            role="crawler",
+            interval=settings.heartbeat_interval_seconds,
+            state=worker.heartbeat_state,
+        )
+        await worker.run(signals.stop, signals.force, heartbeat=heartbeat)
     finally:
         await redis.aclose()
         await database.dispose()
