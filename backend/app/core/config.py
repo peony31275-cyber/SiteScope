@@ -29,6 +29,9 @@ from app.crawler.destinations import parse_internal_origin
 from app.crawler.scope import parse_host_pattern
 
 Environment = Literal["development", "test", "production"]
+# How the API treats writes (job creation and cancellation; Phase 11, ADR-0024).
+WriteAccess = Literal["open", "token", "disabled"]
+ADMIN_TOKEN_MIN_LENGTH = 32
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 CrawlScheme = Literal["http", "https"]
 Port = Annotated[int, Field(ge=1, le=65535)]
@@ -102,6 +105,15 @@ class Settings(BaseSettings):
     # The largest max_depth and max_pages a crawl job may request.
     crawl_max_depth_limit: int = Field(default=5, ge=0, le=50)
     crawl_max_pages_limit: int = Field(default=1000, ge=1, le=100_000)
+    # Jobs that may be queued, running or cancelling at once (Phase 11): creating one more is
+    # refused (429) until one ends. The scheduler runs at most SCHEDULER_MAX_RUNNING_JOBS of them.
+    crawl_max_active_jobs: int = Field(default=50, ge=1, le=10_000)
+
+    # --- API writes (Phase 11, ADR-0024) ---------------------------------------------------------
+    # Creating and cancelling crawl jobs through the API needs "Authorization: Bearer <token>"
+    # with this token. Unset: writes are open outside production, and refused in production
+    # (a read-only API, like the public demo). At least 32 characters in production.
+    admin_token: SecretStr | None = None
 
     # --- Safe fetcher (app/crawler/fetcher.py) ---------------------------------------------------
     # Seconds allowed for DNS resolution, the TCP connection and the TLS handshake.
@@ -281,6 +293,12 @@ class Settings(BaseSettings):
     def _uppercase_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
 
+    @field_validator("admin_token", mode="before")
+    @classmethod
+    def _blank_admin_token_is_unset(cls, value: object) -> object:
+        # "SITESCOPE_ADMIN_TOKEN=" in an env file means no token, not an empty one.
+        return None if isinstance(value, str) and not value.strip() else value
+
     @field_validator(
         "crawl_allowed_hosts",
         "crawl_allowed_ports",
@@ -455,6 +473,25 @@ class Settings(BaseSettings):
                     "production requires real values for: " + ", ".join(sorted(problems))
                 )
         return self
+
+    @model_validator(mode="after")
+    def _require_a_strong_admin_token_in_production(self) -> Self:
+        if self.environment == "production" and self.admin_token is not None:
+            token = self.admin_token.get_secret_value()
+            if len(token) < ADMIN_TOKEN_MIN_LENGTH or token.startswith(_PLACEHOLDER_SECRET_PREFIX):
+                raise ValueError(
+                    "SITESCOPE_ADMIN_TOKEN must be a real value of at least"
+                    f" {ADMIN_TOKEN_MIN_LENGTH} characters in production (or unset: read-only)"
+                )
+        return self
+
+    @property
+    def write_access(self) -> WriteAccess:
+        """How the API treats job creation and cancellation (ADR-0024): ``token`` when an admin
+        token is set, otherwise ``open`` outside production and ``disabled`` in production."""
+        if self.admin_token is not None:
+            return "token"
+        return "disabled" if self.environment == "production" else "open"
 
     def _credentials(self) -> dict[str, SecretStr | None]:
         return {

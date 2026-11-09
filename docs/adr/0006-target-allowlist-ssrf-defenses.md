@@ -3,7 +3,9 @@
 - Status: Accepted. Extended by [ADR-0012](0012-approved-crawl-targets.md) (the format and
   matching rules of the allowlist) and [ADR-0013](0013-safe-fetcher-pinned-connections.md) (how
   the safe fetcher implements these defenses), and by
-  [ADR-0015](0015-robots-txt-and-per-host-politeness.md) (robots.txt and per-host politeness).
+  [ADR-0015](0015-robots-txt-and-per-host-politeness.md) (robots.txt and per-host politeness);
+  by [ADR-0024](0024-public-read-only-mode-and-administrator-writes.md) (who may start a crawl)
+  and [ADR-0025](0025-container-packaging-and-deployment-topology.md) (no egress but the target).
 - Date: 2026-11-06
 
 ## Context

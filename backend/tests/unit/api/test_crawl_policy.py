@@ -18,6 +18,8 @@ def test_nothing_is_approved_by_default(client: TestClient) -> None:
         "allowed_ports": [80, 443],
         "max_depth_limit": 5,
         "max_pages_limit": 1000,
+        "max_active_jobs": 50,
+        "write_access": "open",  # outside production, without an admin token
     }
 
 
@@ -45,6 +47,8 @@ def test_the_policy_is_the_one_job_creation_enforces() -> None:
         "allowed_ports": [443, 8443],
         "max_depth_limit": 3,
         "max_pages_limit": 100,
+        "max_active_jobs": 50,
+        "write_access": "open",
     }
     # Only the limits are refused: the host, scheme and port are approved by the policy.
     assert accepted.status_code == 422
@@ -63,6 +67,7 @@ def test_the_policy_names_no_internal_origin_or_secret() -> None:
         crawl_allowed_hosts=("127.0.0.1",),
         fetch_internal_origins=("http://127.0.0.1:8001",),
         postgres_password=SecretStr("not-in-the-response"),
+        admin_token=SecretStr("admin-token-not-in-the-response"),
     )
     with TestClient(create_app(settings)) as client:
         response = client.get("/api/v1/crawl-policy")
@@ -73,6 +78,9 @@ def test_the_policy_names_no_internal_origin_or_secret() -> None:
         "allowed_ports",
         "max_depth_limit",
         "max_pages_limit",
+        "max_active_jobs",
+        "write_access",
     }
+    assert response.json()["write_access"] == "token"  # the mode, never the token
     assert "8001" not in response.text
     assert "not-in-the-response" not in response.text

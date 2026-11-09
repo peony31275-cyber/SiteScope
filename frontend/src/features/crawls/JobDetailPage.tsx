@@ -16,7 +16,7 @@ import type { CrawlJobDetail, UrlState } from '../../lib/api/types';
 import { formatDateTime, formatDuration, formatNumber, formatRelative } from '../../lib/format';
 import { isUuid } from '../../lib/urls';
 import { CancelJobButton } from './CancelJobButton';
-import { useLiveCrawlJob, type LiveCrawlJob } from './hooks';
+import { useCanWrite, useLiveCrawlJob, type LiveCrawlJob } from './hooks';
 import { isCrawlActive, lifecycleSummary } from './status';
 import { IndexingBadge, JobStatusBadge } from './StatusBadges';
 
@@ -121,6 +121,7 @@ function JobDetail({ jobId }: { jobId: string }) {
 
 function JobHeader({ job, live }: { job: CrawlJobDetail; live: LiveCrawlJob }) {
   const now = useNow();
+  const canWrite = useCanWrite();
   // Where focus goes once the job was cancelled: the cancel button is gone then.
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const updated = live.query.dataUpdatedAt;
@@ -166,12 +167,14 @@ function JobHeader({ job, live }: { job: CrawlJobDetail; live: LiveCrawlJob }) {
           >
             Link graph
           </ButtonLink>
-          <CancelJobButton
-            job={job}
-            onCancelled={() => {
-              summaryRef.current?.focus();
-            }}
-          />
+          {canWrite && (
+            <CancelJobButton
+              job={job}
+              onCancelled={() => {
+                summaryRef.current?.focus();
+              }}
+            />
+          )}
         </div>
       </div>
       <p className="mt-3 border-t border-line pt-3 text-xs text-ink-3">

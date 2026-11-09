@@ -1,0 +1,17 @@
+# The image needs only these (frontend/Dockerfile). Everything else stays out of the build
+# context: node_modules (installed fresh by npm ci), build output, test reports, e2e tests and
+# any .env file.
+**
+!package.json
+!package-lock.json
+!index.html
+!vite.config.ts
+!tsconfig.json
+!tsconfig.app.json
+!tsconfig.node.json
+!public/
+!src/
+!nginx/
+src/**/*.test.ts
+src/**/*.test.tsx
+src/tests/

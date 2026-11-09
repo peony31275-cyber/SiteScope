@@ -1,5 +1,8 @@
 """Alembic migrations against a separate disposable database (never the development database)."""
 
+import asyncio
+import os
+import sys
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -227,3 +230,75 @@ async def test_an_interrupted_migration_leaves_no_partial_schema(empty_database:
         await helpers.run_alembic(empty_database, upgrade_then_fail)
 
     assert await public_tables(empty_database) == set()
+
+
+# alembic/env.py, MIGRATION_LOCK: a bigint key below 2**32 is (classid 0, objid key) in pg_locks.
+MIGRATION_LOCK = 0x5173_0003
+
+
+def database_environment(settings: Settings) -> dict[str, str]:
+    """The environment of an ``alembic`` process on ``settings``'s database."""
+    password = settings.postgres_password
+    return {
+        **os.environ,
+        "SITESCOPE_POSTGRES_HOST": settings.postgres_host,
+        "SITESCOPE_POSTGRES_PORT": str(settings.postgres_port),
+        "SITESCOPE_POSTGRES_USER": settings.postgres_user,
+        "SITESCOPE_POSTGRES_PASSWORD": password.get_secret_value() if password else "",
+        "SITESCOPE_POSTGRES_DB": settings.postgres_db,
+    }
+
+
+async def test_concurrent_upgrades_serialize_on_the_migration_lock(
+    empty_database: Settings,
+) -> None:
+    """Two migration steps at once, as two deployments' one-shot ``migrate`` containers would
+    run them: each waits for the migration lock before it reads the version table, so one builds
+    the schema and the other finds it at head. The test holds the lock until both wait, so they
+    overlap for certain."""
+    engine = create_async_engine(empty_database.database_url, poolclass=NullPool)
+    environment = database_environment(empty_database)
+    try:
+        async with engine.connect() as holder:
+            await holder.execute(text("SELECT pg_advisory_lock(:key)"), {"key": MIGRATION_LOCK})
+            processes = [
+                await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    "alembic",
+                    "upgrade",
+                    "head",
+                    cwd=helpers.BACKEND_DIR,
+                    env=environment,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                for _ in range(2)
+            ]
+            waiting = 0
+            for _ in range(600):  # up to 60 s for both processes to start and reach the lock
+                waiting = int(
+                    await holder.scalar(
+                        text(
+                            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'"
+                            " AND classid = 0 AND objid = :key AND NOT granted"
+                        ),
+                        {"key": MIGRATION_LOCK},
+                    )
+                    or 0
+                )
+                await holder.commit()  # a fresh snapshot of pg_locks for the next read
+                if waiting == 2:
+                    break
+                await asyncio.sleep(0.1)
+            await holder.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": MIGRATION_LOCK})
+            await holder.commit()
+        outputs = [await asyncio.wait_for(process.communicate(), 120) for process in processes]
+    finally:
+        await engine.dispose()
+
+    assert waiting == 2, "both upgrades should have waited for the migration lock"
+    codes = [process.returncode for process in processes]
+    assert codes == [0, 0], [error.decode(errors="replace")[-500:] for _, error in outputs]
+    assert await query(empty_database, "SELECT version_num FROM alembic_version") == [HEAD]
+    assert await schema_differences(empty_database) == []

@@ -265,7 +265,8 @@ function PolicyForm({ policy }: { policy: CrawlPolicy }) {
         {wildcards.length > 0 &&
           ' (a * pattern approves subdomains, not the domain itself)'} over{' '}
         {policy.allowed_schemes.join(' or ')} on port{policy.allowed_ports.length > 1 ? 's' : ''}{' '}
-        {policy.allowed_ports.join(', ')}. Every request is checked again by the server.
+        {policy.allowed_ports.join(', ')}, with at most {String(policy.max_active_jobs)} jobs queued
+        or running at once. Every request is checked again by the server.
       </p>
       {formFailure !== null && (
         <ErrorState

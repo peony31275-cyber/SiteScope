@@ -50,7 +50,13 @@ from app.core.redis import create_redis_client
 from tests.fetch_support import LocalHttpServer
 from tests.integration import helpers
 from tests.integration.test_local_crawler import demo_routes
-from tests.process_support import Cluster, ManagedProcess, child_environment, tree_site
+from tests.process_support import (
+    Cluster,
+    ManagedProcess,
+    child_environment,
+    process_group_flags,
+    tree_site,
+)
 
 FRONTEND_DIR = helpers.BACKEND_DIR.parent / "frontend"
 DEMO_HOST = "127.0.0.1"
@@ -103,7 +109,7 @@ def frontend_process(
             env=environment,
             stdout=log,
             stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+            creationflags=process_group_flags(),
         )
     process = ManagedProcess(name, popen, log_path)
     cluster.processes.append(process)
@@ -138,8 +144,16 @@ async def run(args: argparse.Namespace, resources: Resources) -> int:
     if missing := base.missing_credentials():
         sys.stderr.write(f"Set {', '.join(missing)} in backend/.env first.\n")
         return 2
+    # Writes open and the default cap whatever backend/.env says; the processes get the same
+    # from child_environment.
     settings = base.model_copy(
-        update={"environment": "test", "postgres_db": f"{base.postgres_db}_test_ui", "redis_db": 15}
+        update={
+            "environment": "test",
+            "postgres_db": f"{base.postgres_db}_test_ui",
+            "redis_db": 15,
+            "admin_token": None,
+            "crawl_max_active_jobs": Settings.model_fields["crawl_max_active_jobs"].default,
+        }
     )
     helpers.require_disposable(settings.postgres_db)
     for problem in (await helpers.probe_postgres(settings), await helpers.probe_redis(settings)):

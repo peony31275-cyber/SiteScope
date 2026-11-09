@@ -45,6 +45,15 @@ export function useCrawlPolicy() {
   });
 }
 
+/**
+ * Whether this deployment lets the dashboard create and cancel crawl jobs: only when the
+ * policy says writes are `open`. A policy not read yet, or unreadable, counts as no. Hiding
+ * what the server would refuse is a convenience; the API enforces it (ADR-0024).
+ */
+export function useCanWrite(): boolean {
+  return useCrawlPolicy().data?.write_access === 'open';
+}
+
 function listInterval(list: CrawlJobList | undefined, baseMs: number | null): number | false {
   const active = list?.items.some((job) => isCrawlActive(job.status)) ?? false;
   return active && baseMs !== null ? Math.max(baseMs * 2, 5000) : false;

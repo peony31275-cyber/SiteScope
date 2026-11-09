@@ -181,6 +181,53 @@ describe('Create crawl job', () => {
     );
   });
 
+  it.each([
+    [
+      () =>
+        problem(429, 'too_many_active_jobs', {
+          detail:
+            '50 crawl jobs are queued or running, the most this deployment allows; retry when one has finished.',
+        }),
+      'Too many active crawl jobs',
+      /retry when one has finished/,
+    ],
+    [
+      () =>
+        problem(403, 'writes_disabled', {
+          detail: 'This deployment is read-only: crawl jobs cannot be created or cancelled.',
+        }),
+      'This deployment is read-only',
+      /cannot be created or cancelled/,
+    ],
+    [
+      () => problem(401, 'unauthorized', { detail: 'This operation needs a token.' }),
+      'Not authorized',
+      /needs the administrator’s token, which this dashboard never holds/,
+    ],
+  ])(
+    'explains a refusal by the server (%#: the cap, a read-only server, a token)',
+    async (answer, title, message) => {
+      jobsApi().on('POST', '/crawls', answer).install();
+      const { user } = renderApp('/crawls');
+      await screen.findByLabelText('Seed URL');
+      await user.click(screen.getByRole('button', { name: 'Create crawl job' }));
+
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(screen.getByText(message)).toBeInTheDocument();
+      expect(screen.getByLabelText('Seed URL')).toBeInTheDocument(); // still on the form
+    },
+  );
+
+  it('names the server’s cap on active jobs', async () => {
+    jobsApi()
+      .on('GET', '/crawl-policy', () => json(policy({ max_active_jobs: 7 })))
+      .install();
+    renderApp('/crawls');
+    expect(
+      await screen.findByText(/at most 7 jobs\s+queued or running at once/),
+    ).toBeInTheDocument();
+  });
+
   it('says so when no target is approved', async () => {
     new FakeApi().on('GET', '/crawl-policy', () => json(policy({ approved_hosts: [] }))).install();
     renderApp('/crawls');
@@ -189,6 +236,29 @@ describe('Create crawl job', () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create crawl job' })).not.toBeInTheDocument();
   });
+});
+
+describe('Read-only deployments', () => {
+  it.each([
+    ['disabled', 'This deployment is read-only'],
+    ['token', 'Crawl jobs are managed by the operator'],
+  ] as const)(
+    'show no create form where writes are %s, and still list the jobs',
+    async (access, title) => {
+      const api = jobsApi()
+        .on('GET', '/crawl-policy', () => json(policy({ write_access: access })))
+        .on('GET', '/crawls', () => json({ items: [summary()], next_cursor: null }))
+        .install();
+      renderApp('/crawls');
+
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(screen.queryByLabelText('Seed URL')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Create crawl job' })).not.toBeInTheDocument();
+      const table = await screen.findByRole('table', { name: 'Crawl jobs, newest first' });
+      expect(within(table).getAllByRole('row').slice(1)).toHaveLength(1);
+      expect(api.calls('/crawls', 'POST')).toHaveLength(0);
+    },
+  );
 });
 
 describe('Crawl job listing', () => {

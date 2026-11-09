@@ -1,7 +1,10 @@
 # SiteScope demo site
 
-A small static website that SiteScope is allowed to crawl. Phase 11 serves it from its own
-container as the public demo's only approved target. Until then, serve it locally.
+A small static website that SiteScope is allowed to crawl. Its content is synthetic, written
+for SiteScope: nothing on it comes from a real site. Since Phase 11 it is also a container
+(`Dockerfile`, `nginx.conf`): in the deployment (`deploy/compose.yaml`) it is
+`http://demo-site:8080`, the only approved target, and `python -m app.scheduler.admin seed-demo`
+crawls it with four jobs (docs/deployment.md). Locally, serve it as below.
 
 Its structure exercises the crawler:
 

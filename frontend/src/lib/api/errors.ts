@@ -157,6 +157,26 @@ function describeProblem(
         message: detail ?? 'This request conflicts with an earlier one.',
         details: [],
       };
+    case 'too_many_active_jobs':
+      return {
+        title: 'Too many active crawl jobs',
+        message: detail ?? 'The server runs a limited number of crawl jobs at once.',
+        details: [],
+      };
+    case 'writes_disabled':
+      return {
+        title: 'This deployment is read-only',
+        message: detail ?? 'The server accepts no new crawl jobs and no cancellations.',
+        details: [],
+      };
+    case 'unauthorized':
+      return {
+        title: 'Not authorized',
+        message:
+          'Creating and cancelling crawl jobs on this server needs the administrator’s token, ' +
+          'which this dashboard never holds.',
+        details: [],
+      };
     case 'internal_error':
       return {
         title: 'Unexpected server error',

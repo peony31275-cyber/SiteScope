@@ -21,7 +21,7 @@ The next phase starts only when the project owner asks for it. For the design, s
 | 8 | Search and analysis APIs | **Done** (2026-11-08) |
 | 9 | React dashboard | **Done** (2026-11-08) |
 | 10 | Performance engineering, reliability validation and observability | **Done** (2026-11-08) |
-| 11 | Final deployment and documentation | Not started |
+| 11 | Deployment, security, CI/CD and portfolio delivery | **Done** (2026-11-08) |
 
 Phases 3–11 were renumbered in Phase 2C at the owner's request. Earlier reports and commits use
 the old numbers:
@@ -38,22 +38,25 @@ the old numbers:
 | 10 Benchmarks | 10 |
 | 11 CI hardening and documentation | 11 |
 
-## Repository state after Phase 10
+## Repository state after Phase 11
 
-Updated on 2026-11-08 (Phase 10). The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08 (Phase 11). The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
-| Git | Local repository on branch `master` (the configured default). Every phase so far is committed. No remote yet. |
-| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9); the metrics registry, exposition format and heartbeats in `app/observability/`, `GET /metrics` in `app/api/metrics.py`, its PostgreSQL and Redis reads in `app/services/system_metrics.py`, the health assessment in `app/services/diagnostics.py` (Phase 10). |
+| Git | Local repository on branch `master` (the configured default). Every phase is committed. No remote yet. |
+| `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9); the metrics registry, exposition format and heartbeats in `app/observability/`, `GET /metrics` in `app/api/metrics.py`, its PostgreSQL and Redis reads in `app/services/system_metrics.py`, the health assessment in `app/services/diagnostics.py` (Phase 10); write access in `app/api/security.py`, the active-jobs cap in `app/services/crawl_jobs.py`, the operator commands in `app/scheduler/admin.py`, the container health check in `app/observability/alive.py` (Phase 11). |
 | `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7) and `0005` (two indexes widened for the analysis queries; Phase 8). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
-| `backend/tests/` | 2082 tests: 1448 unit, 634 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
+| `backend/Dockerfile`, `requirements/` | One image for every Python role; Linux locks (`runtime.txt`, `dev.txt`) from `requirements/lock.py` (Phase 11). |
+| `deploy/` | The containerized stack (`compose.yaml`), its HTTPS overlay, the application role script, the environment template and the smoke checks (Phase 11). |
+| `.github/workflows/` | `ci.yml` and `full.yml` (Phase 11); not yet run on GitHub. |
+| `backend/tests/` | 2127 tests: 1480 unit, 647 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
 | `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), the analysis latency benchmark with its index A/B (Phase 8), and the Phase 10 harness (crawl scaling, indexing, search, database statements, stale statistics, recovery, the dashboard's graph, charts), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
-| `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 167 Vitest tests; Playwright end-to-end specs for the real stack. Renamed from the misspelled `fronted/` in Phase 1. |
-| `docs/` | Architecture, roadmap, ADRs 0001–0023, API conventions, development guide, performance (Phase 10), observability (Phase 10). |
-| `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4). |
+| `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 175 Vitest tests; Playwright end-to-end specs for the real stack; a Dockerfile and the nginx configuration of the public entry (Phase 11). Renamed from the misspelled `fronted/` in Phase 1. |
+| `docs/` | Architecture, roadmap, ADRs 0001–0025, API conventions, development guide, performance and observability (Phase 10), deployment, security, CI and résumé evidence, screenshots in `images/` (Phase 11). The root holds the README, LICENSE (MIT) and THIRD_PARTY_NOTICES. |
+| `demo-site/` | The demo site: 14 static HTML pages and a robots.txt (Phase 4); its container (Phase 11). |
 
 | Tool on the development machine | Status |
 |---|---|
@@ -1436,37 +1439,182 @@ from the last publish.
   links: 19.5 ms instead of 0.5 ms for 22,220 links).
 - No Prometheus server, Grafana or alerting is part of the project.
 
-### Phase 11: Final deployment and documentation
+### Phase 11: Deployment, security, CI/CD and portfolio delivery
 
-**Scope**
+**Status: done (2026-11-08).** Documents:
 
-- Images: one backend image for every Python role, running as a non-root user; a frontend image
-  served by nginx with an `/api` reverse proxy; a demo-site container.
-- A full `docker-compose.yml` with:
-  - health checks;
-  - a one-shot migration service;
-  - internal networks (in the public profile, workers have no general egress);
-  - worker scaling;
-  - request size limits at the proxy;
-  - a PostgreSQL role for the application that is not a superuser (ADR-0011).
-- CI, once a GitHub remote exists:
-  - backend lint, type check, and unit tests;
-  - integration and fault tests against PostgreSQL and Redis service containers;
-  - frontend type check, tests, and build;
-  - image builds;
-  - optional dependency audits (`pip-audit`, `npm audit`).
-- Documentation:
-  - a README with an overview, diagram, quickstart, design highlights, and limitations;
-  - an operations runbook covering recovery procedures and DLQ inspection;
-  - a review of the ADRs.
+- [deployment.md](deployment.md): hosting comparison, operations, validation;
+- [security.md](security.md): threat model;
+- [ci.md](ci.md);
+- [resume-evidence.md](resume-evidence.md);
+- the root README, LICENSE and THIRD_PARTY_NOTICES.
 
-**Tests.** A scripted smoke test: `docker compose up` → create a job → wait for completion →
-check that search returns results → `docker compose down`.
+Decisions: [ADR-0024](adr/0024-public-read-only-mode-and-administrator-writes.md) and
+[ADR-0025](adr/0025-container-packaging-and-deployment-topology.md).
 
-**Done when**
+The owner's Phase 11 brief replaced the plan above:
 
-- CI is green on GitHub.
-- A new reader can run the system from the README alone.
+- `deploy/compose.yaml` instead of a root `docker-compose.yml`;
+- a read-only public mode and administrator writes;
+- a hosting comparison;
+- the portfolio documents.
+
+"CI is green on GitHub" could not be met. Nothing was pushed, which needs the owner's
+authorization; the workflows were validated locally instead (ci.md).
+
+**Delivered**
+
+- **Write access and abuse limits** (ADR-0024).
+  - `Settings.write_access` (`open`, `token`, `disabled`), enforced by a FastAPI dependency on
+    the two writes: 403 `writes_disabled`, or 401 with `WWW-Authenticate`. Constant-time token
+    comparison; refusals logged without the token.
+  - The active-jobs cap (`SITESCOPE_CRAWL_MAX_ACTIVE_JOBS`): 429 with `Retry-After: 60`, exact
+    under concurrency through an advisory lock, replays always answered.
+  - The crawl policy reports the mode. The dashboard shows a read-only notice and no write
+    controls.
+  - The proxy limits reads, writes and connections per address, with a `rate_limited` problem
+    response.
+- **Operator commands** (`app/scheduler/admin.py`): `create`, `cancel`, and `seed-demo`. The
+  last creates four demo jobs on the synthetic demo site, does nothing more when re-run, and
+  waits with `--wait`.
+- **Packaging** (ADR-0025).
+  - One backend image (Python 3.13.16, locked Linux dependencies from `requirements/lock.py`,
+    uid 10001, no tests, venv or `.env`).
+  - A frontend image (nginx 1.30.5, uid 101): strict CSP and security headers, `/api/` only,
+    internal endpoints never served.
+  - A demo-site image.
+  - `deploy/compose.yaml`: a separate project, with only the proxy published and an internal
+    network without egress.
+    - A one-shot `migrate` as the owner, then `db-roles`, which gives the application role
+      `sitescope_app` rows only (ADR-0011's production requirement).
+    - Health checks, the workers' from their own heartbeats (`app.observability.alive`).
+    - `init`, restart policies, stop grace periods, read-only root filesystems, dropped
+      capabilities, memory limits, rotated logs, and replicas from `deploy/.env`.
+  - An HTTPS overlay with Caddy, and `deploy/smoke.py`.
+- **Migration lock:** `alembic/env.py` serializes concurrent upgrades on an advisory lock.
+- **CI:** `ci.yml` (lint, format, mypy, unit tests, the dashboard's check, gitleaks over the
+  whole history, image builds) and `full.yml` (integration and fault suites, end to end with
+  Chromium, the containerized deployment seeded and smoke-tested, nightly).
+  - Actions are pinned by commit, and no secret is used.
+  - Validated with actionlint, and the Linux steps were run in containers.
+- **Portability for CI:**
+  - The fault test's Docker helper is platform-aware.
+  - Windows-only process flags sit behind `if` statements (mypy failed on Linux before).
+- **The intermittent dashboard test:** a cold load of the lazy page chunks inside a 3 s
+  `findBy` wait. Measured: the first AnalysisPage test took 3854 ms in a full parallel run, and
+  1436 ms alone. Pages now load in a `beforeAll`. Three full runs after the fix: that test
+  1413–1488 ms, the shell's navigation test 1862–2259 ms (it was 4462).
+- **Documentation:**
+  - the README (20 topics, a Mermaid diagram, real screenshots of the deployed read-only stack,
+    the Phase 10 charts);
+  - deployment.md, with the hosting comparison from official pricing pages read on
+    2026-11-08, and the recommendation of one 4 GB VPS;
+  - security.md, ci.md, resume-evidence.md, ADR-0024 and ADR-0025;
+  - updates to architecture (sections 12.7, 15, 16, 18), api-conventions, observability,
+    development and CLAUDE.md (invariants 16 and 17);
+  - the MIT license, and third-party notices covering Redis' licenses.
+- **Secrets:** a gitleaks scan of all 13 commits and of the files to commit, plus a search of
+  every commit for the development passwords. No secret was found; one reviewed false positive
+  is marked. Dumps (`backups/`, `*.dump`) are now git-ignored.
+
+**Tests.** Backend: 2,127 tests (45 new): 1,480 unit, 647 integration and fault. Dashboard:
+175 Vitest tests (8 new). End to end: 8 passed and 12
+opt-in skipped; the screenshot spec also runs against a read-only stack, under the strict CSP.
+New:
+
+- **Unit:**
+  - write access: modes, 401/403, the token never logged, the OpenAPI security scheme;
+  - settings (token rules, cap range), the policy fields, the health check's name matching
+    and command.
+- **Integration:**
+  - the active-jobs cap, including 8 concurrent creations with a cap of 3;
+  - the operator commands: rules, the cap, idempotent seeding, a wait that runs out;
+  - the health check against Redis;
+  - two concurrent `alembic upgrade` processes held at the lock.
+- **Dashboard:** read-only modes, the server's 401/403/429 explained, the cap in the policy
+  text, no cancel button where writes are not open.
+
+**Verification** (2026-11-08)
+
+- Backend on Windows: `pytest --require-services`, 2,127 passed in the final run (no skip);
+  ruff, ruff format, mypy (204 files).
+- Linux, in `python:3.13.16-slim-trixie` with `requirements/dev.txt`: ruff, format and mypy;
+  1478 unit tests; 643 integration and fault tests (the 2 Redis data-loss tests need Docker and
+  ran on Windows).
+- Dashboard: `npm run check` (tsc, ESLint, Prettier, 175 tests, build); end to end, 8 passed.
+- Deployment, a validation run and a walkthrough from a fresh copy (deployment.md,
+  "Validation"):
+  - all containers healthy; seed-demo 31.8 and 32.1 s; smoke 17 of 17;
+  - no egress from the crawlers; writes refused through the proxy;
+  - internal endpoints 404 (13 spellings); rate limits; token mode;
+  - crash restart; graceful stop;
+  - the application role refused privileged statements; a backup restored into a scratch
+    database.
+- actionlint: no errors. gitleaks: no leaks. `npm audit`: 0. `pip-audit`: none known.
+- Development database: fingerprint `e574f91fa587b2ea` before and after, revision 0004, three
+  queued jobs. Its volumes were never touched.
+
+**Review findings and fixes**
+
+The independent review (read-only) found no security bypass:
+
+- no unauthenticated write;
+- no way past the cap;
+- no internal endpoint reachable through the proxy;
+- no secret;
+- no unapproved crawl destination.
+
+Its confirmed findings were fixed. The two races and the token leak have regression tests, each
+seen failing before its fix (the races reproduced deterministically: an uncounted job, and
+PostgreSQL's `deadlock detected`).
+
+1. **A developer's admin token or cap in `backend/.env` reached the tests.** The integration,
+   fault and end-to-end runs then got 401s. The service fixtures, `child_environment` and the
+   end-to-end stack now pin open writes and the default cap.
+2. **The cap was decided before the insert.** A key that the scheduler's maintenance freed in
+   between created an uncounted job. The cap is now decided from the insert.
+3. **Freeing an expired key before the creation lock** could deadlock two requests with the
+   same key (500 `internal_error`). The lock is now taken first.
+4. **Behind another host proxy, or for IPv6 visitors without Docker IPv6, the per-address
+   limits become one shared budget.** This is documented, with the `real-ip.conf` override for
+   a host proxy and AAAA records only with IPv6 in Docker.
+5. **nginx's error log carried rate-limit rejections with their query strings.** Rejections are
+   now logged below the error log's level (the access log still records each 429), and the
+   documents no longer say every proxy log omits query strings.
+6. **The admin token went to every backend role.** It now goes to the API only (checked per
+   container).
+7. **The README overstated container hardening.** It now names the application's containers,
+   and says PostgreSQL, Redis and Caddy run from their official entrypoints.
+
+Optional suggestions taken:
+
+- the CSP evidence reworded (opt-in spec, a header check in CI);
+- the CI service passwords scoped to their jobs;
+- Caddy's UDP 443 published for HTTP/3;
+- Redis given `maxmemory` with `noeviction` inside its container limit;
+- PostgreSQL's memory limit raised to 1 GB;
+- the cap's message now names cancelling jobs.
+
+A re-validation of the containerized stack after the fixes:
+
+- the token variable is in the API container only;
+- Redis' `maxmemory` is 192 MB;
+- the smoke checks pass;
+- 60 quick searches gave 23 429s, and their query string appears in no log;
+- no anonymous volume is left.
+
+That last point is one more fix found then: the `db-roles` one-shot, which runs the PostgreSQL
+image, left an anonymous volume on every run; it now mounts a tmpfs there. The Linux runs
+predate the review fixes, which change no platform-specific code.
+
+**Known limitations**
+
+- The workflows have not run on GitHub. Nothing was pushed, deployed publicly or bought.
+- HTTPS was validated as configuration only. The Caddy image was not pulled or run.
+- arm64 images are not built. Images are built locally; no registry is involved.
+- One Compose host, which is a single point of failure.
+- One shared admin token. Proxy limits are per address.
+- Python packages are pinned by version, not hash; base images by tag, not digest.
 
 ## Definition of done (every phase)
 
@@ -1481,13 +1629,18 @@ check that search returns results → `docker compose down`.
 
 ## Decisions pending from the project owner
 
-1. **Create a GitHub repository and push.** The local repository exists, but a remote is needed
-   before the CI workflow can be added and verified.
-2. **Choose the public demo target.** Either the self-hosted demo-site container (the current plan) or a
-   separately hosted static site.
-3. **Choose a license for the public repository** (for example, MIT).
+1. **Create a GitHub repository and push.** Nothing has been pushed. CI runs only on GitHub,
+   and ci.md describes what to expect.
+2. **Public deployment.** Choose and buy a host (deployment.md compares them and recommends one
+   4 GB VPS), a domain, and authorize the deployment. Then follow deployment.md, "First
+   start" and "HTTPS and a domain".
+3. **The commit author email.** All 13 commits so far carry the configured git email.
+   Publishing the repository publishes it. GitHub can use a no-reply address for future
+   commits; changing past commits would rewrite history, which needs approval.
 
 Resolved:
 
+- Phase 11: the public demo target is the self-hosted demo-site container; the license is
+  MIT (the owner's Phase 11 brief).
 - Phase 1: `fronted/` was renamed to `frontend/`, and git was initialized locally.
 - 2026-11-06: Docker Engine was installed inside WSL Ubuntu (see Environment setup).

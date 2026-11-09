@@ -160,9 +160,12 @@ with `prefers-reduced-motion`.
 
 ## Tests
 
-- `npm test`: 167 unit and component tests (Vitest, jsdom). Component tests render the whole app
+- `npm test`: unit and component tests (Vitest, jsdom). Component tests render the whole app
   (router, providers, lazy pages) against `src/tests/fakeApi.ts`, a test double of `fetch` that
   answers like the API (JSON, problem documents) and records requests. It is not the backend.
+  `src/tests/render.tsx` loads every page's chunk before a file's tests (Phase 11): a cold
+  import of a page and its charts once exceeded Testing Library's 3 s wait under a full
+  parallel run.
 - The end-to-end run uses the real backend, on a disposable database:
 
   ```powershell
@@ -174,7 +177,15 @@ with `prefers-reduced-motion`.
   dispatcher, two indexers and `vite preview`, runs `e2e/dashboard.spec.ts` in the installed
   Microsoft Edge (Playwright channel `msedge`; no browser download), then stops everything and
   drops the database. Without `--e2e` it serves the stack until Ctrl+C. `E2E_SCREENSHOTS=1` adds
-  screenshots of every page at desktop and phone widths (`test-results/screens/`).
+  screenshots of every page at desktop and phone widths (`test-results/screens/`). Each page must
+  load without a Content-Security-Policy violation or a page error.
+
+- Against the containerized, read-only stack (Phase 11; docs/deployment.md), after `seed-demo`:
+  `E2E_SCREENSHOTS=1 E2E_READ_ONLY=1 E2E_BASE_URL=http://127.0.0.1:8080` runs the same
+  screenshots on the seeded demo. Two more variables control the output:
+  `E2E_SCREENSHOTS_DIR` sets the output directory, and `E2E_SCREENSHOTS_FULL_PAGE=0` gives
+  viewport-sized images (the README's `docs/images/`). CI uses Chromium instead of Edge
+  (`E2E_BROWSER_CHANNEL=chromium`).
 
 - **Link graph performance** (Phase 10, opt-in): `e2e/graph-performance.spec.ts` loads the Link
   Explorer at 300/1,500, 1,000/5,000 and 2,000/10,000 nodes/links and measures drawing, long
@@ -184,8 +195,10 @@ with `prefers-reduced-motion`.
 
 ## Known limitations
 
-- The dashboard has no authentication and job creation is not rate-limited: fine for local and
-  private use; a public deployment needs both (architecture section 12.7, Phase 11).
+- The dashboard has no login. On a deployment whose writes are not open (ADR-0024) it shows a
+  read-only notice instead of the create form, and no cancel button; the API enforces the same.
+  It never holds the admin token, so an operator writes with an HTTP client or the operator
+  commands.
 - A job list page reads one job detail per row (bounded by the page size); see ADR-0020.
 - The cursor walk lives in memory: reloading a listing page starts from its first page.
 - Highlights split text by code point; a grapheme cluster (an emoji with a modifier) could in

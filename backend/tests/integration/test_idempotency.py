@@ -29,7 +29,7 @@ from tests.crawl_support import execute
 pytestmark = pytest.mark.anyio
 
 SEED = "https://docs.example.com/guide"
-KEY = "order-7f3a-2026-11-07"
+KEY = "order-7f3a-2026-11-07"  # gitleaks:allow - an Idempotency-Key value, not a secret
 
 
 async def submit(

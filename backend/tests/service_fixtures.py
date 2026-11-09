@@ -38,6 +38,21 @@ def _unavailable(config: pytest.Config, reason: str) -> NoReturn:
     pytest.skip(reason)
 
 
+def settings_for_tests(base: Settings) -> Settings:
+    """The developer's servers, but a disposable database and Redis DB 15, with writes open and
+    the default job cap: an admin token or a cap in backend/.env (to try a deployment's modes,
+    docs/development.md) must not change what the tests exercise (Phase 11 review)."""
+    return base.model_copy(
+        update={
+            "environment": "test",
+            "postgres_db": f"{base.postgres_db}_test",
+            "redis_db": TEST_REDIS_DB,
+            "admin_token": None,
+            "crawl_max_active_jobs": Settings.model_fields["crawl_max_active_jobs"].default,
+        }
+    )
+
+
 @pytest.fixture(scope="session")
 def service_settings(pytestconfig: pytest.Config) -> Settings:
     """The developer's servers, but a disposable database and Redis DB 15."""
@@ -47,13 +62,7 @@ def service_settings(pytestconfig: pytest.Config) -> Settings:
         _unavailable(pytestconfig, f"settings are invalid ({exc.error_count()} errors)")
     if missing := base.missing_credentials():
         _unavailable(pytestconfig, f"set {', '.join(missing)} in backend/.env to run these tests")
-    return base.model_copy(
-        update={
-            "environment": "test",
-            "postgres_db": f"{base.postgres_db}_test",
-            "redis_db": TEST_REDIS_DB,
-        }
-    )
+    return settings_for_tests(base)
 
 
 @pytest.fixture(scope="session")

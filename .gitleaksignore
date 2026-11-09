@@ -1,0 +1,4 @@
+# Reviewed gitleaks findings (Phase 11 secret scan; docs/security.md, "Secrets").
+# backend/tests/integration/test_idempotency.py: KEY is an Idempotency-Key test value, not a
+# credential. The line now carries "gitleaks:allow"; this entry covers the commit that added it.
+0e7f41bf9b57a1f7d196b9ede421c213574c65ac:backend/tests/integration/test_idempotency.py:generic-api-key:32

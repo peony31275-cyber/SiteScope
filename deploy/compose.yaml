@@ -1,0 +1,330 @@
+# SiteScope, the whole stack in containers (Phase 11, ADR-0025; docs/deployment.md).
+#
+#   cp deploy/.env.example deploy/.env       # then set the secrets in deploy/.env
+#   docker compose -f deploy/compose.yaml up -d --build --wait
+#   docker compose -f deploy/compose.yaml exec api \
+#       python -m app.scheduler.admin seed-demo --base-url http://demo-site:8080 --wait 600
+#
+# Topology:
+#
+# * One public entry, the frontend proxy (nginx). It serves the dashboard and forwards /api/ to
+#   the API. It is the only service with a published port.
+# * Every other service lives on the "internal" network, which has no route to the internet:
+#   PostgreSQL, Redis, the API, the scheduler, the workers and the demo site. Defense in depth
+#   behind the fetcher's allowlist and SSRF rules: a crawler can reach the demo site and
+#   nothing else.
+# * The migration step ("migrate") runs once, alone, as the database owner. Then "db-roles"
+#   (deploy/postgres/app-role.sql) gives the application role its rights. Every application
+#   service waits for both and connects as that role: neither superuser nor owner (ADR-0011).
+#   Concurrent migrations would serialize anyway (alembic/env.py).
+#
+# This project ("sitescope-deploy") is separate from the development one ("sitescope",
+# backend/compose.yaml): its own containers, network and volumes, never the development data.
+# "docker compose down" keeps the volumes. "down -v" deletes the database: never run it on a
+# deployment you want to keep.
+
+name: sitescope-deploy
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Every Python role: the same image, its own command.
+x-backend: &backend
+  image: ${DEPLOY_BACKEND_IMAGE:-sitescope-backend:local}
+  build:
+    context: ../backend
+  init: true
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging: *logging
+  networks: [internal]
+  environment: &backend-environment
+    SITESCOPE_ENVIRONMENT: production
+    SITESCOPE_LOG_LEVEL: ${SITESCOPE_LOG_LEVEL:-INFO}
+    SITESCOPE_POSTGRES_HOST: postgres
+    SITESCOPE_POSTGRES_PORT: "5432"
+    # The application role (deploy/postgres/app-role.sql): rows only, no DDL, not a superuser.
+    SITESCOPE_POSTGRES_USER: sitescope_app
+    SITESCOPE_POSTGRES_DB: sitescope
+    SITESCOPE_POSTGRES_PASSWORD: ${SITESCOPE_POSTGRES_PASSWORD:?set SITESCOPE_POSTGRES_PASSWORD in deploy/.env}
+    SITESCOPE_REDIS_HOST: redis
+    SITESCOPE_REDIS_PORT: "6379"
+    SITESCOPE_REDIS_PASSWORD: ${SITESCOPE_REDIS_PASSWORD:?set SITESCOPE_REDIS_PASSWORD in deploy/.env}
+    # The crawl policy. By default the bundled demo site only, as an exact internal origin.
+    SITESCOPE_CRAWL_ALLOWED_HOSTS: ${SITESCOPE_CRAWL_ALLOWED_HOSTS:-demo-site}
+    SITESCOPE_CRAWL_ALLOWED_SCHEMES: ${SITESCOPE_CRAWL_ALLOWED_SCHEMES:-http}
+    SITESCOPE_CRAWL_ALLOWED_PORTS: ${SITESCOPE_CRAWL_ALLOWED_PORTS:-8080}
+    SITESCOPE_FETCH_INTERNAL_ORIGINS: ${SITESCOPE_FETCH_INTERNAL_ORIGINS:-http://demo-site:8080}
+    SITESCOPE_CRAWL_MAX_DEPTH_LIMIT: ${SITESCOPE_CRAWL_MAX_DEPTH_LIMIT:-5}
+    SITESCOPE_CRAWL_MAX_PAGES_LIMIT: ${SITESCOPE_CRAWL_MAX_PAGES_LIMIT:-200}
+    SITESCOPE_CRAWL_MAX_ACTIVE_JOBS: ${SITESCOPE_CRAWL_MAX_ACTIVE_JOBS:-10}
+  depends_on: &backend-dependencies
+    migrate:
+      condition: service_completed_successfully
+    db-roles:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+# A worker is healthy while its own heartbeat is live (app/observability/alive.py). Docker
+# only reports it; nothing restarts or routes on it.
+x-heartbeat-check: &heartbeat-check
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+services:
+  postgres:
+    image: postgres:18.6-trixie
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    environment:
+      # The owner: a superuser, used by migrations, backups and restores only.
+      POSTGRES_USER: sitescope
+      POSTGRES_DB: sitescope
+      POSTGRES_PASSWORD: ${DEPLOY_POSTGRES_OWNER_PASSWORD:?set DEPLOY_POSTGRES_OWNER_PASSWORD in deploy/.env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: the temporary server of the first initialisation listens on a socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U sitescope -d sitescope"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+    shm_size: 128m
+    deploy:
+      resources:
+        limits:
+          # The default scale opens up to 70 connections (7 processes, pools of 10).
+          memory: 1g
+    networks: [internal]
+
+  redis:
+    image: redis:8.10.3-alpine3.23
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    # Append-only file, fsync'd every second (ADR-0001: Redis holds no truth).
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      # Within the container's memory limit: at the limit Redis refuses writes (the processes
+      # retry) instead of being killed; it never evicts a task.
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+      - --requirepass
+      - ${SITESCOPE_REDIS_PASSWORD:?set SITESCOPE_REDIS_PASSWORD in deploy/.env}
+    environment:
+      REDISCLI_AUTH: ${SITESCOPE_REDIS_PASSWORD:?set SITESCOPE_REDIS_PASSWORD in deploy/.env}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -h 127.0.0.1 ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks: [internal]
+
+  # The schema, once, before anything else starts, as the owner.
+  migrate:
+    <<: *backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      <<: *backend-environment
+      SITESCOPE_POSTGRES_USER: sitescope
+      SITESCOPE_POSTGRES_PASSWORD: ${DEPLOY_POSTGRES_OWNER_PASSWORD:?set DEPLOY_POSTGRES_OWNER_PASSWORD in deploy/.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The application role and its rights, after every migration step (idempotent).
+  db-roles:
+    image: postgres:18.6-trixie
+    command: ["psql", "--no-psqlrc", "--quiet", "--file", "/sql/app-role.sql"]
+    restart: "no"
+    read_only: true
+    # The image declares a volume for a database this container never runs: a tmpfs there,
+    # or every run would leave an anonymous volume behind.
+    tmpfs:
+      - /var/lib/postgresql:size=1m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    environment:
+      PGHOST: postgres
+      PGUSER: sitescope
+      PGDATABASE: sitescope
+      PGPASSWORD: ${DEPLOY_POSTGRES_OWNER_PASSWORD:?set DEPLOY_POSTGRES_OWNER_PASSWORD in deploy/.env}
+      # Read by the script with \getenv: never on a command line.
+      SITESCOPE_APP_PASSWORD: ${SITESCOPE_POSTGRES_PASSWORD:?set SITESCOPE_POSTGRES_PASSWORD in deploy/.env}
+    volumes:
+      - ./postgres/app-role.sql:/sql/app-role.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [internal]
+
+  api:
+    <<: *backend
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--no-server-header", "--timeout-graceful-shutdown", "10"]
+    environment:
+      <<: *backend-environment
+      # The API alone checks writes. Empty: read-only (ADR-0024).
+      SITESCOPE_ADMIN_TOKEN: ${SITESCOPE_ADMIN_TOKEN:-}
+      # Only the proxy reaches the API (internal network), and it overwrites X-Forwarded-For.
+      FORWARDED_ALLOW_IPS: "*"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 20s
+    deploy:
+      replicas: ${DEPLOY_API_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 256m
+
+  scheduler:
+    <<: *backend
+    command: ["python", "-m", "app.scheduler"]
+    healthcheck:
+      <<: *heartbeat-check
+      test: ["CMD", "python", "-m", "app.observability.alive", "scheduler"]
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  crawler:
+    <<: *backend
+    command: ["python", "-m", "app.workers.crawler"]
+    depends_on:
+      <<: *backend-dependencies
+      demo-site:
+        condition: service_healthy
+    healthcheck:
+      <<: *heartbeat-check
+      test: ["CMD", "python", "-m", "app.observability.alive", "crawler"]
+    # Running tasks get SITESCOPE_SHUTDOWN_GRACE_SECONDS (30 s) to finish after SIGTERM.
+    stop_grace_period: 45s
+    deploy:
+      replicas: ${DEPLOY_CRAWLER_REPLICAS:-2}
+      resources:
+        limits:
+          memory: 256m
+
+  index-dispatcher:
+    <<: *backend
+    command: ["python", "-m", "app.scheduler.index_dispatcher"]
+    healthcheck:
+      <<: *heartbeat-check
+      test: ["CMD", "python", "-m", "app.observability.alive", "index_dispatcher"]
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  indexer:
+    <<: *backend
+    command: ["python", "-m", "app.workers.indexer"]
+    healthcheck:
+      <<: *heartbeat-check
+      test: ["CMD", "python", "-m", "app.observability.alive", "indexer"]
+    stop_grace_period: 45s
+    deploy:
+      replicas: ${DEPLOY_INDEXER_REPLICAS:-2}
+      resources:
+        limits:
+          memory: 256m
+
+  # The approved crawl target: synthetic pages written for SiteScope (demo-site/).
+  demo-site:
+    image: ${DEPLOY_DEMO_SITE_IMAGE:-sitescope-demo-site:local}
+    build:
+      context: ../demo-site
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    networks: [internal]
+
+  # The public entry.
+  frontend:
+    image: ${DEPLOY_FRONTEND_IMAGE:-sitescope-frontend:local}
+    build:
+      context: ../frontend
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    ports:
+      - "${DEPLOY_HTTP_BIND:-127.0.0.1}:${DEPLOY_HTTP_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    networks: [edge, internal]
+
+networks:
+  # No route to the internet: Docker gives an internal network no gateway.
+  internal:
+    internal: true
+  # The proxy's published port.
+  edge: {}
+
+volumes:
+  postgres-data:
+  redis-data:

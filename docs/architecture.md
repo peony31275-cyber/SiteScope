@@ -1280,8 +1280,9 @@ Implemented in Phase 3 by the safe fetcher (`backend/app/crawler/fetcher.py`,
 4. **No ambient configuration.** The fetcher uses `httpcore2` directly: no proxy support, no
    environment configuration (`HTTP_PROXY`, `.netrc`), no automatic redirects, no connection reuse.
    TLS 1.2 or newer, verified by the operating system's verifier (`truststore`).
-5. **Network isolation.** In the public deployment, crawler workers sit on a network that can reach only
-   approved targets (Phase 11).
+5. **Network isolation.** In the deployment (Phase 11, ADR-0025), crawler workers sit on an internal
+   Docker network without a gateway: they reach the demo site and nothing else. Crawling a public
+   target also takes an explicit, reviewed egress override (`docs/deployment.md`).
 
 | Destination class | production | development / test |
 |---|---|---|
@@ -1366,14 +1367,26 @@ rows are implemented by the safe fetcher and the parser (Phase 3), the politenes
 ### 12.7 API surface and secrets
 
 - Every input is validated with Pydantic, request sizes are limited, and server-side caps apply.
-- In public deployments, mutating endpoints can require a bearer token. Read endpoints are public.
-- Job creation is rate-limited per client (Phase 11; not implemented yet). The dashboard calls the
-  API on its own origin through a reverse proxy, so the API sends no CORS headers (Phase 9,
-  ADR-0020); a deployment that splits the origins needs an explicit allowlist, never a wildcard.
-  CORS is not authentication.
-- `GET /api/v1/crawl-policy` exposes the approved host patterns, schemes, ports and job limits:
-  the targets of a public demo are public anyway. Internal fetch origins and every other setting
-  stay private.
+- Write access (Phase 11, ADR-0024): read endpoints are public. Creating and cancelling jobs
+  follow `Settings.write_access`:
+  - `token` when `SITESCOPE_ADMIN_TOKEN` is set: a bearer token, compared in constant time, and
+    401 without it;
+  - `disabled` in production without a token: 403;
+  - `open` outside production.
+
+  The check is a FastAPI dependency (`app/api/security.py`); the dashboard only mirrors it.
+  Operators write with `python -m app.scheduler.admin`, inside the deployment.
+- At most `SITESCOPE_CRAWL_MAX_ACTIVE_JOBS` jobs are queued, running or cancelling: a creation
+  beyond is a 429 with `Retry-After`. Creations serialize on an advisory lock, so the cap is
+  exact, and replays are always answered.
+- The public proxy limits each client address: reads, writes and connections, with a 429
+  `rate_limited` problem (Phase 11, `frontend/nginx/nginx.conf`).
+- The dashboard calls the API on its own origin through a reverse proxy, so the API sends no CORS
+  headers (Phase 9, ADR-0020). A deployment that splits the origins needs an explicit allowlist,
+  never a wildcard. CORS is not authentication.
+- `GET /api/v1/crawl-policy` exposes the approved host patterns, schemes, ports, job limits, the
+  active-jobs cap and the write-access mode: the targets of a public demo are public anyway.
+  Internal fetch origins, the admin token and every other setting stay private.
 - Errors are returned as `application/problem+json` without internal details. SQL is issued only with
   bound parameters.
 - Configuration comes from environment variables. `.env` is git-ignored, and secrets never appear in
@@ -1520,7 +1533,9 @@ text.
   status, attempts running, the oldest pending and queued documents, finished jobs whose indexing
   is not complete, the index stream's length and pending messages), and the status command adds
   the same from PostgreSQL (`indexing`) and the index stream (`index_stream`). Every figure is
-  counted from PostgreSQL or Redis when it is reported. Compose health checks arrive in Phase 11.
+  counted from PostgreSQL or Redis when it is reported. Since Phase 11 the containers' health
+  checks read each process's own heartbeat (`python -m app.observability.alive <role>`); Docker
+  only reports them.
 - Since Phase 10 the status command also lists every live process from its heartbeat
   (`processes`) and assesses health (`assessment`: PostgreSQL, Redis, the API, crawl progress,
   crawler workers, indexing, repeated failures, recovery), from PostgreSQL counts and heartbeats
@@ -1583,33 +1598,40 @@ text.
 
 ## 15. Deployment topology
 
-Deployment uses Docker Compose. Since Phase 2B, `backend/compose.yaml` runs PostgreSQL 18.6 and Redis
-8.10.3 for development: ports bound to 127.0.0.1, named volumes, health checks, `restart:
-unless-stopped`. Phase 11 runs the full stack.
+Phase 11 runs the whole stack in containers (`deploy/compose.yaml`; ADR-0025; operations in
+`docs/deployment.md`). `backend/compose.yaml` still runs only PostgreSQL and Redis, for
+development and the test suites.
 
 | Service | Networks | Port published | Notes |
 |---|---|---|---|
-| `frontend` (nginx) | edge, internal | yes | serves the SPA and reverse-proxies `/api` |
-| `api` | internal | no | |
-| `scheduler` | internal | no | |
-| `crawler-worker` (N replicas) | internal, crawl | no | `docker compose up --scale crawler-worker=N` |
-| `index-dispatcher` | internal | no | Phase 7: `python -m app.scheduler.index_dispatcher` |
-| `indexer-worker` (N replicas) | internal | no | Phase 7: `python -m app.workers.indexer` |
-| `migrate` | internal | no | one-shot `alembic upgrade head`; other services wait until it succeeds |
+| `frontend` (nginx) | edge, internal | yes (`127.0.0.1:8080` by default) | serves the SPA, proxies `/api/` only; rate limits and security headers |
+| `api` (replicas) | internal | no | `uvicorn app.main:app` |
+| `scheduler` | internal | no | `python -m app.scheduler` |
+| `crawler` (replicas) | internal | no | `python -m app.workers.crawler` |
+| `index-dispatcher` | internal | no | `python -m app.scheduler.index_dispatcher` |
+| `indexer` (replicas) | internal | no | `python -m app.workers.indexer` |
+| `migrate` | internal | no | one-shot `alembic upgrade head`; the application services wait until it succeeds |
 | `postgres` | internal | no | named volume |
 | `redis` | internal | no | AOF on, named volume |
-| `demo-site` (nginx, static) | crawl | optional | the approved demo target |
+| `demo-site` (nginx, static) | internal | no | the approved demo target, `http://demo-site:8080` |
 
-- One backend image runs every Python role (with different commands) as a non-root user.
-- In the public profile, the `crawl` network has no general internet egress.
-- Before Phase 11, the Python processes run on Windows from `backend/.venv` against the PostgreSQL and
-  Redis containers started by Compose, and the dashboard runs on the Vite server (`npm run dev`,
-  which proxies `/api` to the API as nginx will). `backend/compose.yaml` therefore still defines only those two
-  services in Phase 7: the index dispatcher and indexers are started like the scheduler and the
-  crawler workers (`docs/development.md`).
+- One backend image runs every Python role with its own command, as uid 10001, on a read-only
+  root filesystem without capabilities.
+- `internal` is an internal Docker network: it has no gateway, so no service on it reaches the
+  internet. The crawlers can fetch only the demo site. Approving a public target also needs a
+  reviewed override that gives the crawlers egress.
+- Health:
+  - PostgreSQL: `pg_isready`. Redis: `PING`. The API: `GET /health`. The proxies: `/healthz`.
+  - Each worker role: its own heartbeat (`python -m app.observability.alive <role>`).
+  - Compose uses health only to order startup.
+- Concurrent migrations serialize on an advisory lock (`alembic/env.py`).
+- HTTPS is an overlay (`deploy/compose.https.yaml`): Caddy terminates TLS in front of the proxy.
+- Development: the Python processes run on Windows from `backend/.venv` against the PostgreSQL
+  and Redis containers, and the dashboard on the Vite server (`npm run dev`, which proxies
+  `/api` as nginx does).
 - Connections: each process opens at most `SITESCOPE_DB_POOL_SIZE + SITESCOPE_DB_MAX_OVERFLOW`
-  (10 by default) PostgreSQL connections, and an indexer task holds one at a time. The sum over all
-  processes must stay below PostgreSQL's `max_connections` (100 in the development container).
+  (10 by default) PostgreSQL connections, and an indexer task holds one at a time. The sum over
+  all processes must stay below PostgreSQL's `max_connections` (100 in the images used).
 
 ## 16. Repository structure (proposed)
 
@@ -1617,9 +1639,12 @@ unless-stopped`. Phase 11 runs the full stack.
 SITESCOPE/
 |-- CLAUDE.md                    # stable context and rules for contributors and Claude
 |-- README.md                    # Phase 11: overview, quickstart, design highlights
+|-- LICENSE, THIRD_PARTY_NOTICES.md  # Phase 11: MIT; dependencies' and services' licenses
 |-- .gitignore, .gitattributes  # Phase 1: ignore rules, LF line endings
-|-- docker-compose.yml           # Phase 11: full stack (reuses backend/compose.yaml)
-|-- .github/workflows/ci.yml     # added once a GitHub remote exists; extended in later phases
+|-- .gitleaksignore              # Phase 11: reviewed secret-scan findings
+|-- .github/workflows/           # Phase 11: ci.yml (fast checks), full.yml (services, e2e, deployment)
+|-- deploy/                      # Phase 11: compose.yaml (full stack), compose.https.yaml + Caddyfile,
+|                               #   nginx/real-ip.conf, .env.example, smoke.py
 |-- backend/
 |   |-- .venv/                   # existing; never committed, never recreated
 |   |-- .env.example             # Phase 1: every setting, with safe placeholders
@@ -1627,7 +1652,8 @@ SITESCOPE/
 |   |-- pyproject.toml           # dependencies + ruff / mypy / pytest config
 |   |-- alembic.ini              # Phase 2B
 |   |-- alembic/                 # Phase 2B: migrations
-|   |-- Dockerfile               # Phase 11
+|   |-- Dockerfile, .dockerignore  # Phase 11: one image for every Python role
+|   |-- requirements/            # Phase 11: Linux locks (runtime.txt, dev.txt) and lock.py
 |   |-- app/
 |   |   |-- main.py              # FastAPI app factory, lifespan, routers, error handlers
 |   |   |-- core/                # settings, logging, domain errors
@@ -1640,12 +1666,14 @@ SITESCOPE/
 |   |   |-- scheduler/           # Phase 5: scheduler passes (activation, advancement, dispatch,
 |   |   |                        #   reconciliation, maintenance), read-only status command;
 |   |   |                        #   Phase 7: the shared pass loop, the index dispatcher, the
-|   |   |                        #   read-only search command
+|   |   |                        #   read-only search command; Phase 11: operator commands (admin)
 |   |   |-- crawler/             # URL normalization, scope (Phase 2C); destination policy, resolver,
 |   |   |                        #   safe fetcher, content limits, encodings, HTML parser (Phase 3);
 |   |   |                        #   robots.txt, politeness gate, page directives (Phase 4);
 |   |   |                        #   Retry-After parsing (Phase 6);
 |   |   |                        #   no database imports (Redis for politeness and robots.txt)
+|   |   |-- observability/       # Phase 10: metrics registry, heartbeats, Prometheus text;
+|   |   |                        #   Phase 11: the container health check (alive)
 |   |   |-- indexing/            # Phase 7: search document rules (configuration, weights,
 |   |   |                        #   limits) and query handling (normalization, paging, snippets);
 |   |   |                        #   pure functions, no database
@@ -1657,14 +1685,18 @@ SITESCOPE/
 |       |-- integration/
 |       `-- fault/               # Phase 5: crash and outage recovery with real processes
 |-- frontend/                    # Phase 9: React + TypeScript dashboard (src/app, components,
-|                               #   features, hooks, lib/api), Vitest tests, e2e/ (Playwright)
-|-- demo-site/                   # Phase 4: static site + robots.txt; Phase 11: its container
+|                               #   features, hooks, lib/api), Vitest tests, e2e/ (Playwright);
+|                               #   Phase 11: Dockerfile, nginx/ (the public entry's configuration)
+|-- demo-site/                   # Phase 4: static site + robots.txt; Phase 11: Dockerfile, nginx.conf
 |-- benchmarks/                  # Phase 5: distributed throughput; Phase 10: the full set
 `-- docs/
     |-- architecture.md
     |-- development-roadmap.md
     |-- api-conventions.md       # Phase 1
     |-- development.md           # Phase 1: Windows PowerShell commands
+    |-- performance.md, observability.md  # Phase 10
+    |-- deployment.md, security.md, ci.md, resume-evidence.md  # Phase 11
+    |-- images/                  # Phase 11: screenshots of the dashboard (real stack)
     `-- adr/
 ```
 
@@ -1726,6 +1758,8 @@ SITESCOPE/
 | End-to-end | crawl a local fixture site over real HTTP, then check search results (Phase 7) and, through the HTTP API, the pages, links, broken links, link graph, statistics and search of the demo site (Phase 8, `tests/fault/test_api_end_to_end.py`) | full stack |
 | Frontend (Phase 9) | the API client (URLs, problems, timeouts, cancellation), Unicode highlight ranges, the polling rules and their lifecycle on fake timers, the job form (policy checks, idempotent retries), cancellation answers, cursor walks, link classes, the graph layout and node details, the shell; against a fake API (a test double of `fetch`); type check, lint (with accessibility rules), production build | Node.js |
 | Dashboard end to end (Phase 9) | `tests/dashboard_stack.py --e2e`: the real API and processes on a disposable database, the demo site and a slow site; Playwright in the installed Edge creates a job in the form, follows it to fully indexed, searches, reads the analysis and the graph, cancels a running crawl, and checks that no page scrolls sideways | PostgreSQL, Redis, Node.js, Edge |
+| Write access and abuse limits (Phase 11) | the three write modes (403 read-only, 401 without the right token, the token never logged), the active-jobs cap (exact under 8 concurrent creations, replays answered), the operator commands, the migration lock (two concurrent `alembic upgrade` processes), the container health check; the dashboard's read-only mode and its CSP in a browser | nothing; PostgreSQL, Redis; Edge |
+| Deployment (Phase 11) | `deploy/smoke.py` through the containerized stack's public entry: headers, refused writes, hidden internal endpoints, the seeded demo (CI job `deployment`; the manual validation in `docs/deployment.md`) | Docker |
 
 Tests that need unavailable services skip with an explicit reason. Benchmarks are kept separate from
 tests: fixed parameters, a recorded environment, and raw output committed to the repository
@@ -1830,8 +1864,9 @@ the development Redis, whose test database 15 would not isolate it.
 - A client that retries job creation without an `Idempotency-Key` creates a second job; keys are
   remembered for 24 hours by default. The dashboard always sends one, and reuses it when it retries
   a submission whose outcome it does not know (Phase 9).
-- The dashboard (Phase 9) has no authentication, and job creation is not rate-limited: a public
-  deployment needs both (Phase 11). A job list page reads one job detail per row (at most one page
+- The dashboard (Phase 9) has no login. Since Phase 11 writes follow the deployment's write access
+  (a public deployment is read-only, or needs the administrator's token), active jobs are capped,
+  and the proxy limits each client address (ADR-0024). A job list page reads one job detail per row (at most one page
   of rows); the overview counts whole tables under the analysis time limit; listing walks are kept
   in memory (a reload starts from the first page).
 - Measured limits and risks (Phase 10, [performance.md](performance.md)): one host's politeness

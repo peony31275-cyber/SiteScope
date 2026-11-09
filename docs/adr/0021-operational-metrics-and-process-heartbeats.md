@@ -1,6 +1,7 @@
 # ADR-0021: Operational metrics from the source of truth, and process heartbeats in Redis
 
-- Status: Accepted
+- Status: Accepted; extended by [ADR-0025](0025-container-packaging-and-deployment-topology.md)
+  (container health checks from heartbeats)
 - Date: 2026-11-08
 - Amends: [ADR-0001](0001-postgresql-source-of-truth.md) (Redis also holds process heartbeats);
   extends [ADR-0016](0016-distributed-execution-redis-streams.md) (diagnostics of the processes)

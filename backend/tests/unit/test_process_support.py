@@ -4,7 +4,11 @@ The children read backend/.env, whose database is the development database; the 
 built by ``child_environment`` must always override it with a disposable test database.
 """
 
+import os
+from pathlib import Path
+
 import pytest
+from pydantic import SecretStr
 
 from app.core.config import Settings
 from tests.process_support import child_environment
@@ -75,3 +79,30 @@ def test_inherited_sitescope_variables_are_dropped(monkeypatch: pytest.MonkeyPat
     assert [name for name in built if name.upper() == "SITESCOPE_POSTGRES_DB"] == [
         "SITESCOPE_POSTGRES_DB"
     ]
+
+
+def test_a_developers_admin_token_and_cap_never_reach_the_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """backend/.env may hold an admin token or a low cap, to try a deployment's modes
+    (docs/development.md); the children read that file too, so their environment must
+    override both, or the process tests' writes would be refused (Phase 11 review)."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "SITESCOPE_ADMIN_TOKEN=" + "t" * 40 + "\nSITESCOPE_CRAWL_MAX_ACTIVE_JOBS=1\n",
+        encoding="utf-8",
+    )
+    built = environment(admin_token=SecretStr("t" * 40), crawl_max_active_jobs=1)
+
+    # The child: exactly that environment, and the same backend/.env.
+    for name in list(os.environ):
+        if name.upper().startswith("SITESCOPE_"):
+            monkeypatch.delenv(name)
+    for name, value in built.items():
+        if name.startswith("SITESCOPE_"):
+            monkeypatch.setenv(name, value)
+    child = Settings(_env_file=dotenv)
+
+    assert child.admin_token is None
+    assert child.write_access == "open"
+    assert child.crawl_max_active_jobs == Settings.model_fields["crawl_max_active_jobs"].default

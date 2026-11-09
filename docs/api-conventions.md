@@ -61,11 +61,15 @@ Every error response has the media type `application/problem+json`. For example:
 | HTTP | `code` | When |
 |---|---|---|
 | 400 | `bad_request` | A generic domain error (`DomainError`) |
+| 401 | `unauthorized` | A write without the administrator's bearer token, on a deployment that has one (Phase 11, ADR-0024). Sent with `WWW-Authenticate: Bearer realm="sitescope"`. |
+| 403 | `writes_disabled` | A write on a read-only deployment: production without an admin token (Phase 11, ADR-0024) |
 | 404 | `not_found` | An unknown route, or a `NotFoundError` from the service layer |
 | 405 | `method_not_allowed` | Wrong method. The `Allow` header lists the permitted methods. |
 | 409 | `conflict` | A `ConflictError` from the service layer |
 | 409 | `idempotency_key_reused` | An `Idempotency-Key` that already created a job for a different request (Phase 6) |
 | 422 | `validation_failed` | The request failed validation: its shape (schema), or a server-side rule such as an unapproved crawl target. `errors` lists each field. |
+| 429 | `too_many_active_jobs` | A new job while `SITESCOPE_CRAWL_MAX_ACTIVE_JOBS` jobs are queued, running or cancelling (Phase 11). Sent with `Retry-After: 60`. A replayed `Idempotency-Key` is never refused. |
+| 429 | `rate_limited` | Sent by the deployment's proxy, not the API: too many requests from one client address (Phase 11). Sent with `Retry-After: 1`; it has no `instance` or `request_id`. |
 | 500 | `internal_error` | An unexpected error. Details appear only in the server logs, never in the response. |
 | 503 | `dependency_unavailable` | PostgreSQL or Redis is unreachable, or rejected the connection. Sent with `Retry-After: 5`. Ordinary SQL errors are never reported this way. |
 | 503 | `search_timeout` | A search took longer than `SITESCOPE_SEARCH_TIMEOUT_SECONDS` (5 s by default) and was stopped (Phase 8). A PostgreSQL connection that times out is `dependency_unavailable` instead. |
@@ -148,11 +152,22 @@ change; a search during indexing may find more on a later request.
 
 | Endpoint | Success | Errors |
 |---|---|---|
-| `POST /api/v1/crawls` | `201`, with a `Location` header pointing to the new job; `200` for a replayed `Idempotency-Key` | `409`, `422`, `503` |
+| `POST /api/v1/crawls` | `201`, with a `Location` header pointing to the new job; `200` for a replayed `Idempotency-Key` | `401`, `403` (write access, below), `409`, `422`, `429`, `503` |
 | `GET /api/v1/crawls` | `200`: a page of jobs, newest first | `422`, `503` |
 | `GET /api/v1/crawls/{job_id}` | `200`: the job and its progress | `404`, `422` (malformed ID), `503` |
-| `POST /api/v1/crawls/{job_id}/cancel` | `202` while the job is `cancelling`; `200` once it is `cancelled`, or if it was already finished | `404`, `422` (malformed ID), `503` |
-| `GET /api/v1/crawl-policy` | `200`: the approved targets and job limits (Phase 9) | none |
+| `POST /api/v1/crawls/{job_id}/cancel` | `202` while the job is `cancelling`; `200` once it is `cancelled`, or if it was already finished | `401`, `403` (write access, below), `404`, `422` (malformed ID), `503` |
+| `GET /api/v1/crawl-policy` | `200`: the approved targets, job limits, the active-jobs cap and the write access (Phases 9, 11) | none |
+
+**Write access** (Phase 11, ADR-0024). Creating and cancelling jobs are the API's only writes. They
+follow `write_access`, which the crawl policy reports:
+
+- `open`: anyone may write. This is the default outside production, without an admin token.
+- `token`: a write needs `Authorization: Bearer <SITESCOPE_ADMIN_TOKEN>`; without it, `401`.
+- `disabled`: every write is a `403`. This is production without an admin token, such as the
+  public demo.
+
+Reads are public in every mode. The OpenAPI document declares the bearer scheme (`AdminToken`)
+on the two writes.
 
 Creating a job:
 

@@ -974,6 +974,69 @@ Lint the scripts with the backend's configuration:
 .\.venv\Scripts\python.exe -m ruff format --config pyproject.toml --check ..\benchmarks
 ```
 
+## Containers, write access and CI (Phase 11)
+
+**Write access** (ADR-0024). Outside production, without `SITESCOPE_ADMIN_TOKEN`, writes stay
+open, so local development and the tests are unchanged. To try the other modes locally, set
+`SITESCOPE_ADMIN_TOKEN` (32 or more characters) in `backend\.env` and restart the API. Then:
+
+```powershell
+$token = "<the token>"
+curl.exe -s -X POST http://127.0.0.1:8000/api/v1/crawls -H "Authorization: Bearer $token" `
+  -H "Content-Type: application/json" -d '{\"seed_url\":\"http://127.0.0.1:8080/\",\"max_depth\":1,\"max_pages\":5}'
+```
+
+The dashboard then shows the read-only notice: it never holds a token.
+
+**Operator commands** (`app/scheduler/admin.py`). They create and cancel jobs through the service
+layer, with every rule of a crawl request, but without the API's write check. They print JSON.
+
+```powershell
+.\.venv\Scripts\python.exe -m app.scheduler.admin create --seed http://127.0.0.1:8080/ --max-depth 2 --max-pages 50
+.\.venv\Scripts\python.exe -m app.scheduler.admin cancel <job-id>
+.\.venv\Scripts\python.exe -m app.scheduler.admin seed-demo --base-url http://127.0.0.1:8080 --wait 600
+```
+
+The jobs these commands create stay `queued` until a scheduler starts them. Never start the
+scheduler against the development database (CLAUDE.md): it would start every queued job there.
+`seed-demo --wait` belongs in the containerized stack (below), which has its own database and
+processes.
+
+**The containerized stack.** `deploy/compose.yaml` builds three images (backend, frontend with
+nginx, demo site) and runs everything, in its own Compose project, never the development one.
+Commands, configuration and operations: [deployment.md](deployment.md). To try it without
+touching a real deployment's names, give it a project name and a free port. Here
+`--env-file` points at a copy of `deploy/.env.example` with generated passwords, kept outside
+the repository:
+
+```powershell
+wsl docker compose -p sitescope-try -f deploy/compose.yaml --env-file <env file> up -d --build --wait
+wsl docker compose -p sitescope-try -f deploy/compose.yaml --env-file <env file> down
+```
+
+`down -v` would also delete that project's volumes: only ever for a throwaway project like this
+one, after checking its name.
+
+**Container health checks.** `python -m app.observability.alive <role>` exits 0 while a live
+heartbeat of that role from this host is in Redis. The worker containers use it.
+
+**Dependency locks.** The images and CI install exact versions from `backend/requirements/`
+(`runtime.txt`, `dev.txt`). Regenerate them after changing `pyproject.toml`, in the image's
+Python (from the repository root, in WSL):
+
+```sh
+docker run --rm -v "$PWD/backend:/src" -w /src python:3.13.16-slim-trixie python requirements/lock.py
+```
+
+Then review the diff and run the tests with the new versions. The development venv keeps
+`pip install -e ".[dev]"`.
+
+**CI** ([ci.md](ci.md)): `.github/workflows/ci.yml` (lint, types, unit tests, the dashboard's
+check, a secret scan, image builds) and `full.yml` (integration and fault suites, end to end,
+the containerized deployment). Both run on Linux. Windows-only code paths must stay behind
+`if sys.platform == "win32":` statements, which mypy skips on Linux; a conditional expression
+is type-checked on both platforms.
+
 ## Database migrations
 
 The schema is managed only through Alembic. Never change it by hand in a database you want to

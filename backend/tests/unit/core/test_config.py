@@ -784,3 +784,70 @@ def test_postgresql_stops_an_analysis_before_the_client_gives_up(
         Settings(_env_file=None)
     monkeypatch.setenv("SITESCOPE_ANALYSIS_TIMEOUT_SECONDS", "29.9")
     assert Settings(_env_file=None).analysis_timeout_seconds == 29.9
+
+
+# --- API writes and job limits (Phase 11) --------------------------------------------------------
+
+PRODUCTION_CREDENTIALS: dict[str, Any] = {
+    "postgres_password": SecretStr("real-postgres-secret"),
+    "redis_password": SecretStr("real-redis-secret"),
+}
+
+
+def test_phase_11_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.admin_token is None
+    assert settings.crawl_max_active_jobs == 50
+    assert settings.write_access == "open"  # development, no token
+
+
+def test_write_access_follows_the_environment_and_the_token() -> None:
+    token = SecretStr("t" * 32)
+
+    assert Settings(_env_file=None, environment="test").write_access == "open"
+    assert Settings(_env_file=None, environment="test", admin_token=token).write_access == "token"
+    production = Settings(_env_file=None, environment="production", **PRODUCTION_CREDENTIALS)
+    assert production.write_access == "disabled"  # safe by default: read-only
+    with_token = Settings(
+        _env_file=None, environment="production", admin_token=token, **PRODUCTION_CREDENTIALS
+    )
+    assert with_token.write_access == "token"
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_admin_token_is_no_token(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("SITESCOPE_ADMIN_TOKEN", value)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.admin_token is None
+    assert settings.write_access == "open"
+
+
+@pytest.mark.parametrize(
+    "token", ["short-token", "change-me-" + "x" * 40], ids=["too-short", "placeholder"]
+)
+def test_production_requires_a_strong_admin_token(token: str) -> None:
+    with pytest.raises(ValidationError, match="SITESCOPE_ADMIN_TOKEN must be a real value"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            admin_token=SecretStr(token),
+            **PRODUCTION_CREDENTIALS,
+        )
+
+
+def test_the_admin_token_is_masked() -> None:
+    settings = Settings(_env_file=None, admin_token=SecretStr("never-printed-admin-token-xyz"))
+
+    assert "never-printed-admin-token-xyz" not in repr(settings)
+    assert "never-printed-admin-token-xyz" not in str(settings.model_dump())
+
+
+@pytest.mark.parametrize("value", ["0", "10001"])
+def test_rejects_an_invalid_active_jobs_cap(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("SITESCOPE_CRAWL_MAX_ACTIVE_JOBS", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

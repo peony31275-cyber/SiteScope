@@ -33,10 +33,15 @@ class ProblemDetails(BaseModel):
 
 
 _DESCRIPTIONS = {
+    401: "This deployment requires the administrator's bearer token for this operation, and the "
+    "request carried none or a wrong one (`unauthorized`).",
+    403: "This deployment is read-only: the operation is disabled (`writes_disabled`).",
     404: "The resource does not exist (`not_found`).",
     409: "The request conflicts with earlier ones: an `Idempotency-Key` reused for a different "
     "request (`idempotency_key_reused`).",
     422: "The request failed validation (`validation_failed`); `errors` lists each field.",
+    429: "As many crawl jobs as this deployment allows are queued or running "
+    "(`too_many_active_jobs`); retry after `Retry-After`.",
     503: "PostgreSQL is unavailable (`dependency_unavailable`); retry after `Retry-After`.",
 }
 

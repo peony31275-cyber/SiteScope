@@ -48,10 +48,20 @@ def test_crawl_errors_are_documented_as_problem_details(client: TestClient) -> N
     paths = schema["paths"]
 
     documented = {
-        ("POST", "/api/v1/crawls"): {"200", "201", "409", "422", "503"},
+        # Writes (Phase 11): 401 without the admin token, 403 on a read-only deployment, and
+        # creation's 429 at the active-jobs cap.
+        ("POST", "/api/v1/crawls"): {"200", "201", "401", "403", "409", "422", "429", "503"},
         ("GET", "/api/v1/crawls"): {"200", "422", "503"},
         ("GET", "/api/v1/crawls/{job_id}"): {"200", "404", "422", "503"},
-        ("POST", "/api/v1/crawls/{job_id}/cancel"): {"200", "202", "404", "422", "503"},
+        ("POST", "/api/v1/crawls/{job_id}/cancel"): {
+            "200",
+            "202",
+            "401",
+            "403",
+            "404",
+            "422",
+            "503",
+        },
         **{key: {"200", "404", "422", "503"} for key in ANALYSIS_AND_SEARCH},
         ("GET", "/api/v1/crawl-policy"): {"200"},  # reads settings only
         ("GET", "/api/v1/overview"): {"200", "503"},  # no parameters to validate

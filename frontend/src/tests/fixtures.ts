@@ -111,6 +111,8 @@ export function policy(overrides: Partial<CrawlPolicy> = {}): CrawlPolicy {
     allowed_ports: [80, 443, 8001],
     max_depth_limit: 5,
     max_pages_limit: 1000,
+    max_active_jobs: 50,
+    write_access: 'open',
     ...overrides,
   };
 }

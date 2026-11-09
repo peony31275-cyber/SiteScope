@@ -2,7 +2,15 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { FakeApi, json, problem } from '../../tests/fakeApi';
-import { detail, indexing, JOB_ID, OTHER_JOB_ID, settled, summary } from '../../tests/fixtures';
+import {
+  detail,
+  indexing,
+  JOB_ID,
+  OTHER_JOB_ID,
+  policy,
+  settled,
+  summary,
+} from '../../tests/fixtures';
 import { renderApp } from '../../tests/render';
 
 describe('Crawl job detail', () => {
@@ -112,6 +120,7 @@ describe('Cancelling a crawl', () => {
   function cancellable(response: () => Response) {
     let current = detail();
     const api = new FakeApi()
+      .on('GET', '/crawl-policy', () => json(policy()))
       .on('GET', '/crawls/:jobId', () => json(current))
       .on('POST', '/crawls/:jobId/cancel', () => {
         const answer = response();
@@ -236,6 +245,7 @@ describe('Cancelling a crawl', () => {
 
   it('never carries an open dialog over to another job (review finding)', async () => {
     const api = new FakeApi()
+      .on('GET', '/crawl-policy', () => json(policy()))
       .on('GET', '/crawls/:jobId', (_, { jobId }) =>
         json(
           detail({
@@ -325,9 +335,41 @@ describe('Cancelling a crawl', () => {
   });
 
   it('offers no cancellation for a finished job', async () => {
-    new FakeApi().on('GET', '/crawls/:jobId', () => json(settled())).install();
-    renderApp(`/crawls/${JOB_ID}`);
+    const api = new FakeApi()
+      .on('GET', '/crawl-policy', () => json(policy()))
+      .on('GET', '/crawls/:jobId', () => json(settled()))
+      .install();
+    const { client } = renderApp(`/crawls/${JOB_ID}`);
     await screen.findByRole('region', { name: 'Crawl job' });
+    await waitFor(() => {
+      expect(client.getQueryData(['crawl-policy'])).toBeDefined();
+    });
+    expect(api.calls('/crawl-policy')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Cancel crawl' })).not.toBeInTheDocument();
   });
+
+  it.each([
+    ['disabled', 'This deployment is read-only'],
+    ['token', 'Crawl jobs are managed by the operator'],
+  ] as const)(
+    'offers no cancellation where writes are %s, even for a running job',
+    async (access, notice) => {
+      const api = new FakeApi()
+        .on('GET', '/crawl-policy', () => json(policy({ write_access: access })))
+        .on('GET', '/crawls', () => json({ items: [summary()], next_cursor: null }))
+        .on('GET', '/crawls/:jobId', () => json(detail()))
+        .install();
+      // The jobs page shows the policy was read before the job's page opens.
+      const { router } = renderApp('/crawls');
+      await screen.findByText(notice);
+      await act(async () => {
+        await router.navigate(`/crawls/${JOB_ID}`);
+      });
+
+      const header = await screen.findByRole('region', { name: 'Crawl job' });
+      expect(within(header).getByText('Running')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Cancel crawl' })).not.toBeInTheDocument();
+      expect(api.calls(/cancel$/, 'POST')).toHaveLength(0);
+    },
+  );
 });

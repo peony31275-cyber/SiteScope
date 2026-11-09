@@ -1,0 +1,12 @@
+# TLS in front of SiteScope (deploy/compose.https.yaml). Caddy obtains and renews the
+# certificate for DEPLOY_DOMAIN, redirects HTTP to HTTPS, and forwards to the frontend proxy,
+# which applies the rate limits and security headers.
+{
+	email {$DEPLOY_ACME_EMAIL}
+}
+
+{$DEPLOY_DOMAIN} {
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy frontend:8080
+}

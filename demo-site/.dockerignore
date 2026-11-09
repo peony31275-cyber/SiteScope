@@ -1,0 +1,8 @@
+# Only the site and its server configuration (demo-site/Dockerfile).
+**
+!nginx.conf
+!robots.txt
+!*.html
+!blog/
+!docs/
+!private/

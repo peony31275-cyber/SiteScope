@@ -1,0 +1,121 @@
+# Fast checks on every pull request and push (Phase 11, docs/ci.md): backend lint, format,
+# types and unit tests; the dashboard's full check; Docker images and the deployment's Compose
+# model. Nothing here needs PostgreSQL or Redis: the services' suites run in full.yml.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  backend:
+    name: Backend (ruff, mypy, unit tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements/dev.txt
+      - name: Install the locked dependencies
+        run: |
+          python -m pip install -r requirements/dev.txt
+          python -m pip install --no-deps -e .
+      - name: Lint
+        run: python -m ruff check .
+      - name: Format check
+        run: python -m ruff format --check .
+      - name: Lint the benchmark and deployment scripts
+        run: python -m ruff check --config pyproject.toml ../benchmarks ../deploy
+      - name: Type check (mypy strict)
+        run: python -m mypy
+      - name: Unit tests
+        run: python -m pytest -m "not integration" -p no:cacheprovider --junitxml=reports/unit.xml
+      - name: Upload the test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-unit-report
+          path: backend/reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  frontend:
+    name: Dashboard (tsc, ESLint, Prettier, Vitest, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (lockfile only)
+        run: npm ci --no-audit --no-fund
+      - name: Type check, lint, format check, tests, build
+        run: npm run check
+
+  secrets:
+    name: Secret scan (gitleaks, whole history)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan every commit (findings redacted; reviewed ones in .gitleaksignore)
+        run: >-
+          docker run --rm --network none -v "$PWD:/repo:ro"
+          -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'
+          ghcr.io/gitleaks/gitleaks:v8.28.0
+          git /repo --log-opts=--all --redact --no-banner
+          --gitleaks-ignore-path /repo/.gitleaksignore
+
+  images:
+    name: Docker images and Compose model
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Throwaway deployment settings (never real credentials)
+        run: |
+          cp deploy/.env.example deploy/.env
+          for key in DEPLOY_POSTGRES_OWNER_PASSWORD SITESCOPE_POSTGRES_PASSWORD SITESCOPE_REDIS_PASSWORD; do
+            sed -i "s/^${key}=.*/${key}=$(openssl rand -hex 24)/" deploy/.env
+          done
+      - name: Validate the Compose model
+        run: docker compose -f deploy/compose.yaml config --quiet
+      - name: Validate the HTTPS variant
+        env:
+          DEPLOY_DOMAIN: demo.example.test
+          DEPLOY_ACME_EMAIL: ops@example.test
+        run: docker compose -f deploy/compose.yaml -f deploy/compose.https.yaml config --quiet
+      - name: Build the backend, frontend and demo-site images
+        run: docker compose -f deploy/compose.yaml build
+      - name: The backend image runs as a non-root user, without tests or a .env file
+        run: |
+          test "$(docker run --rm --entrypoint id sitescope-backend:local -u)" = "10001"
+          docker run --rm --entrypoint sh sitescope-backend:local -c \
+            'test ! -e /app/tests && test ! -e /app/.env && test ! -e /app/.venv'

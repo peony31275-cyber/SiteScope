@@ -18,6 +18,7 @@ React dashboard (same origin, /api proxied) -> FastAPI -> PostgreSQL (jobs, URL 
   -> Redis stream "sitescope:index" -> indexer workers
   -> PostgreSQL full-text index (tsvector + GIN) -> search and website-analysis APIs (Phase 8)
   -> React dashboard: jobs, live progress, search, analysis, link graph (Phase 9)
+Deployment (Phase 11): deploy/compose.yaml, one public entry (nginx), everything else internal
 ```
 
 - Design: [docs/architecture.md](docs/architecture.md)
@@ -30,6 +31,8 @@ React dashboard (same origin, /api proxied) -> FastAPI -> PostgreSQL (jobs, URL 
   the old one. Never rewrite an accepted ADR.
 - Measurements and their method: [docs/performance.md](docs/performance.md); metrics, heartbeats and
   diagnostics: [docs/observability.md](docs/observability.md) (Phase 10).
+- Deployment, threat model and CI (Phase 11): [docs/deployment.md](docs/deployment.md),
+  [docs/security.md](docs/security.md), [docs/ci.md](docs/ci.md).
 
 ## Working agreement
 
@@ -171,6 +174,20 @@ explanations for the project owner in Chinese.
       after `rate()`. Labels come from fixed sets: never a URL, a path, a query or an ID.
     - Worker status comes from the workers' heartbeats, never from a configured count.
     - `GET /metrics` is internal: outside `/api`, not proxied, not in the OpenAPI document.
+16. **The backend decides who writes** (ADR-0024).
+    - The API's only writes, creating and cancelling jobs, go through `require_write_access`
+      (`app/api/security.py`): `open` (development), `token` (bearer, constant-time) or
+      `disabled` (production without a token).
+    - The dashboard only mirrors the mode from `/crawl-policy`; no token ever reaches the
+      frontend.
+    - At most `SITESCOPE_CRAWL_MAX_ACTIVE_JOBS` jobs are active: a creation takes its advisory
+      lock first, counts its new job after the insert, and rolls back over the cap; a replayed
+      `Idempotency-Key` is always answered.
+17. **One public entry** (ADR-0025).
+    - In the deployment only the proxy publishes a port, and it forwards `/api/` only.
+    - PostgreSQL, Redis, the API and the workers sit on an internal network without egress.
+    - The application connects as a role that is neither superuser nor owner; migrations run
+      once, as the owner, under an advisory lock.
 
 ## Code conventions
 
@@ -191,6 +208,8 @@ explanations for the project owner in Chinese.
   - `observability` (Phase 10: metrics registry, heartbeats, the Prometheus text format) depends
     on `core` only; every role may use it. `services/system_metrics.py` reads stream statistics
     and heartbeats for `GET /metrics`.
+  - The operator commands (`app/scheduler/admin.py`, Phase 11) use `services` like the API,
+    never raw SQL.
 - **Async I/O throughout.** Use SQLAlchemy 2.x async with asyncpg, `redis.asyncio`, and the safe
   fetcher (`httpcore2`) for crawl requests. Don't block the event loop with long CPU work; offload it
   when measurements show a need. HTML parsing is such work: call `parse_html` with
@@ -238,7 +257,8 @@ explanations for the project owner in Chinese.
 | `backend/tests/integration` | real PostgreSQL and Redis, or local HTTP/TLS servers on 127.0.0.1 (marker `integration`) |
 | `backend/tests/fault` | failure injection and recovery (marker `fault`) |
 | `frontend/src/**/*.test.ts(x)` | the dashboard's unit and component tests (Vitest, jsdom), against a fake API (a test double of `fetch`); no network |
-| `frontend/e2e` | the dashboard against the real stack (Playwright, installed Edge), started by `backend/tests/dashboard_stack.py --e2e` on a disposable database |
+| `frontend/e2e` | the dashboard against the real stack (Playwright, installed Edge; `E2E_BROWSER_CHANNEL=chromium` in CI), started by `backend/tests/dashboard_stack.py --e2e` on a disposable database |
+| `deploy/smoke.py` | the containerized stack through its public entry (Phase 11; CI job `deployment`) |
 
 - A test that needs an unavailable service skips with an explicit reason, and is reported as skipped.
   `pytest --require-services` turns those skips into failures (use it whenever the services are up,
@@ -281,6 +301,8 @@ explanations for the project owner in Chinese.
 - WSL stops Ubuntu, and Docker with it, about 15–30 s after the last WSL session closes. Keep a WSL
   session open while anything needs the containers. Details: `docs/development.md`, section
   "Docker (WSL 2)".
+- Docker Hub limits anonymous pulls per hour. `mirror.gcr.io/library/<image>:<tag>` serves the
+  same official images; tag the pulled image with its Docker Hub name before a build.
 - Commands, run from `backend\` (full guide: `docs/development.md`):
 
   | Task | Command |
@@ -308,6 +330,9 @@ explanations for the project owner in Chinese.
   | Dashboard: type check, lint, format check, tests, build | `npm run check` |
   | Dashboard end to end (real stack, disposable DB) | `.\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e` |
   | Regenerate the dashboard's API types | `.\.venv\Scripts\python.exe -m app.api.openapi_export ..\frontend\src\lib\api\openapi.json`, then `npm run api:types` in `frontend\` |
+  | Operator commands (create, cancel, seed the demo) | `.\.venv\Scripts\python.exe -m app.scheduler.admin seed-demo --base-url <url> --wait 600` |
+  | Full stack in containers (own project and port; `docs/deployment.md`) | `wsl docker compose -p sitescope-try -f ..\deploy\compose.yaml --env-file <file> up -d --build --wait` |
+  | Regenerate the Linux dependency locks (in WSL, repository root) | `docker run --rm -v "$PWD/backend:/src" -w /src python:3.13.16-slim-trixie python requirements/lock.py` |
 
   All four checks (tests, lint, format check, type check) must pass before work is reported done;
   when the dashboard changed, `npm run check` too.
@@ -330,6 +355,7 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
                   metrics, heartbeats, GET /metrics)
   alembic/        migrations (Phase 2B); alembic.ini next to it
   compose.yaml    PostgreSQL + Redis for development (Phase 2B)
+  Dockerfile      Phase 11: one image for every Python role; requirements/ holds the Linux locks
   tests/          unit/ (Phase 1); integration/ (Phase 2B); fault/ (Phase 5: real processes);
                   dashboard_stack.py (Phase 9: the whole stack for the dashboard's e2e run)
   pyproject.toml  dependencies + ruff / mypy / pytest configuration
@@ -337,10 +363,14 @@ backend/          Python package `app`: FastAPI API, scheduler, crawler and inde
 frontend/         React + TypeScript dashboard (Phase 9): src/app (shell, routes), components (design
                   system), features (overview, crawls, search, analysis, graph), hooks, lib/api
                   (client, generated types); e2e/ (Playwright)
-demo-site/        controlled static website: the approved demo crawl target
+demo-site/        controlled static website: the approved demo crawl target (Phase 11: its container)
+deploy/           Phase 11: compose.yaml (the full stack), compose.https.yaml + Caddyfile, nginx/,
+                  postgres/app-role.sql, .env.example, smoke.py
+.github/workflows Phase 11: ci.yml (fast checks), full.yml (services, e2e, deployment)
 benchmarks/       reproducible benchmark scripts and raw results (crawl, indexing, search, analysis,
                   database plans, recovery, the dashboard's graph; Phase 10: docs/performance.md)
-docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/
+docs/             architecture.md, development-roadmap.md, api-conventions.md, development.md, adr/,
+                  deployment.md, security.md, ci.md, resume-evidence.md, images/ (Phase 11)
 ```
 
 The full proposed tree and the responsibilities of each module are in `docs/architecture.md`, under

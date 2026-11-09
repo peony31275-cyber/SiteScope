@@ -38,6 +38,15 @@ the *normalized* request (SHA-256 of the seed URL after normalization, ``max_dep
 PostgreSQL holds the keys, so they survive restarts, and a request that fails rolls the key back
 with the job.
 
+**The active-jobs cap** (Phase 11): a new job is refused (``TooManyActiveJobsError``, 429) while
+``SITESCOPE_CRAWL_MAX_ACTIVE_JOBS`` jobs are queued, running or cancelling. A creation takes a
+transaction-level advisory lock (``CREATION_LOCK``) first, before it frees an expired key or
+inserts: concurrent creations serialize, and no creation waits for a row while holding the lock
+(the review's deadlock). The cap is decided from the insert itself: a new job is counted with
+the active ones and rolled back over the cap. A replay (the insert found the key) creates
+nothing and is always answered, and a key that the scheduler's maintenance frees meanwhile
+cannot turn an expected replay into an uncounted creation.
+
 **Reads** run in their own short transactions, and the job detail is a single SQL statement, so
 the job row, its URL counts and its search document counts (Phase 7) come from the same
 snapshot.
@@ -47,6 +56,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
@@ -56,7 +66,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.errors import ConflictError, FieldViolation, InvalidInputError, NotFoundError
+from app.core.errors import (
+    ConflictError,
+    DomainError,
+    FieldViolation,
+    InvalidInputError,
+    NotFoundError,
+)
 from app.crawler.scope import CrawlTargetPolicy, TargetNotAllowedError
 from app.crawler.urls import InvalidUrlError, NormalizedUrl, normalize_url
 from app.db.models import (
@@ -108,6 +124,25 @@ class IdempotencyKeyReusedError(ConflictError):
     """An Idempotency-Key that created a job for a different request."""
 
     code = "idempotency_key_reused"
+
+
+class TooManyActiveJobsError(DomainError):
+    """As many jobs as SITESCOPE_CRAWL_MAX_ACTIVE_JOBS are queued, running or cancelling."""
+
+    status_code = 429
+    code = "too_many_active_jobs"
+
+    def problem_headers(self) -> Mapping[str, str]:
+        return {"Retry-After": "60"}
+
+
+# Serializes job creation (Phase 11), so that the active-jobs cap is exact: the count and the
+# insert of one creation never interleave with another's. Next to crawl_state.ACTIVATION_LOCK.
+CREATION_LOCK: Final = 0x5173_0002
+_LOCK_CREATION = text("SELECT pg_advisory_xact_lock(:key)")
+_ACTIVE_JOBS = text(
+    "SELECT count(*) FROM crawl_jobs WHERE status IN ('queued', 'running', 'cancelling')"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +226,10 @@ async def submit_crawl_job(
     fingerprint = request_fingerprint(seed, max_depth=max_depth, max_pages=max_pages)
     for _ in range(_INSERT_ATTEMPTS):
         async with session.begin():
+            # The lock first: freeing an expired key locks its job's row, and holding that row
+            # while waiting for the lock could deadlock with a creation whose insert waits for
+            # the row (module docstring).
+            await session.execute(_LOCK_CREATION, {"key": CREATION_LOCK})
             if idempotency_key is not None:
                 await session.execute(
                     _FREE_EXPIRED_KEY,
@@ -213,6 +252,14 @@ async def submit_crawl_job(
                 .returning(CrawlJob.id)
             )
             if job_id is not None:
+                # A new job, counted with the active ones (itself included); over the cap the
+                # transaction rolls back. A replay inserted nothing and is never refused.
+                active = int(await session.scalar(_ACTIVE_JOBS) or 0)
+                if active > settings.crawl_max_active_jobs:
+                    raise TooManyActiveJobsError(
+                        f"{active - 1} crawl jobs are queued, running or cancelling, the most "
+                        "this deployment allows; retry when one has finished."
+                    )
                 session.add(
                     CrawlUrl(
                         job_id=job_id,

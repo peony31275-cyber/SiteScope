@@ -67,6 +67,27 @@ class DomainError(Exception):
         """Extra members for the problem response; none by default."""
         return None
 
+    def problem_headers(self) -> Mapping[str, str] | None:
+        """Extra headers of the problem response (``WWW-Authenticate``, ``Retry-After``)."""
+        return None
+
+
+class UnauthorizedError(DomainError):
+    """The request needs credentials it did not carry, or carried wrong ones (Phase 11)."""
+
+    status_code = 401
+    code = "unauthorized"
+
+    def problem_headers(self) -> Mapping[str, str]:
+        return {"WWW-Authenticate": 'Bearer realm="sitescope"'}
+
+
+class WritesDisabledError(DomainError):
+    """This deployment is read-only: it accepts no write through the API (Phase 11)."""
+
+    status_code = 403
+    code = "writes_disabled"
+
 
 @dataclass(frozen=True, slots=True)
 class FieldViolation:
@@ -180,6 +201,7 @@ async def _handle_domain_error(request: Request, exc: Exception) -> JSONResponse
         instance=request.url.path,
         detail=exc.detail,
         extensions=exc.problem_extensions(),
+        headers=exc.problem_headers(),
     )
 
 

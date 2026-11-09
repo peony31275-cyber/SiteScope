@@ -7,8 +7,9 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
-// Pages load lazily (their own chunks): under a full parallel run, the first render of a page
-// can take longer than Testing Library's default one second.
+// Under a full parallel run, renders and fake API answers can take longer than Testing
+// Library's default one second. Loading the page chunks is not part of these waits:
+// render.tsx loads them before the tests.
 configure({ asyncUtilTimeout: 3000 });
 
 afterEach(() => {

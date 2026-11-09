@@ -4,11 +4,11 @@ Real processes, marker ``fault``.
 
 ``FLUSHALL`` is never sent to the development Redis, not even to its test database 15 (a
 database number does not isolate ``FLUSHALL``). This test starts its own disposable Redis
-container (``redis:8.10.3-alpine3.23`` in WSL Docker, no persistence, a random password, bound
-to 127.0.0.1 on a random port), runs the scheduler and the workers against it, and flushes it
-only after checking that it is not the development server: another port, another ``run_id``,
-and a sentinel key in the development Redis that must survive. The container is removed at the
-end.
+container (``redis:8.10.3-alpine3.23``, no persistence, a random password, bound to 127.0.0.1
+on a random port; Docker in WSL on Windows, the local Docker Engine elsewhere). It runs the
+scheduler and the workers against it, and flushes it only after checking that it is not the
+development server: another port, another ``run_id``, and a sentinel key in the development
+Redis that must survive. The container is removed at the end.
 
 PostgreSQL holds the truth (ADR-0001): the lost stream, consumer group, politeness slots and
 robots.txt cache are rebuilt, the reconciler publishes the lost tasks again, and the job
@@ -18,6 +18,7 @@ completes with every invariant intact.
 import asyncio
 import secrets
 import subprocess
+import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -56,10 +57,15 @@ class DisposableRedis:
     settings: Settings  # the test settings, pointed at this server
 
 
+# Docker Engine runs inside WSL on the Windows development machine (CLAUDE.md), and natively on
+# Linux (CI).
+DOCKER = ("wsl", "-e", "docker") if sys.platform == "win32" else ("docker",)
+
+
 def docker(*arguments: str, timeout: float = 120) -> str:
-    """Run ``docker`` inside WSL (no shell: every argument is passed as is)."""
+    """Run ``docker`` (no shell: every argument is passed as is)."""
     completed = subprocess.run(  # noqa: S603 - a fixed program and arguments built here
-        ["wsl", "-e", "docker", *arguments],  # noqa: S607 - wsl.exe from PATH (Windows)
+        [*DOCKER, *arguments],  # wsl.exe or docker from PATH
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -77,7 +83,7 @@ def disposable_redis(
     try:
         docker("version", "--format", "{{.Server.Version}}", timeout=30)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-        reason = f"Docker in WSL is unavailable for a disposable Redis ({exc})"
+        reason = f"Docker is unavailable for a disposable Redis ({exc})"
         if pytestconfig.getoption("--require-services"):
             pytest.fail(reason, pytrace=False)
         pytest.skip(reason)

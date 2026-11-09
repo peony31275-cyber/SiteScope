@@ -200,6 +200,11 @@ def child_environment(
         "FETCH_INTERNAL_ORIGINS": ",".join(
             f"http://{host}:{port}" for host in hosts for port in ports
         ),
+        # The children read backend/.env too: a developer's admin token or job cap there (to
+        # try a deployment's modes) must not change what the tests exercise (Phase 11). A blank
+        # token means none.
+        "ADMIN_TOKEN": "",
+        "CRAWL_MAX_ACTIVE_JOBS": str(Settings.model_fields["crawl_max_active_jobs"].default),
         **FAST_TIMING,
         **extra_values,
     }
@@ -326,6 +331,18 @@ class ManagedProcess:
         return await self.exited(within=within)
 
 
+def process_group_flags() -> int:
+    """``creationflags`` for a child process: on Windows its own process group, so that
+    CTRL_BREAK_EVENT reaches it alone; elsewhere none (SIGTERM goes to the child itself).
+
+    An ``if`` statement, not a conditional expression: mypy skips the other platform's branch
+    of an ``if`` only, and the constant exists on Windows only.
+    """
+    if sys.platform == "win32":
+        return subprocess.CREATE_NEW_PROCESS_GROUP
+    return 0
+
+
 if sys.platform == "win32":
     import ctypes
 
@@ -397,7 +414,7 @@ class Cluster:
                 env=self.environment,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+                creationflags=process_group_flags(),
             )
         process = ManagedProcess(name, popen, log_path)
         self.processes.append(process)

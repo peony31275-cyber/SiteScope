@@ -112,6 +112,11 @@
         "summary": "Create a crawl job",
         "description": "Validate the request and store the job with its seed URL, in one transaction.\n\nThe seed URL is normalized and must name an approved crawl target; `max_depth` and\n`max_pages` must be within this server's limits. The job is created as `queued`: it waits\nfor the scheduler, and nothing is fetched yet. The `Location` header points to the job.",
         "operationId": "create_crawl",
+        "security": [
+          {
+            "AdminToken": []
+          }
+        ],
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -165,6 +170,26 @@
               }
             }
           },
+          "401": {
+            "description": "This deployment requires the administrator's bearer token for this operation, and the request carried none or a wrong one (`unauthorized`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This deployment is read-only: the operation is disabled (`writes_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "409": {
             "description": "The request conflicts with earlier ones: an `Idempotency-Key` reused for a different request (`idempotency_key_reused`).",
             "content": {
@@ -177,6 +202,16 @@
           },
           "422": {
             "description": "The request failed validation (`validation_failed`); `errors` lists each field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "As many crawl jobs as this deployment allows are queued or running (`too_many_active_jobs`); retry after `Retry-After`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -281,6 +316,11 @@
         "summary": "Cancel a crawl job",
         "description": "Cancel a job. Idempotent: repeating it, or cancelling a finished job, changes nothing.\n\nA `queued` job is `cancelled` at once (`200`). A `running` job stops: nothing new is\ndispatched or claimed, and its pending and queued URLs are cancelled at once. If none of its\nURLs is in progress, it is `cancelled` at once (`200`); otherwise it is `cancelling` (`202`)\nuntil its in-flight URLs are final (workers stop them within seconds; the URLs of a crashed\nworker are cancelled when their lease expires). The response is `202` whenever the job is\nstill `cancelling`, and `200` with the unchanged job for a finished one (`completed`,\n`failed`, `cancelled`).",
         "operationId": "cancel_crawl",
+        "security": [
+          {
+            "AdminToken": []
+          }
+        ],
         "parameters": [
           {
             "name": "job_id",
@@ -310,6 +350,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CrawlJobSummary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "This deployment requires the administrator's bearer token for this operation, and the request carried none or a wrong one (`unauthorized`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "This deployment is read-only: the operation is disabled (`writes_disabled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -1709,6 +1769,21 @@
             "type": "integer",
             "title": "Max Pages Limit",
             "description": "The largest `max_pages` a job may request."
+          },
+          "max_active_jobs": {
+            "type": "integer",
+            "title": "Max Active Jobs",
+            "description": "Jobs that may be queued, running or cancelling at once; creating another is refused (`429 too_many_active_jobs`) until one ends."
+          },
+          "write_access": {
+            "type": "string",
+            "enum": [
+              "open",
+              "token",
+              "disabled"
+            ],
+            "title": "Write Access",
+            "description": "How this deployment treats job creation and cancellation: `open` to anyone; `token`: they need the administrator's bearer token (`401 unauthorized` without it); `disabled`: a read-only deployment (`403 writes_disabled`)."
           }
         },
         "type": "object",
@@ -1717,7 +1792,9 @@
           "allowed_schemes",
           "allowed_ports",
           "max_depth_limit",
-          "max_pages_limit"
+          "max_pages_limit",
+          "max_active_jobs",
+          "write_access"
         ],
         "title": "CrawlPolicy",
         "description": "What `POST /api/v1/crawls` accepts on this server.",
@@ -1733,8 +1810,10 @@
               "docs.example.com",
               "*.example.org"
             ],
+            "max_active_jobs": 50,
             "max_depth_limit": 5,
-            "max_pages_limit": 1000
+            "max_pages_limit": 1000,
+            "write_access": "open"
           }
         ]
       },
@@ -3526,6 +3605,13 @@
         ],
         "title": "ValidationErrorItem",
         "description": "One invalid request field."
+      }
+    },
+    "securitySchemes": {
+      "AdminToken": {
+        "type": "http",
+        "description": "The administrator's token (SITESCOPE_ADMIN_TOKEN), on deployments that set one.",
+        "scheme": "bearer"
       }
     }
   },

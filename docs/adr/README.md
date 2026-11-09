@@ -19,24 +19,26 @@ Conventions:
 | [0003](0003-at-least-once-leases-fencing.md) | At-least-once processing with leases, fencing tokens, and idempotent effects | Accepted; extended by 0010, 0014, 0016 and 0017 |
 | [0004](0004-level-synchronous-bfs.md) | Level-synchronous BFS with scheduler-side admission | Accepted; dedup key amended by 0009; extended by 0014, 0016 and 0017 |
 | [0005](0005-postgresql-full-text-search.md) | PostgreSQL full-text search instead of a dedicated search engine | Accepted; weights and ranking function amended by 0018; extended by 0019 (HTTP API) |
-| [0006](0006-target-allowlist-ssrf-defenses.md) | Target allowlist and layered SSRF defenses | Accepted; extended by 0012 (allowlist), 0013 (fetcher) and 0015 (robots.txt, politeness) |
-| [0007](0007-modular-monolith-process-roles.md) | Modular monolith with separate process roles | Accepted; extended by 0018 (index dispatcher) |
+| [0006](0006-target-allowlist-ssrf-defenses.md) | Target allowlist and layered SSRF defenses | Accepted; extended by 0012 (allowlist), 0013 (fetcher), 0015 (robots.txt, politeness), 0024 (write access) and 0025 (no egress) |
+| [0007](0007-modular-monolith-process-roles.md) | Modular monolith with separate process roles | Accepted; extended by 0018 (index dispatcher) and 0025 (images) |
 | [0008](0008-search-documents-as-index-outbox.md) | `search_documents` is both the index store and the indexing outbox | Accepted; extended by 0018 |
 | [0009](0009-dedup-on-normalized-url.md) | Deduplicate URLs on the normalized URL itself | Accepted |
 | [0010](0010-database-enforced-fencing.md) | Fencing is enforced by the database, not only by worker code | Accepted; extended by 0011 |
-| [0011](0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims | Accepted; extended by 0014 |
+| [0011](0011-fencing-tokens-issued-only-by-claims.md) | Fencing tokens are issued only by claims | Accepted; extended by 0014 and 0025 (non-superuser application role) |
 | [0012](0012-approved-crawl-targets.md) | Approved crawl targets are host patterns, plus allowed schemes and ports | Accepted |
 | [0013](0013-safe-fetcher-pinned-connections.md) | The safe fetcher pins connections through httpcore2 and validates every hop | Accepted; extended by 0015 |
 | [0014](0014-crawl-state-transactions-and-redirects.md) | Crawl state transactions, same-level redirects, and page directives | Accepted |
 | [0015](0015-robots-txt-and-per-host-politeness.md) | robots.txt (RFC 9309) and per-host politeness through Redis | Accepted; slot expiry amended by 0017 |
 | [0016](0016-distributed-execution-redis-streams.md) | Distributed execution over Redis Streams: publication, acknowledgment, recovery | Accepted; amended by 0017; extended by 0018 |
-| [0017](0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation | Accepted |
+| [0017](0017-retries-dead-letters-cancellation-idempotency.md) | Durable retries, dead letters, cancellation, and idempotent job creation | Accepted; extended by 0024 (write access, active-jobs cap) |
 | [0018](0018-asynchronous-indexing-pipeline.md) | The asynchronous indexing pipeline: dispatch, counted attempts, versioned writes | Accepted; extended by 0019 |
 | [0019](0019-website-analysis-from-stored-crawl-results.md) | Website analysis from stored crawl results: link classes, confirmed broken links, read-only APIs | Accepted |
 | [0020](0020-dashboard-same-origin-typed-client.md) | The dashboard: a same-origin client typed from the OpenAPI document, with bounded polling | Accepted |
-| [0021](0021-operational-metrics-and-process-heartbeats.md) | Operational metrics from the source of truth, and process heartbeats in Redis | Accepted |
+| [0021](0021-operational-metrics-and-process-heartbeats.md) | Operational metrics from the source of truth, and process heartbeats in Redis | Accepted; extended by 0025 (container health) |
 | [0022](0022-dispatch-window-follows-host-politeness.md) | A job's dispatch window follows its host's politeness slots | Accepted |
 | [0023](0023-whole-job-statements-use-hash-joins.md) | The level admission and the analysis reads are planned with hash joins | Accepted |
+| [0024](0024-public-read-only-mode-and-administrator-writes.md) | A public deployment is read-only; writes need the administrator | Accepted |
+| [0025](0025-container-packaging-and-deployment-topology.md) | Container images and a single-entry Compose deployment | Accepted |
 
 ## Template
 

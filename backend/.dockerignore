@@ -1,0 +1,9 @@
+# The image needs only these (backend/Dockerfile). Everything else stays out of the build
+# context: tests, the virtual environment, caches, and above all .env files.
+**
+!alembic.ini
+!alembic/
+!app/
+!requirements/runtime.txt
+**/__pycache__
+**/*.py[co]

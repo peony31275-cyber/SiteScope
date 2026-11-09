@@ -2,16 +2,18 @@
 
 HTTP concerns only: request and response shapes, status codes, headers and the listing cursor.
 Every rule and every transaction lives in the service layer (``app/services/crawl_jobs.py`` and
-``app/services/crawl_cancellation.py``).
+``app/services/crawl_cancellation.py``). Creating and cancelling are writes: they follow the
+deployment's write access (``app/api/security.py``, ADR-0024); listing and reading are public.
 """
 
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 
 from app.api.dependencies import SessionDep, SettingsDep
 from app.api.problems import problem_responses
+from app.api.security import require_write_access
 from app.api.v1.crawl_schemas import (
     CrawlJobDetail,
     CrawlJobList,
@@ -32,13 +34,14 @@ MAX_PAGE_SIZE = 100
     "",
     status_code=201,
     summary="Create a crawl job",
+    dependencies=[Depends(require_write_access)],
     responses={
         200: {
             "description": "A replay: an earlier request with the same `Idempotency-Key` and an "
             "equivalent body created this job (header `Idempotent-Replayed: true`).",
             "model": CrawlJobSummary,
         },
-        **problem_responses(409, 422, 503),
+        **problem_responses(401, 403, 409, 422, 429, 503),
     },
 )
 async def create_crawl(
@@ -87,12 +90,13 @@ async def create_crawl(
     "/{job_id}/cancel",
     status_code=200,
     summary="Cancel a crawl job",
+    dependencies=[Depends(require_write_access)],
     responses={
         202: {
             "description": "The job is `cancelling`: in-flight URLs are still finishing.",
             "model": CrawlJobSummary,
         },
-        **problem_responses(404, 422, 503),
+        **problem_responses(401, 403, 404, 422, 503),
     },
 )
 async def cancel_crawl(

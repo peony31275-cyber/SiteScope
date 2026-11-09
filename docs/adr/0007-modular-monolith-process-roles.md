@@ -1,6 +1,7 @@
 # ADR-0007: Modular monolith with separate process roles
 
 - Status: Accepted; extended by [ADR-0018](0018-asynchronous-indexing-pipeline.md) (the index dispatcher role)
+  and [ADR-0025](0025-container-packaging-and-deployment-topology.md) (one image, a command per role)
 - Date: 2026-11-06
 
 ## Context

@@ -191,6 +191,13 @@ The exit status is 1 if PostgreSQL or Redis could not be read.
 - `GET /health`, `GET /api/v1/health/live`: liveness; no dependency is checked.
 - `GET /api/v1/health/ready`: PostgreSQL (`SELECT 1`) and Redis (`PING`), each under
   `SITESCOPE_READINESS_TIMEOUT_SECONDS`; 503 with the same body when either fails.
+- Containers (Phase 11, `deploy/compose.yaml`):
+  - The API is checked with `GET /health`. The worker roles (scheduler, crawler, index
+    dispatcher, indexer) use `python -m app.observability.alive <role>`, which exits 0 while
+    Redis holds a live heartbeat of that role from the container's own host name.
+  - A worker that froze, lost Redis for three heartbeat intervals, or stopped turns unhealthy.
+  - Docker reports the result in `docker compose ps`; Compose uses it only to order startup.
+    Like every heartbeat reader, it decides nothing in SiteScope (ADR-0021).
 
 ## Limitations
 

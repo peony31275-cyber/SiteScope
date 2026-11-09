@@ -22,6 +22,10 @@ dist/
 .env.*
 !.env.example
 
+# Database dumps (docs/deployment.md, "Backup and restore"): data, never committed
+backups/
+*.dump
+
 # ---------------------------------------------------------------------------
 # Node / frontend
 # ---------------------------------------------------------------------------

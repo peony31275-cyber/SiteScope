@@ -1,6 +1,7 @@
 # ADR-0017: Durable retries, dead letters, cancellation, and idempotent job creation
 
-- Status: Accepted
+- Status: Accepted; extended by [ADR-0024](0024-public-read-only-mode-and-administrator-writes.md)
+  (write access and the active-jobs cap)
 - Date: 2026-11-07
 - Extends: [ADR-0003](0003-at-least-once-leases-fencing.md),
   [ADR-0004](0004-level-synchronous-bfs.md),

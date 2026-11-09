@@ -1,23 +1,81 @@
 /**
  * Screenshots of every page against the real stack, at desktop and phone widths, for a visual
- * review (layout, overflow, labels). Opt-in: set E2E_SCREENSHOTS=1. The images are written to
- * test-results/screens/ (git-ignored).
+ * review (layout, overflow, labels) and for the README. Opt-in: set E2E_SCREENSHOTS=1. Images go
+ * to E2E_SCREENSHOTS_DIR (default test-results/screens/, git-ignored).
+ *
+ * Two kinds of stack:
+ *
+ * - `tests.dashboard_stack` (writes open): the first test crawls the demo site through the form
+ *   (E2E_DEMO_SEED).
+ * - A deployed, read-only stack (deploy/compose.yaml, seeded with
+ *   `python -m app.scheduler.admin seed-demo`): set E2E_READ_ONLY=1, and the first test finds
+ *   the seeded full crawl of the demo site instead.
+ *
+ * Every page must load without a Content-Security-Policy violation or an uncaught error: the
+ * deployed proxy sends a strict CSP (frontend/nginx/security-headers.conf).
  */
 import { expect, test, type Page } from '@playwright/test';
 
 const DEMO_SEED = process.env.E2E_DEMO_SEED ?? '';
+const READ_ONLY = process.env.E2E_READ_ONLY === '1';
+const DIRECTORY = process.env.E2E_SCREENSHOTS_DIR ?? 'test-results/screens';
+// Whole pages for a review; E2E_SCREENSHOTS_FULL_PAGE=0 for viewport-sized images (the README).
+const FULL_PAGE = process.env.E2E_SCREENSHOTS_FULL_PAGE !== '0';
 
 test.skip(process.env.E2E_SCREENSHOTS !== '1', 'screenshots are opt-in (E2E_SCREENSHOTS=1)');
 test.describe.configure({ mode: 'serial' });
 
 let jobId = '';
+let problems: string[] = [];
+
+test.beforeEach(({ page }) => {
+  problems = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /Content Security Policy/i.test(message.text())) {
+      problems.push(`CSP: ${message.text()}`);
+    }
+  });
+  page.on('pageerror', (error) => {
+    problems.push(`page error: ${error.message}`);
+  });
+});
+
+test.afterEach(() => {
+  expect(problems).toEqual([]);
+});
 
 async function shoot(page: Page, name: string) {
   await page.waitForLoadState('networkidle');
-  await page.screenshot({ path: `test-results/screens/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `${DIRECTORY}/${name}.png`, fullPage: FULL_PAGE });
 }
 
-test('crawl the demo site for the screenshots', async ({ page }) => {
+interface Summary {
+  id: string;
+  seed_url: string;
+  max_pages: number;
+  status: string;
+}
+
+test('the demo site crawl to show', async ({ page, request }) => {
+  if (READ_ONLY) {
+    const response = await request.get('/api/v1/crawls?limit=100');
+    expect(response.ok()).toBe(true);
+    const { items } = (await response.json()) as { items: Summary[] };
+    // The seeded full crawl: seed "/", a page limit of 100 (app/scheduler/admin.py, DEMO_JOBS).
+    const job = items.find(
+      (item) =>
+        item.status === 'completed' &&
+        item.max_pages === 100 &&
+        new URL(item.seed_url).pathname === '/',
+    );
+    expect(job, 'seed the demo jobs first (app.scheduler.admin seed-demo)').toBeDefined();
+    jobId = job?.id ?? '';
+    await page.goto('/crawls');
+    await expect(page.getByText('This deployment is read-only')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create crawl job' })).toHaveCount(0);
+    await shoot(page, 'crawls-read-only');
+    return;
+  }
   await page.goto('/crawls');
   await page.getByLabel('Seed URL').fill(DEMO_SEED);
   await page.getByRole('button', { name: 'Create crawl job' }).click();

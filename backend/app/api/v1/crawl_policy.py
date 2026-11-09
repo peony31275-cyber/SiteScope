@@ -28,6 +28,8 @@ class CrawlPolicy(BaseModel):
                     "allowed_ports": [443],
                     "max_depth_limit": 5,
                     "max_pages_limit": 1000,
+                    "max_active_jobs": 50,
+                    "write_access": "open",
                 }
             ]
         }
@@ -47,6 +49,15 @@ class CrawlPolicy(BaseModel):
     )
     max_depth_limit: int = Field(description="The largest `max_depth` a job may request.")
     max_pages_limit: int = Field(description="The largest `max_pages` a job may request.")
+    max_active_jobs: int = Field(
+        description="Jobs that may be queued, running or cancelling at once; creating another "
+        "is refused (`429 too_many_active_jobs`) until one ends."
+    )
+    write_access: Literal["open", "token", "disabled"] = Field(
+        description="How this deployment treats job creation and cancellation: `open` to anyone; "
+        "`token`: they need the administrator's bearer token (`401 unauthorized` without it); "
+        "`disabled`: a read-only deployment (`403 writes_disabled`)."
+    )
 
 
 @router.get("/crawl-policy", summary="Get the crawl policy")
@@ -64,4 +75,6 @@ async def get_crawl_policy(settings: SettingsDep) -> CrawlPolicy:
         allowed_ports=list(settings.crawl_allowed_ports),
         max_depth_limit=settings.crawl_max_depth_limit,
         max_pages_limit=settings.crawl_max_pages_limit,
+        max_active_jobs=settings.crawl_max_active_jobs,
+        write_access=settings.write_access,
     )

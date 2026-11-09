@@ -669,8 +669,10 @@ export interface components {
          *         "docs.example.com",
          *         "*.example.org"
          *       ],
+         *       "max_active_jobs": 50,
          *       "max_depth_limit": 5,
-         *       "max_pages_limit": 1000
+         *       "max_pages_limit": 1000,
+         *       "write_access": "open"
          *     }
          */
         CrawlPolicy: {
@@ -699,6 +701,17 @@ export interface components {
              * @description The largest `max_pages` a job may request.
              */
             max_pages_limit: number;
+            /**
+             * Max Active Jobs
+             * @description Jobs that may be queued, running or cancelling at once; creating another is refused (`429 too_many_active_jobs`) until one ends.
+             */
+            max_active_jobs: number;
+            /**
+             * Write Access
+             * @description How this deployment treats job creation and cancellation: `open` to anyone; `token`: they need the administrator's bearer token (`401 unauthorized` without it); `disabled`: a read-only deployment (`403 writes_disabled`).
+             * @enum {string}
+             */
+            write_access: "open" | "token" | "disabled";
         };
         /**
          * CrawlProgress
@@ -1913,6 +1926,24 @@ export interface operations {
                     "application/json": components["schemas"]["CrawlJobSummary"];
                 };
             };
+            /** @description This deployment requires the administrator's bearer token for this operation, and the request carried none or a wrong one (`unauthorized`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This deployment is read-only: the operation is disabled (`writes_disabled`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
             /** @description The request conflicts with earlier ones: an `Idempotency-Key` reused for a different request (`idempotency_key_reused`). */
             409: {
                 headers: {
@@ -1924,6 +1955,15 @@ export interface operations {
             };
             /** @description The request failed validation (`validation_failed`); `errors` lists each field. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description As many crawl jobs as this deployment allows are queued or running (`too_many_active_jobs`); retry after `Retry-After`. */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1969,6 +2009,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CrawlJobSummary"];
+                };
+            };
+            /** @description This deployment requires the administrator's bearer token for this operation, and the request carried none or a wrong one (`unauthorized`). */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This deployment is read-only: the operation is disabled (`writes_disabled`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description The resource does not exist (`not_found`). */
