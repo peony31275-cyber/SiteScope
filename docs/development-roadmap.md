@@ -118,7 +118,7 @@ Every phase follows the working agreement in [`CLAUDE.md`](../CLAUDE.md):
 ### Phase 0: Repository inspection and architecture baseline (done)
 
 - Inspected the repository and the toolchain. The findings are in this file's Phase 0 version,
-  commit `a5f8936`.
+  commit `d9ff53c`.
 - Added `CLAUDE.md`, [`docs/architecture.md`](architecture.md), this roadmap, and ADRs 0001–0007 in
   [`docs/adr/`](adr/README.md).
 - This phase produced documentation only, so there was no code to test.
@@ -1648,6 +1648,60 @@ Docker stopped.
 mutations of the fix (no WSL session; a cleanup that raises) are caught. The end-to-end suite was
 run through `.\demo.cmd --e2e` from a stopped WSL: 8 passed.
 
+### Publication to GitHub (2026-11-09)
+
+Not a development phase. The repository was audited and pushed to a private GitHub repository,
+`peony31275-cyber/SiteScope`, branch `main`. Making it public is the owner's decision.
+
+*The history was rewritten once, before the first push.* Every commit carried the owner's
+personal e-mail address and Claude Code's automatic `Co-Authored-By` trailer.
+
+- One `git filter-branch` run replaced the address with the owner's GitHub noreply address and
+  removed the trailer.
+- Nothing else changed, checked commit by commit: the same tree, author name, dates and message
+  otherwise, and the corresponding parents.
+- Before the rewrite, the whole history was searched for secrets (gitleaks, and the actual
+  development passwords): nothing but the reviewed false positive below.
+- The original history is kept in a verified git bundle outside the repository.
+- New commits use the noreply address (local git configuration) and carry no assistant
+  attribution (`.claude/settings.json`, setting `attribution`).
+
+*Commit IDs.* The documents now use the new IDs, and `.gitleaksignore` names the reviewed false
+positive by its new commit. The raw benchmark outputs keep the IDs of the day they were
+measured: their `37ee301...` is `e27357a`.
+
+| Before | After | Commit |
+|---|---|---|
+| `a5f8936` | `d9ff53c` | docs: add Phase 0 architecture baseline |
+| `f267b27` | `7af6d3d` | feat(backend): add Phase 1 FastAPI foundation |
+| `5a8a717` | `c184d27` | docs: document Docker Engine setup in WSL 2 |
+| `3aa1ad1` | `607a92e` | feat(backend): add Phase 2B database and infrastructure foundation |
+| `d2d046d` | `8db724b` | feat(backend): add Phase 2C crawl job API, URL normalization and scope |
+| `1e04c9e` | `15b9005` | feat(crawler): add Phase 3 safe HTTP fetcher and HTML parser |
+| `5603809` | `854da1f` | feat(crawler): add Phase 4 BFS crawl state, robots.txt and politeness |
+| `ae06e77` | `75941a4` | feat(distributed): add Phase 5 scheduler, Redis Streams workers and recovery |
+| `0e7f41b` | `4f196c6` | feat(reliability): add Phase 6 retries, dead letters, cancellation and idempotency |
+| `39d2855` | `33a726e` | feat(search): add Phase 7 asynchronous indexing pipeline and search service |
+| `64fb032` | `f6e6a1d` | feat(api): add Phase 8 search and website-analysis REST APIs |
+| `37ee301` | `e27357a` | feat(dashboard): add Phase 9 React dashboard |
+| `56eca30` | `4b52b8a` | feat(perf): add Phase 10 benchmarks, observability and measured optimizations |
+| `89c1d7e` | `a84661a` | feat(deploy): add Phase 11 deployment, security, CI and portfolio delivery |
+| `b0603ad` | `cd602d8` | fix(demo): keep WSL alive and supervise the local dashboard stack |
+
+*Checks before the push*, on the development machine with the local demo running:
+
+- backend: `pytest --require-services` 2,151 passed, none skipped (7 min 4 s); ruff, ruff format,
+  mypy strict, and ruff on the benchmarks and `deploy/` clean; one Alembic head;
+- dashboard: tsc, ESLint, Prettier, Vitest (175 passed) and the production build;
+- gitleaks 8.28.0 over the rewritten history: no leak; the one raw finding is the reviewed
+  false positive;
+- `npm audit`: 0 known vulnerabilities in 471 packages; `pip-audit` 2.9.0 on
+  `requirements/runtime.txt` and `dev.txt`: none known;
+- both Compose models valid: only the proxy, or Caddy with the HTTPS overlay, publishes a port;
+- the development database unchanged (fingerprint `e574f91fa587b2ea`).
+
+The GitHub Actions runs are recorded in [ci.md](ci.md).
+
 ## Definition of done (every phase)
 
 1. Only the requested phase is implemented, and it includes tests.
@@ -1661,16 +1715,15 @@ run through `.\demo.cmd --e2e` from a stopped WSL: 8 passed.
 
 ## Decisions pending from the project owner
 
-1. **Create a GitHub repository and push.** Nothing has been pushed. CI runs only on GitHub,
-   and ci.md describes what to expect.
-2. **Public deployment.** Choose and buy a host (deployment.md compares them and recommends one
-   4 GB VPS), a domain, and authorize the deployment. Then follow deployment.md, "First
-   start" and "HTTPS and a domain".
-3. **The commit author email.** All 13 commits so far carry the configured git email.
-   Publishing the repository publishes it. GitHub can use a no-reply address for future
-   commits; changing past commits would rewrite history, which needs approval.
+1. **Make the repository public.** It is private (Publication, 2026-11-09).
+2. **Public deployment.** Choose and buy a host, choose a host name, and authorize the
+   deployment. deployment.md compares hosts: one 4 GB VPS, or 2 GB for a read-only demo. Then
+   follow deployment.md, "First start" and "HTTPS and a domain".
 
 Resolved:
+
+- 2026-11-09: the repository was pushed to a private GitHub repository. The commit e-mail is
+  the owner's noreply address, in the whole history (Publication).
 
 - Phase 11: the public demo target is the self-hosted demo-site container; the license is
   MIT (the owner's Phase 11 brief).

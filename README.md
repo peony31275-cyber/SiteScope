@@ -1,4 +1,4 @@
-# SiteScope
+# SiteScope — Distributed Web Crawling & Search Infrastructure
 
 SiteScope crawls approved websites breadth-first with several cooperating processes, indexes
 what it fetched for full-text search, and analyses each site's links: status codes, depths,
@@ -7,6 +7,24 @@ broken links, and the link graph. A React dashboard shows it all.
 It is a portfolio project for backend and distributed-systems engineering. It is small-scale,
 runnable and tested under failure: duplicate deliveries, worker crashes, lease expiry, and Redis
 or PostgreSQL outages. It is not production-proven, and it has not run at internet scale.
+
+**Highlights**
+
+- **A distributed pipeline.** A scheduler, crawler workers, an index dispatcher and indexers run
+  as separate processes and share work through Redis Streams consumer groups. PostgreSQL is the
+  single source of truth: Redis can lose all its data without losing work.
+- **Correct under failure.** At-least-once delivery with idempotent effects, the state row as a
+  transactional outbox, and lease fencing tokens enforced by the database (a CHECK constraint
+  and triggers). Fault tests kill, freeze and cut off real processes.
+- **Search and analysis.** Asynchronous, version-guarded indexing into PostgreSQL full-text
+  search (weighted `tsvector`, GIN), HTTP status distributions, confirmed broken links and an
+  interactive link graph.
+- **Measured, not assumed.** Profiling found two bottlenecks. Fixing them raised five-worker
+  crawl throughput from 32.6 to 90.8 pages/s in a controlled benchmark on one laptop; the raw
+  output is committed ([Benchmarks](#benchmarks)).
+- **Tested.** Over 2,100 backend tests (unit, integration against real PostgreSQL and Redis, and
+  fault injection with real processes), 175 dashboard tests, and Playwright end-to-end tests of
+  the whole stack ([Tests](#tests)).
 
 ![The overview page of the dashboard, read-only demo](docs/images/overview.png)
 
@@ -74,20 +92,24 @@ the single source of truth. It never claims exactly-once processing.
 
 ```mermaid
 flowchart LR
-    browser([Browser]) -->|HTTPS| proxy[nginx: dashboard and /api/ proxy]
-    proxy --> api[FastAPI]
-    api -->|reads, job creation| pg[(PostgreSQL: source of truth)]
-    sched[Scheduler: dispatch, level advance, reconcile] --> pg
-    sched -->|publish after commit| crawl[[Redis stream sitescope:crawl]]
-    crawl --> workers[Crawler workers x N]
-    workers -->|claim, result: fenced| pg
-    workers -->|safe fetcher, robots.txt, politeness| site[(Approved site)]
-    idx[Index dispatcher] --> pg
-    idx --> index[[Redis stream sitescope:index]]
-    index --> indexers[Indexers x N]
-    indexers -->|tsvector, GIN| pg
+    ui["React dashboard<br/>(browser)"] -->|"HTTPS, same origin"| proxy["nginx<br/>static files, /api/ proxy"]
+    proxy -->|"/api/v1"| api["FastAPI"]
+    api -->|"create and cancel jobs;<br/>search and analysis reads"| pg[("PostgreSQL<br/>source of truth")]
+    sched["Scheduler<br/>dispatch, level advance,<br/>reconcile"] <-->|"frontier rows as outbox;<br/>admits the next BFS level"| pg
+    sched -->|"XADD"| crawl[["Redis stream<br/>sitescope:crawl"]]
+    crawl -->|"XREADGROUP,<br/>XAUTOCLAIM"| workers["Crawler workers x N"]
+    workers -->|"fenced claim, then result:<br/>page, links, search document"| pg
+    workers -->|"safe fetcher,<br/>robots.txt, politeness"| site(("Approved<br/>site"))
+    idx["Index dispatcher"] <-->|"pending documents<br/>as outbox"| pg
+    idx -->|"XADD"| istream[["Redis stream<br/>sitescope:index"]]
+    istream -->|"XREADGROUP,<br/>XAUTOCLAIM"| indexers["Indexers x N"]
+    indexers -->|"tsvector and GIN,<br/>version-guarded write"| pg
 ```
 
+- **Asynchronous by design.** The API's only writes are creating and cancelling jobs, in
+  PostgreSQL; it never publishes to Redis. The scheduler and the index dispatcher publish tasks from PostgreSQL rows
+  (the outbox), and workers consume them from Redis Streams consumer groups. A message carries
+  identifiers only: every consumer re-reads the state from PostgreSQL.
 - **Deployment.** Every box above is a container. Only the proxy publishes a port. PostgreSQL,
   Redis and the workers sit on an internal network with no route to the internet
   ([ADR-0025](docs/adr/0025-container-packaging-and-deployment-topology.md)).
@@ -270,6 +292,12 @@ Then open <http://127.0.0.1:8080>.
 Hosting options, HTTPS, backups and upgrades: [docs/deployment.md](docs/deployment.md).
 
 ## Develop locally
+
+**The local demo, one command (Windows).** From the repository root, `.\demo.cmd` brings up WSL,
+Docker, PostgreSQL and Redis, starts every process on a disposable database, seeds the demo
+crawls and serves the dashboard at <http://127.0.0.1:4173>. Ctrl+C, or `.\demo.cmd --stop` from
+another terminal, stops it and removes what it created. The development database is never
+touched ([docs/development.md](docs/development.md#local-demo-one-command)).
 
 The development setup runs PostgreSQL and Redis in Docker and every Python process from a
 virtual environment. On the development machine that is Windows with Docker in WSL; on Linux,

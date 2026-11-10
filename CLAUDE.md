@@ -67,6 +67,9 @@ The project is built one phase at a time. Start a phase only when the owner requ
   - recreating `backend/.venv`;
   - rewriting git history.
 - Don't commit or push unless asked.
+- Commits use the repository's local git identity (the owner's GitHub noreply address) and
+  carry no assistant attribution (`.claude/settings.json`, `attribution`). Never change the
+  GitHub repository's visibility: that is the owner's decision.
 - Keep secrets out of code, tests, docs, and committed configuration.
 
 **Language.** Write code, comments, commit messages, and documentation in English. Write phase reports and

@@ -76,6 +76,18 @@ crawled HTML ──► parser (limits) ──► stored text ──► dashboard
   - A search of every commit and of every file to be committed for the actual values of the
     development passwords: no match.
   - The only environment files ever committed are the two `.env.example` templates.
+- **Scan of 2026-11-09** (before publication, all 15 commits):
+  - gitleaks 8.28.0, before and after the history rewrite: only the same reviewed false
+    positive. `.gitleaksignore` names it by its commit ID after the rewrite.
+  - Every version of every file searched for the actual development passwords, for key and
+    token formats (private keys, GitHub, AWS, Slack, Google and API-key prefixes), and for the
+    owner's e-mail addresses: no match. Every e-mail address in the files is an
+    `example.com`, `example.org` or `.test` address.
+  - Commit metadata: every author and committer address is the owner's GitHub noreply
+    address (development-roadmap.md, "Publication to GitHub").
+  - Accepted: raw benchmark outputs, `CLAUDE.md` and the development guide name local Windows
+    paths (`C:\Users\<account>\...`), the outputs as recorded when the benchmarks ran. They
+    hold no secret.
 - **Continuous scanning.** The CI job `secrets` runs the same gitleaks scan over the whole
   history on every push and pull request.
 
@@ -90,11 +102,12 @@ crawled HTML ──► parser (limits) ──► stored text ──► dashboard
 - **One host.** No redundancy: a host failure stops the demo until it is restored from backup.
 - **Versions, not hashes.** Python packages are pinned by version, not by hash, and base images
   by tag, not by digest. A compromised registry could serve different bytes under the same
-  version. CI does not audit dependencies for known vulnerabilities. A one-off audit on
-  2026-11-08 found none: `npm audit` (production and development trees) reported 0, and
-  `pip-audit` 2.9.0 (in a throwaway container) found no known vulnerability in
-  `requirements/runtime.txt` or `dev.txt`. New advisories appear daily, so the audit needs to
-  be repeated.
+  version. CI does not audit dependencies for known vulnerabilities. One-off audits on
+  2026-11-08 and again on 2026-11-09 found none: `npm audit` (production and development
+  trees, 471 packages) reported 0, and `pip-audit` 2.9.0 (in a throwaway container) found no
+  known vulnerability in `requirements/runtime.txt` or `dev.txt`. New advisories appear daily,
+  so the audit needs to be repeated; GitHub's Dependabot alerts would automate it once the
+  owner enables them.
 - **Docker access is root access.** Anyone in the `docker` group can read the containers'
   environment, the secrets included.
 - **Crawling real sites** needs egress for the crawlers. The fetcher's defenses still apply,

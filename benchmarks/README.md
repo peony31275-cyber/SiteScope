@@ -47,12 +47,12 @@ Timings: `tests/process_support.FAST_TIMING` (the scheduler passes every 0.1 s).
 
 ```powershell
 # in backend\: before/after in one session (the earlier code in a git worktree)
-git worktree add --detach ..\..\sitescope-37ee301 37ee301
+git worktree add --detach ..\..\sitescope-e27357a e27357a
 .\.venv\Scripts\python.exe ..\benchmarks\crawl_scaling.py --experiment multi-host `
-    --variant baseline=..\..\sitescope-37ee301\backend --variant current=. `
+    --variant baseline=..\..\sitescope-e27357a\backend --variant current=. `
     --output ..\benchmarks\results\phase10-crawl-multi-host-ab.json
 .\.venv\Scripts\python.exe ..\benchmarks\crawl_scaling.py --experiment single-host `
-    --variant baseline=..\..\sitescope-37ee301\backend --variant current=. `
+    --variant baseline=..\..\sitescope-e27357a\backend --variant current=. `
     --output ..\benchmarks\results\phase10-crawl-single-host-ab.json
 # a size sweep (100, 500, 1,000, 2,000 pages over five hosts) with 5 workers
 .\.venv\Scripts\python.exe ..\benchmarks\crawl_scaling.py --experiment multi-host `

@@ -22,8 +22,12 @@ are labelled as such.
 - **Repetition.** Three trials per configuration unless stated otherwise, interleaved (trial by
   trial, every configuration once), medians reported with the range of the trials. No run was
   discarded.
-- **Before and after.** The code before Phase 10 (commit `37ee301`) ran from a `git worktree`,
+- **Before and after.** The code before Phase 10 (commit `e27357a`) ran from a `git worktree`,
   alternating run by run with the Phase 10 code in the same session (`--variant`).
+- **Commit IDs in the raw outputs.** The history was rewritten once before the first push
+  (2026-11-09), which changed every commit ID but no file. The raw outputs keep the IDs of the
+  day they were measured: their `37ee301...` is `e27357a` here. The full mapping is in the
+  roadmap, ["Publication"](development-roadmap.md#publication-to-github-2026-11-09).
 - **Samplers** (per run): the machine's CPU load and effective clock (`% Processor Performance`:
   above 100 means boost; `% Performance Limit` stayed at 100 in every sample: no power or thermal
   limit was reported), the WSL VM's and the PostgreSQL and Redis containers' CPU, every process's
@@ -152,7 +156,7 @@ index.
 
 ### After Phase 10 (before and after in one session)
 
-The code before Phase 10 (`37ee301`, default settings) and the Phase 10 code ran alternately, run
+The code before Phase 10 (`e27357a`, default settings) and the Phase 10 code ran alternately, run
 by run, three trials each (`phase10-crawl-multi-host-ab.json`, `phase10-crawl-single-host-ab.json`;
 chart: `benchmarks/results/charts/crawl-multi-host.svg` and `crawl-single-host.svg`). Every run
 passed every check.

@@ -22,7 +22,7 @@ has not been deployed publicly or run in production.
 | Claim | Figure | Raw output |
 |---|---|---|
 | Crawl throughput, five hosts, 2,000 pages, 1 / 3 / 5 workers | 29.6 / 68.6 / 90.8 pages/s, medians of 3 interleaved trials | `benchmarks/results/phase10-crawl-multi-host-ab.json` |
-| Same, before the Phase 10 fixes | 28.4 / 29.1 / 32.6 pages/s: ×2.79 at 5 workers after the fixes | same file (variant `baseline`, commit `37ee301`) |
+| Same, before the Phase 10 fixes | 28.4 / 29.1 / 32.6 pages/s: ×2.79 at 5 workers after the fixes | same file (variant `baseline`: commit `e27357a`, recorded under its pre-publication ID `37ee301`) |
 | Two causes found and fixed | A dispatch window larger than a host's politeness slots (ADR-0022). Nested-loop plans when statistics had not seen a new job (ADR-0023) | docs/performance.md, "Cause 1" and "Cause 2" |
 | BFS level admission with stale statistics | 977 URLs: 5,174 ms → 28.7 ms. 11,866 URLs: over 60 s → 346 ms | `benchmarks/results/phase10-admission-plans*.{json,txt}` |
 | Indexing, 2,000 pages of 1,000 words, 1 / 2 / 4 indexers | 151.9 / 217.0 / 266.3 pages/s | `benchmarks/results/phase10-indexing.json` |

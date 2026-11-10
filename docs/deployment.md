@@ -99,6 +99,32 @@ losing Redis loses no work (ADR-0001), losing the disk loses whatever the last b
 The managed runner-up is **Railway** (about $18–27 a month on measured use). Choose it only after
 confirming that its PostgreSQL template runs version 18 and that Hobby includes backups.
 
+**A smaller machine for a read-only demo** (read on 2026-11-09; this size was not tested). A
+public demo that only serves its seeded crawls needs less than the 4 GB sized above: the stack
+used about 600 MiB at rest after the demo crawl, so 2 GB leaves room for the operating system
+(A).
+
+- **DigitalOcean Basic Droplet, 1 vCPU, 2 GiB, 50 GiB SSD, 2,000 GiB transfer: $12.00 a month
+  (Q)**, or $14.40 with weekly backups (A, at 20 % (Q)).
+- Run one replica of each worker role (`DEPLOY_CRAWLER_REPLICAS=1`, `DEPLOY_INDEXER_REPLICAS=1`:
+  about 140 MiB less (A)), and add a swap file as a margin.
+- Seed the demo once and leave it read-only. Crawl anything larger on a bigger machine.
+- Hetzner's Cost-Optimized and Regular Performance pages showed their plans as "currently
+  unavailable" (Q) on 2026-11-09.
+
+**A host name without buying a domain.** Caddy needs a host name to obtain a Let's Encrypt
+certificate.
+
+- Let's Encrypt issues up to 50 certificates per registered domain every 7 days, and tells
+  registered domains apart with the Public Suffix List (Q).
+- `duckdns.org` is on that list, so each DuckDNS subdomain has its own budget. `sslip.io` and
+  `nip.io` are not on it, so all their users share one budget, which may be spent when you
+  need it (A).
+- Let's Encrypt has issued six-day certificates for IP addresses since January 2026 (Q). Caddy's
+  documentation does not describe obtaining one, so don't plan on it.
+- A domain of your own looks more professional on a résumé link, for a yearly registration
+  fee.
+
 <details>
 <summary>Sources (read on 2026-11-08)</summary>
 
@@ -122,6 +148,20 @@ confirming that its PostgreSQL template runs version 18 and that Hobby includes 
 - Fly.io: <https://docs.fly.io/about/pricing>, <https://docs.fly.io/mpg/>,
   <https://docs.fly.io/networking/private-networking/>,
   <https://docs.fly.io/launch/autostop-autostart/>
+
+</details>
+
+<details>
+<summary>Sources for the smaller machine and the host name (read on 2026-11-09)</summary>
+
+- DigitalOcean: <https://www.digitalocean.com/pricing/droplets>
+- Hetzner: <https://www.hetzner.com/cloud/cost-optimized/>,
+  <https://www.hetzner.com/cloud/regular-performance/>
+- Public Suffix List: <https://publicsuffix.org/list/public_suffix_list.dat> (searched for
+  `duckdns.org`, `sslip.io` and `nip.io`)
+- Let's Encrypt: <https://letsencrypt.org/docs/rate-limits/>,
+  <https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability>
+- Caddy: <https://caddyserver.com/docs/automatic-https>
 
 </details>
 
