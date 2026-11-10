@@ -40,18 +40,18 @@ the old numbers:
 
 ## Repository state after Phase 11
 
-Updated on 2026-11-08 (Phase 11). The Phase 0 inspection findings are kept in this file's first commit.
+Updated on 2026-11-08 (Phase 11); the Git, CI and test rows at publication (2026-11-09). The Phase 0 inspection findings are kept in this file's first commit.
 
 | Item | State |
 |---|---|
-| Git | Local repository on branch `master` (the configured default). Every phase is committed. No remote yet. |
+| Git | Branch `main` (renamed from `master` at publication), pushed to the private GitHub repository `peony31275-cyber/SiteScope` ("Publication to GitHub", below). Every phase is committed. |
 | `backend/app/` | FastAPI foundation (Phase 1); database models, sessions, Redis client, readiness (Phase 2B); crawl job API, URL normalization and crawl scope (Phase 2C); safe fetcher and HTML parser in `app/crawler/` (Phase 3); crawl state in `app/services/crawl_state.py`, robots.txt, politeness and page directives in `app/crawler/`, the crawl task and the single-process driver in `app/workers/` (Phase 4); the Redis Streams adapter in `app/queue/`, the scheduler and its status command in `app/scheduler/`, the crawler worker in `app/workers/crawler.py` (Phase 5); the retry policy in `app/workers/retry.py`, `Retry-After` parsing in `app/crawler/retry_after.py`, cancellation in `app/services/crawl_cancellation.py`, idempotent creation in `app/services/crawl_jobs.py` (Phase 6); index state and search in `app/services/search_index.py` and `app/services/search.py`, document and query rules in `app/indexing/`, the index dispatcher, the shared pass loop and the search command in `app/scheduler/`, the shared consumer loop and the indexer in `app/workers/` (Phase 7); the search and website-analysis endpoints in `app/api/v1/search.py` and `app/api/v1/analysis.py`, the analysis queries in `app/services/site_analysis.py` (Phase 8); the crawl policy and overview endpoints in `app/api/v1/crawl_policy.py` and `app/api/v1/overview.py`, the overview counts in `app/services/overview.py`, the OpenAPI export in `app/api/openapi_export.py` (Phase 9); the metrics registry, exposition format and heartbeats in `app/observability/`, `GET /metrics` in `app/api/metrics.py`, its PostgreSQL and Redis reads in `app/services/system_metrics.py`, the health assessment in `app/services/diagnostics.py` (Phase 10); write access in `app/api/security.py`, the active-jobs cap in `app/services/crawl_jobs.py`, the operator commands in `app/scheduler/admin.py`, the container health check in `app/observability/alive.py` (Phase 11). |
 | `backend/alembic/` | Migrations `0001` (the six-table schema), `0002` (fencing tokens issued only by claims), `0003` (robots directive flags) `0004` (index version triggers, index leases, indexes for indexing completion; Phase 7) and `0005` (two indexes widened for the analysis queries; Phase 8). |
 | `backend/compose.yaml` | PostgreSQL 18.6 and Redis 8.10.3 for development, running in WSL. |
 | `backend/Dockerfile`, `requirements/` | One image for every Python role; Linux locks (`runtime.txt`, `dev.txt`) from `requirements/lock.py` (Phase 11). |
 | `deploy/` | The containerized stack (`compose.yaml`), its HTTPS overlay, the application role script, the environment template and the smoke checks (Phase 11). |
-| `.github/workflows/` | `ci.yml` and `full.yml` (Phase 11); not yet run on GitHub. |
-| `backend/tests/` | 2127 tests: 1480 unit, 647 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
+| `.github/workflows/` | `ci.yml` and `full.yml` (Phase 11); both pass on GitHub since 2026-11-09 (ci.md, "Runs on GitHub"). |
+| `backend/tests/` | 2152 tests: 1504 unit, 648 integration and fault (real PostgreSQL and Redis, local HTTP/TLS servers on 127.0.0.1, real scheduler, crawler worker, index dispatcher and indexer processes, and a disposable Redis container); `tests/dashboard_stack.py` runs the whole stack for the dashboard's end-to-end tests (Phase 9). |
 | `benchmarks/` | The distributed crawl throughput benchmark (Phase 5), the indexing and search benchmark (Phase 7), the analysis latency benchmark with its index A/B (Phase 8), and the Phase 10 harness (crawl scaling, indexing, search, database statements, stale statistics, recovery, the dashboard's graph, charts), with their raw results. |
 | `backend/.venv` | Python 3.13.7. Runtime: fastapi 0.162.0, uvicorn 0.54.0 (standard extras), pydantic-settings 2.16.2, SQLAlchemy 2.1.8, asyncpg 0.32.0, Alembic 1.20.1, redis 8.1.0, idna 3.20, httpcore2 2.16.0, truststore 0.10.5, beautifulsoup4 4.15.0. Development: pytest 9.2.0, httpx2 2.16.0, ruff 0.17.4, mypy 2.4.1, trustme 1.2.1. |
 | `frontend/` | The React dashboard (Phase 9): Vite, React 19, TypeScript, Tailwind CSS, React Router, TanStack Query, Recharts; 175 Vitest tests; Playwright end-to-end specs for the real stack; a Dockerfile and the nginx configuration of the public entry (Phase 11). Renamed from the misspelled `fronted/` in Phase 1. |
@@ -1702,6 +1702,26 @@ measured: their `37ee301...` is `e27357a`.
 
 The GitHub Actions runs are recorded in [ci.md](ci.md).
 
+*After the push.* On GitHub, CI passed at once. The first full verification failed every test
+that starts child processes, and the end-to-end stack never became ready: where there is no
+backend/.env, the children got no PostgreSQL password (ci.md, "The first failure"). Three
+commits followed, checked with the four checks and the whole local suite (2,152 passed, none
+skipped, in 405 s):
+
+- `721a0b4` fix(tests): `child_environment` also passes the test's PostgreSQL user and
+  password. A unit test builds a child's settings from that environment alone; it fails
+  without the fix.
+- `7c5862a` ci: the e2e job uploads the stack's process logs when it fails.
+- `38c9579` test: `test_a_backward_clock_step_costs_one_interval_at_most` sleeps one short
+  remainder after its wait. Redis's TIME, in WSL 2, can step back a few milliseconds
+  meanwhile: the strict version failed 6 runs in 20, each 1.6 to 2.9 ms short of the interval
+  (that commit's message gives 2.6 ms for all, the one margin then seen). Reintroducing the bug
+  it guards against (one interval on every attempt) still fails it.
+
+With them, both workflows pass on GitHub. The repository has the description "Distributed Web
+Crawling & Search Infrastructure" and ten topics. GitHub lists one contributor, the owner:
+every commit is linked to the owner's account through the noreply address.
+
 ## Definition of done (every phase)
 
 1. Only the requested phase is implemented, and it includes tests.
@@ -1723,7 +1743,8 @@ The GitHub Actions runs are recorded in [ci.md](ci.md).
 Resolved:
 
 - 2026-11-09: the repository was pushed to a private GitHub repository. The commit e-mail is
-  the owner's noreply address, in the whole history (Publication).
+  the owner's noreply address, in the whole history, and both workflows pass on GitHub
+  (Publication).
 
 - Phase 11: the public demo target is the self-hosted demo-site container; the license is
   MIT (the owner's Phase 11 brief).

@@ -1,5 +1,8 @@
 # SiteScope — Distributed Web Crawling & Search Infrastructure
 
+[![CI](https://github.com/peony31275-cyber/SiteScope/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/peony31275-cyber/SiteScope/actions/workflows/ci.yml?query=branch%3Amain)
+[![Full verification](https://github.com/peony31275-cyber/SiteScope/actions/workflows/full.yml/badge.svg?branch=main)](https://github.com/peony31275-cyber/SiteScope/actions/workflows/full.yml?query=branch%3Amain)
+
 SiteScope crawls approved websites breadth-first with several cooperating processes, indexes
 what it fetched for full-text search, and analyses each site's links: status codes, depths,
 broken links, and the link graph. A React dashboard shows it all.
@@ -24,7 +27,7 @@ or PostgreSQL outages. It is not production-proven, and it has not run at intern
   output is committed ([Benchmarks](#benchmarks)).
 - **Tested.** Over 2,100 backend tests (unit, integration against real PostgreSQL and Redis, and
   fault injection with real processes), 175 dashboard tests, and Playwright end-to-end tests of
-  the whole stack ([Tests](#tests)).
+  the whole stack, all run by GitHub Actions on every push to `main` ([Tests](#tests)).
 
 ![The overview page of the dashboard, read-only demo](docs/images/overview.png)
 
@@ -327,9 +330,10 @@ npm run dev                            # http://127.0.0.1:5173, /api proxied to 
 | End to end | `python -m tests.dashboard_stack --e2e` | The whole stack on a disposable database, driven by Playwright |
 | Deployment | `deploy/smoke.py` | The containerized stack through its public entry |
 
-The suites never touch the development database or the public internet. Their latest results
-are in [docs/development-roadmap.md](docs/development-roadmap.md) (Phase 11), and the CI
-workflows are described in [docs/ci.md](docs/ci.md).
+The suites never touch the development database or the public internet. GitHub Actions runs
+all of them on every push to `main`, and the full verification also nightly: the workflows and
+their runs are in [docs/ci.md](docs/ci.md). The latest local results are in
+[docs/development-roadmap.md](docs/development-roadmap.md) ("Publication to GitHub").
 
 ## Benchmarks
 
@@ -393,7 +397,6 @@ The full threat model is in [docs/security.md](docs/security.md).
   - HTTPS through Caddy was validated as configuration only.
   - The stack has not been deployed publicly.
 - **The admin model.** One shared admin token, without per-person accounts.
-- **CI.** The GitHub Actions workflows have not run on GitHub yet; they were validated locally.
 
 ## Documentation
 

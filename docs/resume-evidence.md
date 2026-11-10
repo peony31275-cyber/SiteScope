@@ -43,34 +43,58 @@ has not been deployed publicly or run in production.
 
 ## Tests
 
-From the Phase 11 verification, 2026-11-08 (docs/development-roadmap.md, Phase 11).
+From the verification at publication, 2026-11-09 (docs/development-roadmap.md, "Publication to
+GitHub"), and the GitHub Actions runs (docs/ci.md, "Runs on GitHub").
 
-| Claim | Figure | Command |
+| Claim | Figure | Command or source |
 |---|---|---|
-| Backend tests | 2,127 passed: 1,480 unit, 647 integration and fault, against real PostgreSQL, Redis and processes, with skips counted as failures | `python -m pytest --require-services` (backend/) |
+| Backend tests | 2,152 passed: 1,504 unit, 648 integration and fault, against real PostgreSQL, Redis and processes, with skips counted as failures | `python -m pytest --require-services` (backend/) |
 | Dashboard tests | 175 Vitest tests. 8 end-to-end tests against the real stack (Playwright) | `npm run check`; `python -m tests.dashboard_stack --e2e` |
-| Linux | 1,478 unit and 643 integration and fault tests in `python:3.13.16-slim-trixie`, before the review fixes | docs/ci.md, "Local equivalents" |
-| CI on GitHub | Not run yet: the repository has not been pushed | docs/ci.md |
+| CI on GitHub | Both workflows pass on Ubuntu 24.04 runners (commit `38c9579`, 2026-11-10 UTC): the 1,504 unit and 648 integration and fault tests, the 175 Vitest tests, the 8 end-to-end tests in Chromium, the deployment's 17 smoke checks, and gitleaks over the whole history | docs/ci.md, "Runs on GitHub" |
 
-## Suggested résumé bullets
+## Suggested résumé entry
 
-Each bullet uses only the figures above.
+**SiteScope — Distributed Web Crawling & Search Infrastructure**
+Python, FastAPI, PostgreSQL, Redis Streams, SQLAlchemy, asyncio, React, TypeScript, Docker,
+Pytest
 
-- Built SiteScope, a distributed breadth-first web crawler and search platform (Python 3.13,
-  FastAPI, PostgreSQL 18, Redis Streams, React and TypeScript). It delivers tasks at least
-  once, with database-enforced fencing tokens and a transactional outbox, and recovers from
-  worker crashes and Redis or PostgreSQL outages, verified by fault-injection tests with real
-  processes.
-- Profiled crawl scaling and fixed two bottlenecks: a dispatch window larger than per-host
-  politeness, and nested-loop plans on unanalyzed jobs. Five-worker throughput rose from 32.6
-  to 90.8 pages/s (×2.8), and BFS level admission fell from 5.2 s to 29 ms, on one benchmarked
-  laptop.
-- Designed asynchronous indexing with version-guarded writes and PostgreSQL full-text search
-  (weighted `tsvector`, GIN): 266 pages/s with four indexers and 87 ms p50 search latency over
-  10,000 documents on a laptop.
-- Packaged the system as an 11-container Docker Compose deployment, with:
-  - non-root multi-stage images and a single nginx entry;
-  - a no-egress internal network and a backend-enforced read-only public mode;
-  - rate limits and a strict CSP;
-  - GitHub Actions CI covering linting, strict typing, unit, integration and e2e tests, a
-    whole-history secret scan and a deployment smoke test.
+Each bullet uses only the figures above. The performance figures are laptop benchmarks
+(section "Performance"); the project has not run in production.
+
+**Four bullets**
+
+- Engineered a distributed web crawler in Python (asyncio, FastAPI) whose scheduler and
+  horizontally scalable asynchronous workers coordinate through Redis Streams consumer groups,
+  with strict level-synchronous BFS scheduling and PostgreSQL as the durable source of truth
+  for every task, keeping crawl depth and page budgets exact.
+- Architected at-least-once task processing with idempotent effects (a transactional outbox,
+  lease fencing tokens enforced by PostgreSQL constraints and triggers, durable retries with
+  backoff and dead letters), and verified recovery from worker crashes and Redis or PostgreSQL
+  outages with fault-injection tests that kill, freeze and cut off real processes.
+- Developed an asynchronous indexing pipeline in which independent indexer workers write
+  PostgreSQL full-text search vectors (weighted tsvector, GIN) guarded by content versions, so
+  an older index never replaces a newer one: 266 pages/s with 4 indexers and 87 ms p50 query
+  latency over 10,000 documents in laptop benchmarks.
+- Optimized five-worker crawl throughput 2.8× (32.6 → 90.8 pages/s) and BFS level admission
+  from 5.2 s to 29 ms after profiling exposed an oversized dispatch window and nested-loop
+  query plans; automated 2,100+ backend tests, 175 frontend tests and Playwright end-to-end
+  tests in GitHub Actions CI.
+
+**Three bullets** (a one-page résumé)
+
+- Engineered a distributed crawl-and-search system (Python/asyncio, FastAPI, Redis Streams,
+  PostgreSQL, React/TypeScript, Docker): a scheduler with horizontally scalable crawler and
+  indexer workers, and strict level-synchronous BFS with PostgreSQL as the source of truth.
+- Architected at-least-once processing with idempotent effects (transactional outbox,
+  database-enforced fencing tokens, durable retries), verified by fault-injection tests that
+  kill, freeze and cut off real worker processes.
+- Optimized crawl throughput 2.8× (32.6 → 90.8 pages/s, 5 workers) and BFS admission from
+  5.2 s to 29 ms through profiling (laptop benchmarks); developed version-guarded PostgreSQL
+  GIN full-text indexing (87 ms p50 over 10,000 documents) and automated 2,100+ tests in
+  GitHub Actions CI.
+
+**Another bullet** (in place of one of the above, for infrastructure roles)
+
+- Packaged the system as an 11-container Docker Compose deployment behind a single nginx
+  entry: non-root multi-stage images, a no-egress internal network, a backend-enforced
+  read-only public mode, rate limits and a strict CSP, smoke-tested in CI.
