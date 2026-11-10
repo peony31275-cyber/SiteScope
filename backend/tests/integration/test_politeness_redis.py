@@ -250,8 +250,9 @@ async def test_a_backward_clock_step_costs_one_interval_at_most(
     again = await attempt(store, "t", interval=0.2)
     if not again.granted:
         # This sleep ran on the test's clock, the spacing on Redis's TIME, which may have
-        # stepped back a few milliseconds meanwhile (WSL 2: failed 3 runs in 10 by 2.6 ms). The
-        # waiter then sleeps the short remainder, by design; a second interval would be the bug.
+        # stepped back a few milliseconds meanwhile (on WSL 2, the slot was refused in 6 runs in
+        # 20, 1.6 to 2.9 ms early). The waiter then sleeps the short remainder, by design; a
+        # second interval would be the bug.
         assert again.wait is not None
         assert again.wait < 0.05
         await asyncio.sleep(again.wait)
