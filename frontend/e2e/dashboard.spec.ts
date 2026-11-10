@@ -96,7 +96,11 @@ test('search finds indexed pages, marks the matched words, and never shows noind
 }) => {
   await page.goto(`/crawls/${demoJobId}`);
   await page.getByRole('link', { name: 'Search', exact: true }).click();
-  await expect(page.getByLabel('Crawl job')).toHaveValue(demoJobId);
+  // The job page's header is a region labelled "Crawl job" too: until the search page replaces
+  // it, getByLabel finds that region, not the selector (a CI failure, "Not an input element").
+  await expect(page.getByRole('combobox', { name: 'Crawl job', exact: true })).toHaveValue(
+    demoJobId,
+  );
   await page.getByLabel('Search query').fill('fencing');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   const results = page.getByRole('region', { name: 'Search results' });
