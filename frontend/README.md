@@ -169,7 +169,8 @@ with `prefers-reduced-motion`.
 - The end-to-end run uses the real backend, on a disposable database:
 
   ```powershell
-  # in backend\, with PostgreSQL and Redis up (wsl docker compose up -d --wait)
+  .\demo.cmd --e2e     # from the repository root; it brings up WSL, Docker and the services
+  # or, in backend\:
   .\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e
   ```
 

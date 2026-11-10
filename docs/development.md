@@ -13,6 +13,56 @@ These are the development commands for the Windows 10 development machine:
 
 PowerShell 5.1 has no `&&`: enter commands one per line, or chain them with `;`.
 
+## Local demo: one command
+
+To use SiteScope in the browser, run this from the repository root, in PowerShell or cmd:
+
+```powershell
+.\demo.cmd
+```
+
+When `SiteScope is running. Open the dashboard:  http://127.0.0.1:4173` appears, open that URL.
+
+- **Stop:** Ctrl+C stops the demo and cleans up. From another terminal, `.\demo.cmd --stop` does the
+  same.
+- **Already running:** running `.\demo.cmd` again only prints the running demo's URL.
+- **Options:** `.\demo.cmd --help` lists every option.
+
+What it does (`backend/tests/dashboard_stack.py`):
+
+1. **It holds a WSL session open for as long as it runs.** Docker Engine runs inside WSL. WSL stops
+   about 20 s after its last session closes, and Docker and the containers stop with it ([How
+   Docker starts and stops](#how-docker-starts-and-stops-read-this-first)). A Windows process using
+   the forwarded ports does not count as a session. That is why running the launcher after
+   `wsl docker compose up -d --wait` used to lose PostgreSQL and Redis mid-startup ("worker-1 did
+   not start", 2026-11-09).
+2. **It brings up the services.** It waits for Docker Engine; it never starts or restarts it. It
+   runs `docker compose up -d --wait` in `backend\`: running containers stay as they are, and
+   volumes are never touched. Then it waits until PostgreSQL and Redis answer from Windows.
+3. **It prepares its own storage.** It recreates the disposable database
+   `<SITESCOPE_POSTGRES_DB>_test_ui` and deletes its own Redis keys (database 15, prefix
+   `ui-stack`), which also removes what an interrupted run left. The development database and its
+   Redis keys are never touched.
+4. **It starts the stack.**
+   - the demo site and a slow site;
+   - the API, the scheduler, two crawler workers, the index dispatcher and two indexers;
+   - the dashboard: a production build served on port 4173 (`--port` changes it).
+
+   Then it creates the demo jobs on the demo site (`--no-seed` skips them).
+5. **It watches the stack.** Every few seconds it checks that PostgreSQL, Redis, the WSL session
+   and every process are alive. When one is not, it stops with one clear message.
+
+At the end it stops every process, drops the database, deletes its keys and releases the WSL
+session. WSL then stops after its idle time, as usual, unless another session is open. If
+PostgreSQL is already gone, it says what is left, and the next run removes it. The processes' logs
+are in the temporary directory it prints.
+
+It needs:
+
+- `backend\.venv` with the backend installed;
+- `backend\.env` with the database passwords;
+- the dashboard's dependencies (`npm ci` in `frontend\`).
+
 Run everything from the `backend` directory:
 
 ```powershell
@@ -296,6 +346,7 @@ So **keep one WSL session open while you develop.**
    wsl docker compose up -d --wait     # waits until both health checks pass
    ```
    A one-off `wsl docker ...` command ends its own session immediately, so step 1 is still needed.
+   (`.\demo.cmd` does steps 1 and 2 itself: [Local demo](#local-demo-one-command).)
    See [Local services](#local-services-postgresql-and-redis) for details.
 3. **Run the API on Windows** as described in [Run the API](#run-the-api).
 4. **Finish.** Run `docker compose stop` (keeps data) or `docker compose down` (removes the
@@ -901,12 +952,12 @@ npm run preview        # serve dist\ on http://127.0.0.1:4173, with the same /ap
 
 **End to end with the real stack.** `tests/dashboard_stack.py` starts everything on a disposable
 database and runs the Playwright suite in the installed Microsoft Edge (no browser download).
-With PostgreSQL and Redis up (`wsl docker compose up -d --wait`, and a WSL window kept open),
-from `backend\`:
+It brings up WSL, Docker, PostgreSQL and Redis itself ([Local demo](#local-demo-one-command)).
+From the repository root, `.\demo.cmd --e2e`; or from `backend\`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e     # run the suite, then stop
-.\.venv\Scripts\python.exe -m tests.dashboard_stack           # serve the stack until Ctrl+C
+.\.venv\Scripts\python.exe -m tests.dashboard_stack           # the local demo, until Ctrl+C
 ```
 
 It creates and migrates `<SITESCOPE_POSTGRES_DB>_test_ui` (refusing any non-`_test` name), uses

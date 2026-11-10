@@ -1616,6 +1616,38 @@ predate the review fixes, which change no platform-specific code.
 - One shared admin token. Proxy limits are per address.
 - Python packages are pinned by version, not hash; base images by tag, not digest.
 
+**Follow-up fix (2026-11-09): the local demo's startup.** This is not a new phase.
+
+*Symptom.* `python -m tests.dashboard_stack` failed with "worker-1 did not start", Redis
+`ConnectionError`s, and a cleanup traceback (PostgreSQL refused).
+
+*Cause, from WSL's journal and the run's own logs.* WSL shuts down about 20 s after its last
+session closes, and a Windows process using the forwarded ports is not a session.
+`wsl docker compose up -d --wait` returned, and 21 s after Docker started, systemd stopped Docker
+and WSL. Two boots that day lasted 23 s each. The worker's first Redis call failed 0.3 s after
+Docker stopped.
+
+*Launcher defects that turned this into a cascade, fixed:*
+
+- nothing held WSL open;
+- a lost dependency surfaced only as a 60 s start timeout;
+- the cleanup raised when PostgreSQL was gone;
+- an interrupted run's Redis keys could not be found (a random prefix);
+- a second run could drop a running demo's database.
+
+*The fix.* The launcher, now the local demo behind `demo.cmd`:
+
+- holds a WSL session for its lifetime, waits for Docker, runs `docker compose up -d --wait`, and
+  checks the services from Windows;
+- watches the services, the session and the processes, and stops with one message;
+- reports, rather than raises, a cleanup it cannot finish;
+- uses the fixed prefix `ui-stack`, and runs one stack at a time;
+- has `--stop`, serves the dashboard on port 4173, and creates the demo jobs.
+
+*Tests.* 23 unit tests (`tests/unit/test_dashboard_stack.py`) and 1 integration test; two
+mutations of the fix (no WSL session; a cleanup that raises) are caught. The end-to-end suite was
+run through `.\demo.cmd --e2e` from a stopped WSL: 8 passed.
+
 ## Definition of done (every phase)
 
 1. Only the requested phase is implemented, and it includes tests.

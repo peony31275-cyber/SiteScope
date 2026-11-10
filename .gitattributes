@@ -2,3 +2,5 @@
 # the local core.autocrlf setting. Scripts and config files are later used inside Linux
 # containers, where CRLF line endings break them.
 * text=auto eol=lf
+# Windows batch files run under cmd.exe, which expects CRLF.
+*.cmd text eol=crlf

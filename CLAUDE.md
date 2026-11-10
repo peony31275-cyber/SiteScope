@@ -275,9 +275,10 @@ explanations for the project owner in Chinese.
   environment always names the test database: `child_environment` refuses any database that
   is not a disposable `*_test` one. Never start `python -m app.scheduler` against the
   development database: it starts every queued job there.
-- `tests/dashboard_stack.py` (Phase 9) runs the whole stack for the dashboard's end-to-end
-  tests on its own disposable database, `<db>_test_ui`, and Redis database 15 under its own key
-  prefix; it drops the database and deletes its keys at the end.
+- `tests/dashboard_stack.py` (Phase 9) runs the whole stack, for the local demo (`demo.cmd`)
+  and the dashboard's end-to-end tests, on its own disposable database, `<db>_test_ui`, and
+  Redis database 15 under its own key prefix (`ui-stack`); it drops the database and deletes its
+  keys at the end. One stack at a time: a second start only prints the running one's URL.
 - Benchmarks (`benchmarks/`, Phase 10) use their own disposable database `<db>_test_bench`, Redis
   database 15 under fresh key prefixes, and disposable WSL containers for the Redis and
   PostgreSQL outages; a number is reported only with its command and raw output.
@@ -299,8 +300,8 @@ explanations for the project owner in Chinese.
 - PostgreSQL 18.6 and Redis 8.10.3 run as containers from `backend/compose.yaml`, with ports bound
   to 127.0.0.1. Credentials come from `backend/.env`, which the backend and Compose both read.
 - WSL stops Ubuntu, and Docker with it, about 15–30 s after the last WSL session closes. Keep a WSL
-  session open while anything needs the containers. Details: `docs/development.md`, section
-  "Docker (WSL 2)".
+  session open while anything needs the containers; `demo.cmd` and `tests.dashboard_stack` hold
+  one themselves. Details: `docs/development.md`, section "Docker (WSL 2)".
 - Docker Hub limits anonymous pulls per hour. `mirror.gcr.io/library/<image>:<tag>` serves the
   same official images; tag the pulled image with its Docker Hub name before a build.
 - Commands, run from `backend\` (full guide: `docs/development.md`):
@@ -328,7 +329,8 @@ explanations for the project owner in Chinese.
   | Dashboard: install (in `frontend\`) | `npm ci` |
   | Dashboard: dev server, `/api` proxied to :8000 | `npm run dev` |
   | Dashboard: type check, lint, format check, tests, build | `npm run check` |
-  | Dashboard end to end (real stack, disposable DB) | `.\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e` |
+  | Local demo: the whole stack, dashboard on http://127.0.0.1:4173 (repository root; WSL, Docker and the services handled) | `.\demo.cmd` (stop: Ctrl+C or `.\demo.cmd --stop`) |
+  | Dashboard end to end (real stack, disposable DB) | `.\.venv\Scripts\python.exe -m tests.dashboard_stack --e2e` (or `.\demo.cmd --e2e`) |
   | Regenerate the dashboard's API types | `.\.venv\Scripts\python.exe -m app.api.openapi_export ..\frontend\src\lib\api\openapi.json`, then `npm run api:types` in `frontend\` |
   | Operator commands (create, cancel, seed the demo) | `.\.venv\Scripts\python.exe -m app.scheduler.admin seed-demo --base-url <url> --wait 600` |
   | Full stack in containers (own project and port; `docs/deployment.md`) | `wsl docker compose -p sitescope-try -f ..\deploy\compose.yaml --env-file <file> up -d --build --wait` |
