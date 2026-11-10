@@ -1637,7 +1637,6 @@ development and the test suites.
 
 ```
 SITESCOPE/
-|-- CLAUDE.md                    # stable context and rules for contributors and Claude
 |-- README.md                    # Phase 11: overview, quickstart, design highlights
 |-- LICENSE, THIRD_PARTY_NOTICES.md  # Phase 11: MIT; dependencies' and services' licenses
 |-- .gitignore, .gitattributes  # Phase 1: ignore rules, LF line endings

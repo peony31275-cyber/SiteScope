@@ -57,8 +57,8 @@ class DisposableRedis:
     settings: Settings  # the test settings, pointed at this server
 
 
-# Docker Engine runs inside WSL on the Windows development machine (CLAUDE.md), and natively on
-# Linux (CI).
+# Docker Engine runs inside WSL on the Windows development machine (docs/development.md, "Docker
+# (WSL 2)"), and natively on Linux (CI).
 DOCKER = ("wsl", "-e", "docker") if sys.platform == "win32" else ("docker",)
 
 

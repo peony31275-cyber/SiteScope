@@ -292,7 +292,8 @@ def test_production_accepts_public_crawl_targets(monkeypatch: pytest.MonkeyPatch
 
 
 def test_env_example_documents_every_setting_with_valid_values() -> None:
-    """backend/.env.example must load, and must list every setting (CLAUDE.md, Configuration)."""
+    """backend/.env.example must load, and must list every setting (docs/development.md,
+    "Configuration")."""
     template = ENV_FILE.parent / ".env.example"
     keys = {
         line.split("=", 1)[0]

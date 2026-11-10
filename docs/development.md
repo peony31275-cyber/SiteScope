@@ -1049,7 +1049,7 @@ layer, with every rule of a crawl request, but without the API's write check. Th
 ```
 
 The jobs these commands create stay `queued` until a scheduler starts them. Never start the
-scheduler against the development database (CLAUDE.md): it would start every queued job there.
+scheduler against the development database: it would start every queued job there.
 `seed-demo --wait` belongs in the containerized stack (below), which has its own database and
 processes.
 

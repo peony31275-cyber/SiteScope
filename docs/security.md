@@ -85,9 +85,9 @@ crawled HTML ──► parser (limits) ──► stored text ──► dashboard
     `example.com`, `example.org` or `.test` address.
   - Commit metadata: every author and committer address is the owner's GitHub noreply
     address (development-roadmap.md, "Publication to GitHub").
-  - Accepted: raw benchmark outputs, `CLAUDE.md` and the development guide name local Windows
-    paths (`C:\Users\<account>\...`), the outputs as recorded when the benchmarks ran. They
-    hold no secret.
+  - Accepted: raw benchmark outputs and the development guide name local Windows paths
+    (`C:\Users\<account>\...`), the outputs as recorded when the benchmarks ran, and so does a
+    local tool file that earlier commits contain. They hold no secret.
 - **Continuous scanning.** The CI job `secrets` runs the same gitleaks scan over the whole
   history on every push and pull request.
 

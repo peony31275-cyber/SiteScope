@@ -84,7 +84,8 @@ verification alone uses about 420 minutes a month (30 × 14), and each push to `
 
 ## Local equivalents
 
-On the development machine (Windows), the four checks of CLAUDE.md and `npm run check` cover the
+On the development machine (Windows), the four checks of
+[development.md](development.md#tests-lint-format-and-type-check) and `npm run check` cover the
 `backend` and `frontend` jobs. Run on 2026-11-08 to validate the workflows:
 
 - **Linux.** In the CI's Python (`python:3.13.16-slim-trixie` container, `requirements/dev.txt`):

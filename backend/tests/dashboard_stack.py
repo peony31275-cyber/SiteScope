@@ -181,7 +181,7 @@ def run_command(command: Sequence[str], timeout: float) -> tuple[int, str]:
 
 
 def manages_wsl_docker() -> bool:
-    """Docker Engine in WSL, driven from Windows (this machine's setup, CLAUDE.md)."""
+    """Docker Engine in WSL, driven from Windows (docs/development.md, "Docker (WSL 2)")."""
     return sys.platform == "win32" and shutil.which("wsl") is not None
 
 

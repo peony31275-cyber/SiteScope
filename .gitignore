@@ -37,7 +37,9 @@ npm-debug.log*
 # Logs and local tool state
 # ---------------------------------------------------------------------------
 *.log
-.claude/settings.local.json
+# Local development-tool configuration: kept on the development machine, never published
+/.claude/
+/CLAUDE.md
 
 # ---------------------------------------------------------------------------
 # IDE and OS files

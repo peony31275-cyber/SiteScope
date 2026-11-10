@@ -105,7 +105,7 @@ Commands, workflow, and troubleshooting are in [`development.md`](development.md
 
 ## Phases
 
-Every phase follows the working agreement in [`CLAUDE.md`](../CLAUDE.md):
+Every phase follows the same working agreement:
 
 1. Inspect.
 2. Plan.
@@ -1664,7 +1664,7 @@ personal e-mail address and Claude Code's automatic `Co-Authored-By` trailer.
   development passwords): nothing but the reviewed false positive below.
 - The original history is kept in a verified git bundle outside the repository.
 - New commits use the noreply address (local git configuration) and carry no assistant
-  attribution (`.claude/settings.json`, setting `attribution`).
+  attribution (the development tool's local `attribution` setting).
 
 *Commit IDs.* The documents now use the new IDs, and `.gitleaksignore` names the reviewed false
 positive by its new commit. The raw benchmark outputs keep the IDs of the day they were
@@ -1721,9 +1721,16 @@ skipped, in 405 s):
 With them, both workflows passed on GitHub (`38c9579`). The next full verification, on a
 documentation commit, failed one end-to-end test: right after a navigation, it looked up a
 label that the previous page carries too (ci.md, "A flaky end-to-end test"). `5980fdb`
-test(e2e) looks the selector up by its role. The repository has the description "Distributed
-Web Crawling & Search Infrastructure" and ten topics. GitHub lists one contributor, the owner:
-every commit is linked to the owner's account through the noreply address.
+test(e2e) looks the selector up by its role, and both workflows passed again on `634e4bd`. The
+repository has the description "Distributed Web Crawling & Search Infrastructure" and ten
+topics. GitHub lists one contributor, the owner: every commit is linked to the owner's account
+through the noreply address.
+
+*Development-tool files* (2026-11-10 UTC). At the owner's request, the local configuration of
+the AI development tool (`CLAUDE.md`, `.claude/`) left the repository: `git rm --cached` and two
+`.gitignore` entries keep it on the development machine only. Earlier commits still contain it;
+the history was not rewritten. The documents and test comments that cited it now cite
+development.md; the dated records above keep their wording.
 
 ## Definition of done (every phase)
 
