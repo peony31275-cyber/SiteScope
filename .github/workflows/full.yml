@@ -117,6 +117,16 @@ jobs:
             frontend/test-results/
           retention-days: 14
           if-no-files-found: ignore
+      # Each process's JSON log (never a secret or a page body) and the dashboard's build and
+      # preview output, kept in the temporary directory the stack prints.
+      - name: Upload the stack's process logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-stack-logs
+          path: /tmp/sitescope-dashboard-*/
+          retention-days: 14
+          if-no-files-found: ignore
 
   deployment:
     name: Containerized deployment (build, seed, smoke)
