@@ -8,9 +8,11 @@ gracefully (CTRL_BREAK_EVENT on Windows, SIGTERM elsewhere), kill them (Terminat
 SIGKILL), and stall them (NtSuspendProcess / SIGSTOP). ``TcpProxy`` sits between the processes
 and PostgreSQL or Redis and can cut them off.
 
-Safety: the children read backend/.env for credentials, and its database is the development
-database. ``child_environment`` therefore always sets the database explicitly, and refuses any
-name that is not a disposable ``*_test`` database, and any Redis database but 15.
+Safety: the children read backend/.env, and its database is the development database.
+``child_environment`` therefore always sets the database explicitly, and refuses any name that
+is not a disposable ``*_test`` database, and any Redis database but 15. It also passes the test's
+own credentials: where there is no backend/.env (CI sets them as environment variables, which
+the children do not inherit), nothing else gives them any.
 
 Everything here that waits is asynchronous: the local HTTP servers the children crawl run in the
 test's event loop, so blocking it would stall the crawl.
@@ -189,6 +191,7 @@ def child_environment(
         "LOG_LEVEL": "INFO",
         "POSTGRES_HOST": settings.postgres_host,
         "POSTGRES_PORT": str(settings.postgres_port),
+        "POSTGRES_USER": settings.postgres_user,
         "POSTGRES_DB": settings.postgres_db,
         "REDIS_HOST": settings.redis_host,
         "REDIS_PORT": str(settings.redis_port),
@@ -208,8 +211,12 @@ def child_environment(
         **FAST_TIMING,
         **extra_values,
     }
+    # The test's own credentials. Normally the same as in backend/.env, but CI has no such file
+    # (its credentials are environment variables, dropped below), and a disposable Redis has its
+    # own password (Phase 6).
+    if settings.postgres_password is not None:
+        values["POSTGRES_PASSWORD"] = settings.postgres_password.get_secret_value()
     if settings.redis_password is not None:
-        # Normally the same as in backend/.env; a disposable Redis has its own (Phase 6).
         values["REDIS_PASSWORD"] = settings.redis_password.get_secret_value()
     environment = {
         name: value

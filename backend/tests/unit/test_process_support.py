@@ -1,7 +1,8 @@
 """The guard of the process tests: child processes never get the development database.
 
 The children read backend/.env, whose database is the development database; the environment
-built by ``child_environment`` must always override it with a disposable test database.
+built by ``child_environment`` must always override it with a disposable test database. It must
+also carry the test's own credentials, for where there is no backend/.env (CI).
 """
 
 import os
@@ -79,6 +80,34 @@ def test_inherited_sitescope_variables_are_dropped(monkeypatch: pytest.MonkeyPat
     assert [name for name in built if name.upper() == "SITESCOPE_POSTGRES_DB"] == [
         "SITESCOPE_POSTGRES_DB"
     ]
+
+
+def test_children_connect_as_the_test_without_a_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In CI the credentials are environment variables and there is no backend/.env. The
+    children inherit no SITESCOPE_ variable, so their environment alone must carry the test's
+    PostgreSQL user and password, and Redis password. Without the PostgreSQL password, the
+    first GitHub Actions run's dashboard stack never became ready, and every process test
+    failed."""
+    for name in list(os.environ):
+        if name.upper().startswith("SITESCOPE_"):
+            monkeypatch.delenv(name)
+    built = environment(
+        postgres_user="ci_user",
+        postgres_password=SecretStr("p" * 24),
+        redis_password=SecretStr("r" * 24),
+    )
+
+    for name, value in built.items():
+        if name.startswith("SITESCOPE_"):
+            monkeypatch.setenv(name, value)
+    child = Settings(_env_file=None)
+
+    assert child.missing_credentials() == []
+    assert child.database_url.username == "ci_user"
+    assert child.database_url.password == "p" * 24
+    assert child.database_url.database == "sitescope_test"
+    assert child.redis_password is not None
+    assert child.redis_password.get_secret_value() == "r" * 24
 
 
 def test_a_developers_admin_token_and_cap_never_reach_the_children(
