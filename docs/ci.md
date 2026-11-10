@@ -48,8 +48,10 @@ times are UTC: 04:03 UTC on 2026-11-10 was the evening of 2026-11-09 on the deve
 | 2026-11-10 04:03 | Full verification | [42753341887](https://github.com/peony31275-cyber/SiteScope/actions/runs/42753341887) | `2781c57` | Failed (below). The deployment job passed; the run was cancelled | 11 min 6 s |
 | 2026-11-10 04:34 | CI | [42756685965](https://github.com/peony31275-cyber/SiteScope/actions/runs/42756685965) | `38c9579` | Passed: 1,504 unit tests and mypy; 175 Vitest tests and the build; the images; gitleaks over 19 commits | 1 min 6 s |
 | 2026-11-10 04:34 | Full verification | [42756686057](https://github.com/peony31275-cyber/SiteScope/actions/runs/42756686057) | `38c9579` | Passed: 648 integration and fault tests, none skipped; 8 end-to-end tests in Chromium (the 12 opt-in benchmark and screenshot specs skipped); the deployment built, seeded and smoke-tested (17 checks) | 7 min 11 s |
+| 2026-11-10 04:44 | CI | [42757799150](https://github.com/peony31275-cyber/SiteScope/actions/runs/42757799150) | `8fd7f1e` | Passed | 1 min 22 s |
+| 2026-11-10 04:44 | Full verification | [42757799332](https://github.com/peony31275-cyber/SiteScope/actions/runs/42757799332) | `8fd7f1e` | Failed: one end-to-end test (below). The 648 integration and fault tests and the deployment passed | 10 min 39 s |
 
-Later runs are in the repository's Actions tab.
+Later runs, from `5980fdb` on, are in the repository's Actions tab.
 
 **The first failure.** The first full verification failed every test that starts child
 processes (the 7 that ran), and the dashboard's end-to-end stack never became ready: its
@@ -63,6 +65,15 @@ alone (the test fails without the fix). The run was cancelled once the cause was
 failing process test had waited out its timeouts, about 1.4 minutes on average, and 23 more
 were still to run against the job's 45-minute limit. The e2e job now also uploads the stack's
 process logs on failure; the first time, they stayed on the runner.
+
+**A flaky end-to-end test.** On `8fd7f1e`, a documentation change, the search test failed in
+938 ms with "Not an input element". It clicked the job page's Search link, then looked the job
+selector up by its label, "Crawl job", which the job page's header region carries too. The
+runner was slow that time (installing Chromium took 9 min 25 s, against 38 s and 2 min 18 s in
+the earlier runs), and the assertion ran before the search page had replaced the job page: the
+locator found the region. The uploaded Playwright report shows the search page a moment later,
+with the job selected. Since `5980fdb` the test looks the selector up by its role, `combobox`,
+which the region cannot match, so it waits for the selector.
 
 **Minutes.** GitHub bills each job's time rounded up to the minute (for this account, the run
 timing API reports no billable time). A passing CI run is about 5 billed minutes: four jobs of

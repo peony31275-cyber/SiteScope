@@ -1718,8 +1718,11 @@ skipped, in 405 s):
   (that commit's message gives 2.6 ms for all, the one margin then seen). Reintroducing the bug
   it guards against (one interval on every attempt) still fails it.
 
-With them, both workflows pass on GitHub. The repository has the description "Distributed Web
-Crawling & Search Infrastructure" and ten topics. GitHub lists one contributor, the owner:
+With them, both workflows passed on GitHub (`38c9579`). The next full verification, on a
+documentation commit, failed one end-to-end test: right after a navigation, it looked up a
+label that the previous page carries too (ci.md, "A flaky end-to-end test"). `5980fdb`
+test(e2e) looks the selector up by its role. The repository has the description "Distributed
+Web Crawling & Search Infrastructure" and ten topics. GitHub lists one contributor, the owner:
 every commit is linked to the owner's account through the noreply address.
 
 ## Definition of done (every phase)
